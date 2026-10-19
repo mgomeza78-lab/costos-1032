@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <title>{% block title %}Estudios de costos CRA 1032{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><a href="/panel">SICTAA · <span>Costos 1032</span></a></div>
+  {% if user %}
+  <nav class="nav">
+    <a href="/panel">Empresas</a>
+    {% if rbac.can(user,'crear_empresa') %}<a href="/empresa-nueva">Nueva empresa</a>{% endif %}
+    {% if rbac.can(user,'administrar_usuarios') %}<a href="/usuarios">Usuarios</a>{% endif %}
+    {% if rbac.can(user,'administrar_ipc') %}<a href="/ipc">IPC</a>{% endif %}
+    <a href="/periodos">Años tarifarios</a>
+    <a href="/permisos">Permisos</a>
+    {% if rbac.can(user,'ver_auditoria') %}<a href="/auditoria">Auditoría</a>{% endif %}
+    <a href="/cuenta">Mi cuenta</a>
+  </nav>
+  <div class="who">
+    <span class="role role-{{ user.rol }}">{{ rbac.rol_nombre(user.rol) }}</span>
+    <span class="name">{{ user.nombre }}</span>
+    <a class="logout" href="/logout">Salir</a>
+  </div>
+  {% endif %}
+</header>
+
+<main class="wrap">
+  {% if msg %}<div class="flash ok">{{ msg }}</div>{% endif %}
+  {% if err %}<div class="flash err">{{ err }}</div>{% endif %}
+  {% if user and user.debe_cambiar %}
+  <div class="flash warn">Su contraseña es temporal. <a href="/cuenta">Cámbiela ahora</a>.</div>
+  {% endif %}
+  {% block body %}{% endblock %}
+</main>
+
+<footer class="foot">
+  Plataforma multiempresa · Resolución CRA 1032 de 2026 · período de inicio
+  (1-jul-2026 a 31-dic-2026). Aislamiento por empresa con Row-Level Security.
+</footer>
+</body>
+</html>

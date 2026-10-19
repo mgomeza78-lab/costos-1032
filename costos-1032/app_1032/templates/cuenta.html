@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Mi cuenta · Costos 1032{% endblock %}
+{% block body %}
+<div class="page-head">
+  <h1>Mi cuenta</h1>
+  <p class="sub">{{ info.nombre }} · {{ info.email }} ·
+    {{ rbac.rol_nombre(user.rol) }}
+    {% if info.ultimo_login %}· último ingreso {{ info.ultimo_login.strftime('%Y-%m-%d %H:%M') }}{% endif %}</p>
+</div>
+
+<div class="dos-col">
+  <section class="form wide">
+    <h2 class="serv-h">Cambiar contraseña</h2>
+    <form method="post" action="/cuenta/password" class="form">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <label>Contraseña actual<input type="password" name="actual" required></label>
+      <label>Nueva contraseña<input type="password" name="nueva" required></label>
+      <label>Confirmar nueva<input type="password" name="confirmar" required></label>
+      <p class="hint">Mínimo {{ min_len }} caracteres, con letra, número y símbolo.</p>
+      <button class="btn primary" type="submit">Actualizar contraseña</button>
+    </form>
+  </section>
+
+  <section class="form wide">
+    <h2 class="serv-h">Autenticación en dos pasos (MFA)</h2>
+    {% if info.mfa_activo %}
+      <p>Estado: <b class="ok-text">activado</b>. Su ingreso pide un código temporal.</p>
+      <form method="post" action="/cuenta/mfa/desactivar">
+        <input type="hidden" name="csrf" value="{{ csrf_token }}">
+        <button class="btn" type="submit">Desactivar MFA</button>
+      </form>
+    {% elif mfa_setup %}
+      <p>Escanee este código con Google Authenticator, Authy o similar y confirme con el código generado.</p>
+      <div class="qr"><img src="{{ qr }}" alt="Código QR MFA" width="180" height="180"></div>
+      <p class="hint">Si no puede escanear, use la clave: <code class="mono">{{ otpuri }}</code></p>
+      <form method="post" action="/cuenta/mfa/confirmar" class="form">
+        <input type="hidden" name="csrf" value="{{ csrf_token }}">
+        <label>Código de confirmación
+          <input name="codigo" inputmode="numeric" autocomplete="one-time-code" required placeholder="123456">
+        </label>
+        <button class="btn primary" type="submit">Confirmar y activar</button>
+      </form>
+    {% else %}
+      <p>Estado: <b>desactivado</b>.
+      {% if user.rol in ['admin','analista'] %}Recomendado para su rol.{% endif %}</p>
+      <form method="post" action="/cuenta/mfa/iniciar">
+        <input type="hidden" name="csrf" value="{{ csrf_token }}">
+        <button class="btn primary" type="submit">Activar MFA</button>
+      </form>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

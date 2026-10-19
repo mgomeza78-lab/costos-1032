@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Años tarifarios{% endblock %}
+{% block body %}
+<div class="page-head">
+  <a class="back" href="/panel">← Empresas</a>
+  <h1>Años tarifarios</h1>
+  <p class="sub">Marco temporal del cargue de información (Res. CRA 1032/2026). La metodología se
+  aplica primero en el <b>período de inicio</b> y luego en <b>diez años tarifarios</b> (año 1 = 2027
+  … año 10 = 2036, horizonte del POIR). Toda la información que se carga queda atada a su año
+  tarifario, para que el seguimiento, la indexación y los recálculos se atribuyan correctamente.</p>
+</div>
+
+<table class="tabla">
+  <thead><tr>
+    <th>#</th><th>Año tarifario</th><th>Desde</th><th>Hasta</th><th class="r">Meses</th><th>Observación</th>
+  </tr></thead>
+  <tbody>
+    {% for p in periodos %}
+    <tr class="{{ 'fila-indexa' if p.es_inicio else '' }}">
+      <td class="comp">{{ p.orden }}</td>
+      <td><b>{{ p.etiqueta }}</b></td>
+      <td class="c">{{ p.fecha_ini }}</td>
+      <td class="c">{{ p.fecha_fin }}</td>
+      <td class="num">{{ p.meses }}</td>
+      <td class="muted2">
+        {% if p.es_inicio %}Este estudio; el cálculo mensual es seguimiento/control.
+        {% elif p.orden == 1 %}Lo fija el primer recálculo (metas cuantificadas, línea base cierre 2026).
+        {% else %}Recálculo/indexación.{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="hint">El <b>período de inicio</b> (6 meses) no es el año 1: es previo. El año tarifario 1
+inicia el 1-ene-2027. En los cargues mensuales, el año calendario determina el año tarifario
+(2026 → período de inicio; 2027 → año 1; …; 2036 → año 10).</p>
+{% endblock %}

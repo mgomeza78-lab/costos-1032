@@ -1,0 +1,390 @@
+{
+  "n2def": [
+    {
+      "cod": "Código",
+      "nombre": "Subcomponente",
+      "n1": "N1",
+      "numeral": "Artículo / numeral",
+      "puntaje": "Puntaje de eficiencia"
+    },
+    {
+      "cod": "CAC-1",
+      "nombre": "Beneficios a empleados administrativos",
+      "n1": "CMA",
+      "numeral": "2.1.2.1.3.2.4. num. 1",
+      "puntaje": "Ordinario — PE_ADMIN"
+    },
+    {
+      "cod": "CAC-1.COM",
+      "nombre": "   ↳ Beneficios del personal comercial trasladados de la clase 7",
+      "n1": "CMA",
+      "numeral": "2.1.2.1.3.2.4. num. 1",
+      "puntaje": "Ordinario — PE_ADMIN"
+    },
+    {
+      "cod": "CAC-2",
+      "nombre": "Costos generales administrativos",
+      "n1": "CMA",
+      "numeral": "2.1.2.1.3.2.4. num. 2",
+      "puntaje": "Ordinario — PE_ADMIN"
+    },
+    {
+      "cod": "CAC-2.COM",
+      "nombre": "   ↳ Gastos de comercialización trasladados de la clase 7",
+      "n1": "CMA",
+      "numeral": "2.1.2.1.3.2.4. num. 2",
+      "puntaje": "Ordinario — PE_ADMIN"
+    },
+    {
+      "cod": "CAC-3",
+      "nombre": "Amortizaciones administrativas",
+      "n1": "CMA",
+      "numeral": "2.1.2.1.3.2.4. num. 3",
+      "puntaje": "Ordinario — PE_ADMIN"
+    },
+    {
+      "cod": "CAC-4",
+      "nombre": "Costos generales de gestión social — PQRS y Comités de Desarrollo y Control Social",
+      "n1": "CMA",
+      "numeral": "2.1.2.1.3.2.4. num. 4",
+      "puntaje": "Ordinario — PE_ADMIN"
+    },
+    {
+      "cod": "CAC-4.COM",
+      "nombre": "   ↳ PQRS y Comités trasladados de la clase 7",
+      "n1": "CMA",
+      "numeral": "2.1.2.1.3.2.4. num. 4",
+      "puntaje": "Ordinario — PE_ADMIN"
+    },
+    {
+      "cod": "CAC-5",
+      "nombre": "Costos de iniciativas de gestión social",
+      "n1": "CMA",
+      "numeral": "2.1.2.1.3.2.4. num. 5",
+      "puntaje": "PARTICULAR en el PE_ADMIN"
+    },
+    {
+      "cod": "CAC-6",
+      "nombre": "Costos administrativos de inversiones ambientales",
+      "n1": "CMA",
+      "numeral": "2.1.2.1.3.2.4. num. 6",
+      "puntaje": "Ordinario — PE_ADMIN"
+    },
+    {
+      "cod": "COC-1",
+      "nombre": "Beneficios a empleados operativos",
+      "n1": "CMO",
+      "numeral": "2.1.2.1.3.4.4. num. 1",
+      "puntaje": "Ordinario — PE_OPER"
+    },
+    {
+      "cod": "COC-2",
+      "nombre": "Costos generales operativos",
+      "n1": "CMO",
+      "numeral": "2.1.2.1.3.4.4. num. 2",
+      "puntaje": "Ordinario — PE_OPER"
+    },
+    {
+      "cod": "COC-3",
+      "nombre": "Amortizaciones operativas",
+      "n1": "CMO",
+      "numeral": "2.1.2.1.3.4.4. num. 3",
+      "puntaje": "Ordinario — PE_OPER"
+    },
+    {
+      "cod": "COC-4",
+      "nombre": "Tratamiento de aguas residuales",
+      "n1": "CMO",
+      "numeral": "2.1.2.1.3.4.4. num. 4",
+      "puntaje": "PARTICULAR en el PE_OPER"
+    },
+    {
+      "cod": "COC-5",
+      "nombre": "Operación de FNCER",
+      "n1": "CMO",
+      "numeral": "2.1.2.1.3.4.4. num. 5",
+      "puntaje": "PARTICULAR en el PE_OPER"
+    },
+    {
+      "cod": "CE",
+      "nombre": "Costo operativo particular de energía eléctrica",
+      "n1": "CMO",
+      "numeral": "2.1.2.1.3.4.6.",
+      "puntaje": "No pasa por el puntaje"
+    },
+    {
+      "cod": "CIQ",
+      "nombre": "Costo operativo particular de insumos químicos",
+      "n1": "CMO",
+      "numeral": "2.1.2.1.3.4.7.",
+      "puntaje": "No pasa por el puntaje"
+    },
+    {
+      "cod": "COIR",
+      "nombre": "Costo operativo de inversiones ambientales y de gestión del riesgo",
+      "n1": "CMO",
+      "numeral": "2.1.2.1.3.4.8.",
+      "puntaje": "No pasa por el puntaje"
+    },
+    {
+      "cod": "CII",
+      "nombre": "Costo de inversión en infraestructura — Componente 1",
+      "n1": "CMI",
+      "numeral": "2.1.2.1.3.5.3.",
+      "puntaje": "No aplica"
+    },
+    {
+      "cod": "CIAR",
+      "nombre": "Costo de inversión ambiental y de gestión del riesgo — Componente 2",
+      "n1": "CMI",
+      "numeral": "2.1.2.1.3.5.3.",
+      "puntaje": "No aplica"
+    },
+    {
+      "cod": "CIAO",
+      "nombre": "Costo de inversión en activos administrativos y operativos — Componente 3",
+      "n1": "CMI",
+      "numeral": "2.1.2.1.3.5.3.",
+      "puntaje": "No aplica"
+    },
+    {
+      "cod": "ICTA",
+      "nombre": "Impuestos, contribuciones y tasas administrativas",
+      "n1": "CMICT",
+      "numeral": "2.1.2.1.3.6.3.",
+      "puntaje": "No aplica"
+    },
+    {
+      "cod": "ICTO",
+      "nombre": "Impuestos, contribuciones y tasas operativas",
+      "n1": "CMICT",
+      "numeral": "2.1.2.1.3.6.4.",
+      "puntaje": "No aplica"
+    },
+    {
+      "cod": "TA",
+      "nombre": "Tasas ambientales — uso del agua y retributiva",
+      "n1": "CMICT",
+      "numeral": "2.1.2.1.3.6.1. y .6.2.",
+      "puntaje": "No aplica"
+    },
+    {
+      "cod": "DEP",
+      "nombre": "Depreciaciones, provisiones y deterioros contables",
+      "n1": "Excluido",
+      "numeral": "Anexo 6.2.2.1.3., tabla 6.a y art. 2.1.2.1.3.5.3.",
+      "puntaje": "No aplica"
+    },
+    {
+      "cod": "CAC-X",
+      "nombre": "Costos administrativos NO reconocidos",
+      "n1": "Excluido",
+      "numeral": "Anexo 6.2.2.1.3., tablas B, D y F",
+      "puntaje": "No aplica"
+    },
+    {
+      "cod": "COC-X",
+      "nombre": "Costos operativos NO reconocidos",
+      "n1": "Excluido",
+      "numeral": "Anexo 6.2.2.1.4., tablas B, D y F",
+      "puntaje": "No aplica"
+    },
+    {
+      "cod": "ICT-X",
+      "nombre": "Impuestos y contribuciones excluidos",
+      "n1": "Excluido",
+      "numeral": "Pars. 1 y 3 de los arts. 2.1.2.1.3.6.3. y .6.4.",
+      "puntaje": "No aplica"
+    },
+    {
+      "cod": "NT",
+      "nombre": "No tarifario — actividad distinta a la prestación",
+      "n1": "Excluido",
+      "numeral": "Pars. 2 y 5 de los arts. .2.4. y .4.4.",
+      "puntaje": "No aplica"
+    },
+    {
+      "cod": "Las tres celdas naranjas quedan fuera del benchmarking del DEA únicamente si están identificadas por separado en el estudio. Con los puntajes en 100 % durante el período de inicio abrirlas no cambia el resultado; desde el primer recálculo sí.",
+      "nombre": null,
+      "n1": null,
+      "numeral": null,
+      "puntaje": null
+    },
+    {
+      "cod": "Las tres sub-aperturas de comercialización (.COM)",
+      "nombre": null,
+      "n1": null,
+      "numeral": null,
+      "puntaje": null
+    },
+    {
+      "cod": "El numeral 2 del art. 2.1.2.1.3.2.4. reconoce en el CAC «los gastos de comercialización, tales como toma de lectura y entrega de facturas» —lista abierta—, y el numeral 2 del art. 2.1.2.1.3.4.4. los excluye del COC como categoría completa. Como caen en tres numerales distintos del CAC, no se agrupan en un subcomponente nuevo: se codifican con el sufijo .COM sobre el numeral que les corresponde.",
+      "nombre": null,
+      "n1": null,
+      "numeral": null,
+      "puntaje": null
+    },
+    {
+      "cod": "SE ELIGEN EN LA LISTA como cualquier otro subcomponente. En el estudio suman dentro de su numeral oficial —la resolución no tiene un numeral comercial—, y a la vez quedan aislados para cuantificar el traslado y sustentarlo ante la CRA y la SSPD.",
+      "nombre": null,
+      "n1": null,
+      "numeral": null,
+      "puntaje": null
+    },
+    {
+      "cod": "Se marcan expresamente, y no por la clase de la cuenta, porque no todo costo de la clase 7 que se reconoce en el CAC es comercialización: la marca tiene que ser una decisión de quien clasifica, no una inferencia del código contable.",
+      "nombre": null,
+      "n1": null,
+      "numeral": null,
+      "puntaje": null
+    }
+  ],
+  "aggN1": {
+    "N1 Componente": {
+      "s2024": 0.0,
+      "s2025": 0.0,
+      "n": 1
+    },
+    "CMA": {
+      "s2024": 35625650734.0,
+      "s2025": 37560659116.0,
+      "n": 98
+    },
+    "Excluido": {
+      "s2024": -23427602935.0,
+      "s2025": -29543170605.0,
+      "n": 53
+    },
+    "CMICT": {
+      "s2024": 7857392166.0,
+      "s2025": 4536000047.0,
+      "n": 15
+    },
+    "CMI": {
+      "s2024": 11372000814.0,
+      "s2025": 7470400046.0,
+      "n": 6
+    },
+    "CMO": {
+      "s2024": 23840201730.0,
+      "s2025": 33410309103.0,
+      "n": 104
+    }
+  },
+  "aggN2": {
+    "N2 Subcomponente": {
+      "s2024": 0.0,
+      "s2025": 0.0,
+      "n": 1,
+      "nombre": "Nombre del subcomponente"
+    },
+    "CAC-1": {
+      "s2024": 15511705821.0,
+      "s2025": 15081519125.0,
+      "n": 52,
+      "nombre": "Beneficios a empleados administrativos"
+    },
+    "CAC-X": {
+      "s2024": 4012628572.0,
+      "s2025": 1954274487.0,
+      "n": 9,
+      "nombre": "Costos administrativos NO reconocidos"
+    },
+    "CAC-2": {
+      "s2024": 16833583485.0,
+      "s2025": 17311049061.0,
+      "n": 37,
+      "nombre": "Costos generales administrativos"
+    },
+    "ICTA": {
+      "s2024": 3052522492.0,
+      "s2025": 1888930558.0,
+      "n": 9,
+      "nombre": "Impuestos, contribuciones y tasas administrativas"
+    },
+    "CIAO": {
+      "s2024": 930801186.0,
+      "s2025": 542808046.0,
+      "n": 5,
+      "nombre": "Costo de inversión en activos administrativos y operativos — Componente 3"
+    },
+    "ICT-X": {
+      "s2024": 4200674243.0,
+      "s2025": 6754482067.0,
+      "n": 3,
+      "nombre": "Impuestos y contribuciones excluidos"
+    },
+    "DEP": {
+      "s2024": 11686551758.0,
+      "s2025": 13624608108.0,
+      "n": 27,
+      "nombre": "Depreciaciones, provisiones y deterioros contables"
+    },
+    "CAC-3": {
+      "s2024": 91267062.0,
+      "s2025": 81506686.0,
+      "n": 1,
+      "nombre": "Amortizaciones administrativas"
+    },
+    "CII": {
+      "s2024": 10441199628.0,
+      "s2025": 6927592000.0,
+      "n": 1,
+      "nombre": "Costo de inversión en infraestructura — Componente 1"
+    },
+    "COC-1": {
+      "s2024": 15558274487.0,
+      "s2025": 18548741927.0,
+      "n": 79,
+      "nombre": "Beneficios a empleados operativos"
+    },
+    "COC-2": {
+      "s2024": 6536024763.0,
+      "s2025": 11174480601.0,
+      "n": 21,
+      "nombre": "Costos generales operativos"
+    },
+    "CE": {
+      "s2024": 396736242.0,
+      "s2025": 412881183.0,
+      "n": 1,
+      "nombre": "Costo operativo particular de energía eléctrica"
+    },
+    "CAC-2.COM": {
+      "s2024": 3189094366.0,
+      "s2025": 5086584244.0,
+      "n": 8,
+      "nombre": "   ↳ Gastos de comercialización trasladados de la clase 7"
+    },
+    "COIR": {
+      "s2024": 1349166238.0,
+      "s2025": 3274205392.0,
+      "n": 3,
+      "nombre": "Costo operativo de inversiones ambientales y de gestión del riesgo"
+    },
+    "ICTO": {
+      "s2024": 2092533634.0,
+      "s2025": 1941897603.0,
+      "n": 4,
+      "nombre": "Impuestos, contribuciones y tasas operativas"
+    },
+    "TA": {
+      "s2024": 2712336040.0,
+      "s2025": 705171886.0,
+      "n": 2,
+      "nombre": "Tasas ambientales — uso del agua y retributiva"
+    },
+    "COC-X": {
+      "s2024": 210250045.0,
+      "s2025": 255817421.0,
+      "n": 9,
+      "nombre": "Costos operativos NO reconocidos"
+    },
+    "NT": {
+      "s2024": -43537707553.0,
+      "s2025": -52132352688.0,
+      "n": 5,
+      "nombre": "No tarifario — actividad distinta a la prestación"
+    }
+  }
+}

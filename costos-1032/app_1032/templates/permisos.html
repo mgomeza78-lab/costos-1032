@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Permisos · Costos 1032{% endblock %}
+{% block body %}
+<div class="page-head">
+  <h1>Matriz de permisos por rol</h1>
+  <p class="sub">El aislamiento <em>por empresa</em> lo garantiza la base (Row-Level Security);
+  esta matriz define <em>qué</em> puede hacer cada rol.</p>
+</div>
+<table class="tabla matriz">
+  <thead><tr><th>Acción</th><th>Empresa</th><th>Auditor</th><th>Analista</th><th>Administrador</th></tr></thead>
+  <tbody>
+    {% for f in matriz %}
+    <tr>
+      <td>{{ f.accion }}</td>
+      <td class="c">{{ '✓' if f.empresa else '—' }}</td>
+      <td class="c">{{ '✓' if f.auditor else '—' }}</td>
+      <td class="c">{{ '✓' if f.analista else '—' }}</td>
+      <td class="c">{{ '✓' if f.admin else '—' }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

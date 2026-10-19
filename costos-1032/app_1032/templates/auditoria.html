@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Auditoría · Costos 1032{% endblock %}
+{% block body %}
+<div class="page-head">
+  <h1>Bitácora de auditoría</h1>
+  <p class="sub">Registro de acciones (append-only), para verificabilidad ante la SSPD/CRA.</p>
+</div>
+<table class="tabla">
+  <thead><tr><th>Fecha/hora</th><th>Usuario</th><th>Acción</th><th>Objeto</th><th>Empresa</th><th>Detalle</th></tr></thead>
+  <tbody>
+    {% for f in filas %}
+    <tr>
+      <td class="mono">{{ f.en.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+      <td class="mono">{{ f.email or '—' }}</td>
+      <td>{{ f.accion }}</td>
+      <td>{{ f.objeto or '—' }}</td>
+      <td>{{ f.empresa_id or '—' }}</td>
+      <td>{{ f.detalle or '' }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

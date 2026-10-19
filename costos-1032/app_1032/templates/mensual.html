@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}Operación mensual · {{ emp.nombre }}{% endblock %}
+{% block body %}
+<div class="page-head">
+  <a class="back" href="/empresa/{{ emp.id }}">← {{ emp.nombre }}</a>
+  <h1>Operación mensual e indexación</h1>
+  <p class="sub">Período de inicio: jul–dic 2026. Los costos de referencia se mantienen fijos;
+  la tarifa vigente se actualiza cuando la variación acumulada del índice alcanza el
+  <b>{{ (gatillo*100)|round(0)|int }}%</b> (art. 2.1.2.1.5.3 Res. 1032; art. 125 Ley 142/1994).
+  Dos canastas: <b>IPCs</b> para CMA/CMO/CMICT e <b>IPC</b> para CMI.</p>
+</div>
+
+<div class="actions">
+  {% if puede_procesar %}
+  <form method="post" action="/empresa/{{ emp.id }}/procesar">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <button class="btn primary" type="submit">Procesar indexación y factura</button>
+  </form>
+  {% endif %}
+</div>
+
+{% if serie %}
+  {% for servicio, filas in serie.items() %}
+  <h2 class="serv-h">Tarifa vigente · {{ servicio }}</h2>
+  <table class="tabla">
+    <thead><tr>
+      <th>Mes</th><th>Año tar.</th><th class="r">IPC</th><th class="r">IPCs</th>
+      <th class="r">Var. CMA/CMO/CMICT</th><th class="r">Var. CMI</th><th>¿Indexó?</th>
+      <th class="r">Cargo fijo ($/susc·mes)</th><th class="r">Cargo consumo ($/m³)</th>
+    </tr></thead>
+    <tbody>
+      {% for f in filas %}
+      <tr class="{{ 'fila-indexa' if (f.indexado or f.indexado_ipc) else '' }}">
+        <td class="comp">{{ meses[f.mes] }}-{{ f.anio }}</td>
+        <td class="c"><span class="tag {{ 'al' if (f.anio|anio_tar(f.mes))=='Inicio' else '' }}">{{ f.anio|anio_tar(f.mes) }}</span></td>
+        <td class="num">{{ '%.2f'|format(f.ipc) if f.ipc is not none else '—' }}</td>
+        <td class="num">{{ '%.2f'|format(f.ipcs) if f.ipcs is not none else '—' }}</td>
+        <td class="num">{{ '%.2f'|format(f.variacion_acum*100) }}%</td>
+        <td class="num">{{ '%.2f'|format(f.var_ipc*100) if f.var_ipc is not none else '—' }}%</td>
+        <td class="c">
+          {% if f.indexado %}<span class="tag al">IPCs</span>{% endif %}
+          {% if f.indexado_ipc %}<span class="tag ac">IPC</span>{% endif %}
+          {% if not f.indexado and not f.indexado_ipc %}—{% endif %}
+        </td>
+        <td class="num">{{ f.cargo_fijo|valor('$/susc·mes') }}</td>
+        <td class="num">{{ f.cargo_consumo|valor('$/m³') }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endfor %}
+{% else %}
+  <p class="empty">Aún no hay tarifa vigente.
+  {% if puede_procesar %}Cargue el IPC y use «Procesar».{% endif %}</p>
+{% endif %}
+
+{% if factura %}
+<h2 class="serv-h">Factura teórica por estrato</h2>
+<p class="sub">Mes:
+  {% for (a,m) in meses_fac %}
+    {% if fsel and a==fsel[0] and m==fsel[1] %}<b>{{ meses[m] }}-{{ a }}</b>{% else %}<a href="?fmes={{ a }}-{{ m }}">{{ meses[m] }}-{{ a }}</a>{% endif %}{% if not loop.last %} · {% endif %}
+  {% endfor %}
+</p>
+{% for servicio, d in factura.items() %}
+<h3 class="sub" style="margin:10px 0 2px">{{ servicio }}</h3>
+<table class="tabla">
+  <thead><tr><th>Clase</th><th class="r">Suscriptores</th><th class="r">m³</th>
+    <th class="r">Cargo fijo</th><th class="r">Cargo consumo</th>
+    <th class="r">Subsidio/Contrib.</th><th class="r">Factura total</th></tr></thead>
+  <tbody>
+    {% for r in d.filas %}
+    <tr>
+      <td class="comp">{{ clases.get(r.clase, r.clase) }}</td>
+      <td class="num">{{ r.suscriptores|valor('susc') if r.suscriptores is not none else '—' }}</td>
+      <td class="num">{{ r.m3|valor('m³') if r.m3 is not none else '—' }}</td>
+      <td class="num">{{ r.cf_facturado|valor('$') }}</td>
+      <td class="num">{{ r.cc_facturado|valor('$') }}</td>
+      <td class="num {{ 'neg' if (r.subsidio_contribucion or 0) < 0 else 'pos' }}">{{ r.subsidio_contribucion|valor('$') }}</td>
+      <td class="num">{{ r.factura_total|valor('$') }}</td>
+    </tr>
+    {% endfor %}
+    <tr class="fila-total">
+      <td class="comp">Total {{ servicio }}</td>
+      <td class="num">{{ d.tot_susc|valor('susc') }}</td><td></td><td></td><td></td>
+      <td class="num {{ 'neg' if d.tot_sub < 0 else 'pos' }}">{{ d.tot_sub|valor('$') }}</td>
+      <td class="num">{{ d.tot_fact|valor('$') }}</td>
+    </tr>
+  </tbody>
+</table>
+{% endfor %}
+<p class="hint">Factura <b>derivada</b> (teórica) = suscriptores × cargo fijo + consumo × cargo
+por consumo, aplicando los factores de subsidio (−) y contribución (+) sobre el cargo fijo y
+el consumo básico. Subsidio/contribución negativo = subsidio; positivo = contribución.</p>
+{% endif %}
+
+{% if puede_cargar %}
+<h2 class="serv-h">Importar el archivo original del SUI</h2>
+<form method="post" action="/empresa/{{ emp.id }}/cargar-sui" enctype="multipart/form-data" class="carga-form">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <label>Reporte de Facturación del SUI <span class="muted2">· AC 6080 / ALC 6081 (por suscriptor)</span>
+    <input type="file" name="archivo" accept=".csv" required>
+  </label>
+  <label>Servicio
+    <select name="servicio">
+      {% if emp.presta_ac %}<option value="acueducto">acueducto</option>{% endif %}
+      {% if emp.presta_al %}<option value="alcantarillado">alcantarillado</option>{% endif %}
+    </select>
+  </label>
+  <label>Año <input type="number" name="anio" value="2026" style="width:90px"></label>
+  <label>Mes
+    <select name="mes">{% for m in [7,8,9,10,11,12] %}<option value="{{ m }}">{{ meses[m] }}</option>{% endfor %}</select>
+  </label>
+  <button class="btn primary" type="submit">Importar y agregar por clase</button>
+</form>
+<p class="hint">Sube el archivo tal cual lo exporta el SUI; el sistema lo agrega por clase de uso
+(suscriptores, agua facturada, consumo subsidiable) y extrae los factores de subsidio/contribución.</p>
+
+<h2 class="serv-h">Cargar archivos del mes (CSV agregados por clase)</h2>
+<div class="cargas">
+  {% for t, etq, desc in [
+      ('comercial','Comercial (suscriptores y consumos por clase)','formulario SUI 6080/6081'),
+      ('factores','Factores de subsidio/contribución','reportes SUI 1051/1114'),
+      ('indicadores','Indicadores (IPUF, continuidad, IRCA…)','SURICATA 6084')] %}
+  <form method="post" action="/empresa/{{ emp.id }}/cargar-csv" enctype="multipart/form-data" class="carga-form">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <input type="hidden" name="tipo" value="{{ t }}">
+    <label>{{ etq }} <span class="muted2">· {{ desc }}</span>
+      <input type="file" name="archivo" accept=".csv" required>
+    </label>
+    <button class="btn" type="submit">Cargar {{ t }}</button>
+  </form>
+  {% endfor %}
+</div>
+<p class="hint">Archivos CSV separados (ver «Definición de los cargues mensuales» y las
+plantillas). El índice IPC/IPCs se carga en la pestaña <a href="/ipc">IPC</a>. La facturación
+no se carga: se deriva. Tras cargar comercial o factores, la factura por estrato se recalcula.</p>
+{% endif %}
+{% endblock %}

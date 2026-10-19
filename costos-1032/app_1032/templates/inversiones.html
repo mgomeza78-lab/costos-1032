@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block title %}Inversiones / POIR · {{ emp.nombre }}{% endblock %}
+{% block body %}
+<div class="page-head">
+  <a class="back" href="/empresa/{{ emp.id }}">← {{ emp.nombre }}</a>
+  <h1>Inversiones / POIR</h1>
+  <p class="sub">Registro de proyectos con los campos de la Res. CRA 1032 y seguimiento del avance
+  físico y financiero por corte, hasta la entrada en operación. Cada proyecto se clasifica como
+  <b>asociado al CMI_POIR</b> (opera desde 2027, art. 2.1.2.1.3.5.14) o de <b>reconocimiento expost</b>
+  con la fórmula general (art. 2.1.2.1.3.5). En el período de inicio solo se registra y hace
+  seguimiento: la base alimenta el primer recálculo y la verificación del <b>80 %</b> de ejecución
+  para entrar a la BCR₀.</p>
+</div>
+
+{% if resumen.n %}
+<div class="cards">
+  <div class="card"><div class="k">Proyectos</div><div class="v">{{ resumen.n }}</div></div>
+  <div class="card"><div class="k">Planeado</div><div class="v">{{ resumen.tot_plan|valor('$') }}</div></div>
+  <div class="card"><div class="k">Ejecutado</div><div class="v">{{ resumen.tot_ejec|valor('$') }}</div></div>
+  <div class="card"><div class="k">Ejecución global</div><div class="v">{{ ('%.1f'|format(resumen.pct_global) ~ '%') if resumen.pct_global is not none else '—' }}</div></div>
+</div>
+
+<h2 class="serv-h">Ejecución por servicio (umbral 80 %)</h2>
+<table class="tabla">
+  <thead><tr><th>Servicio</th><th class="r">Planeado</th><th class="r">Ejecutado</th><th class="r">% ejecución</th><th>¿Supera 80 %?</th></tr></thead>
+  <tbody>
+    {% for s, d in resumen.por_servicio.items() %}
+    <tr>
+      <td class="comp">{{ s }}</td>
+      <td class="num">{{ d.planeado|valor('$') }}</td>
+      <td class="num">{{ d.ejecutado|valor('$') }}</td>
+      <td class="num">{{ ('%.1f'|format(d.pct) ~ '%') if d.pct is not none else '—' }}</td>
+      <td class="c">{% if d.supera_80 %}<span class="tag ac">sí</span>{% else %}<span class="tag al">no</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="hint">Clasificación:
+  {% for k, d in resumen.por_clasif.items() %}<b>{{ clasificaciones[k] }}</b>: {{ d.n }} proy., {{ d.planeado|valor('$') }} planeado{% if not loop.last %} · {% endif %}{% endfor %}.</p>
+{% endif %}
+
+<h2 class="serv-h">Proyectos</h2>
+{% if proyectos %}
+<table class="tabla">
+  <thead><tr>
+    <th>Código</th><th>Nombre</th><th>Servicio</th><th>Componente</th><th>Clasificación</th>
+    <th>Estado</th><th class="r">Planeado</th><th class="r">Ejecutado</th>
+    <th class="r">% físico</th><th class="r">% fin.</th><th>F. planeada</th><th>F. real</th>
+  </tr></thead>
+  <tbody>
+    {% for p in proyectos %}
+    <tr>
+      <td class="comp">{{ p.codigo_poir }}</td>
+      <td>{{ p.nombre }}</td>
+      <td>{{ p.servicio }}</td>
+      <td>{{ p.componente_sistema or '—' }}</td>
+      <td><span class="tag {{ 'ac' if p.clasificacion=='CMI_POIR' else '' }}">{{ 'CMI_POIR' if p.clasificacion=='CMI_POIR' else 'expost' }}</span></td>
+      <td><span class="tag {{ {'en_operacion':'ac','en_ejecucion':'al','suspendido':'neg'}.get(p.estado,'') }}">{{ estados[p.estado] }}</span></td>
+      <td class="num">{{ p.valor_planeado|valor('$') if p.valor_planeado is not none else '—' }}</td>
+      <td class="num">{{ p.avance_financiero|valor('$') if p.avance_financiero is not none else '—' }}</td>
+      <td class="num">{{ ('%.0f'|format(p.avance_fisico) ~ '%') if p.avance_fisico is not none else '—' }}</td>
+      <td class="num">{{ ('%.0f'|format(p.pct_financiero) ~ '%') if p.pct_financiero is not none else '—' }}</td>
+      <td class="c">{{ p.fecha_planeada_operacion or '—' }}</td>
+      <td class="c">{{ p.fecha_real_operacion or '—' }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">Aún no hay proyectos registrados.</p>
+{% endif %}
+
+{% if puede_cargar %}
+<h2 class="serv-h">Crear / actualizar proyecto</h2>
+<form method="post" action="/empresa/{{ emp.id }}/inversion-nueva" class="form-grid">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <label>Código POIR <input name="codigo_poir" required></label>
+  <label>Nombre <input name="nombre" required></label>
+  <label>Servicio
+    <select name="servicio">
+      {% if emp.presta_ac %}<option value="acueducto">acueducto</option>{% endif %}
+      {% if emp.presta_al %}<option value="alcantarillado">alcantarillado</option>{% endif %}
+    </select>
+  </label>
+  <label>APS <input name="aps" placeholder="área de prestación"></label>
+  <label>Componente del sistema
+    <input name="componente_sistema" list="componentes" placeholder="captación, tratamiento…">
+    <datalist id="componentes">
+      {% for c in comp_ac %}<option value="{{ c }}">{% endfor %}
+      {% for c in comp_al %}<option value="{{ c }}">{% endfor %}
+    </datalist>
+  </label>
+  <label>Meta asociada <input name="meta_asociada" placeholder="cobertura, continuidad, IRCA, pérdidas…"></label>
+  <label>Clasificación
+    <select name="clasificacion">
+      {% for k, v in clasificaciones.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Origen
+    <select name="origen"><option value="POIR_nuevo">POIR nuevo</option><option value="POIR_688">POIR 688</option></select>
+  </label>
+  <label>Valor planeado ($) <input name="valor_planeado" inputmode="decimal"></label>
+  <label>Fecha planeada de operación <input type="date" name="fecha_planeada_operacion"></label>
+  <label>VIA688 ($) <span class="muted2">· si POIR 688</span><input name="via688" inputmode="decimal"></label>
+  <label>VP recaudo ($) <input name="vp_recaudo" inputmode="decimal"></label>
+  <label>Vida útil (años) <input name="vida_util" inputmode="decimal"></label>
+  <label class="wide">Observación <input name="observacion"></label>
+  <button class="btn primary" type="submit">Guardar proyecto</button>
+</form>
+
+<h2 class="serv-h">Registrar avance de un corte</h2>
+<form method="post" action="/empresa/{{ emp.id }}/inversion-avance" class="form-grid">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <label>Proyecto
+    <select name="proyecto_id" required>
+      {% for p in proyectos %}<option value="{{ p.id }}">{{ p.codigo_poir }} — {{ p.nombre }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Año <input type="number" name="anio" value="2026" style="width:90px"></label>
+  <label>Mes
+    <select name="mes">{% for m in [7,8,9,10,11,12] %}<option value="{{ m }}">{{ m }}</option>{% endfor %}</select>
+  </label>
+  <label>Avance físico (%) <input name="avance_fisico" inputmode="decimal" placeholder="0–100"></label>
+  <label>Avance financiero ($ acumulado) <input name="avance_financiero" inputmode="decimal"></label>
+  <label>Fecha real de operación <span class="muted2">· al entrar en operación</span><input type="date" name="fecha_real_operacion"></label>
+  <label class="wide">Observación <input name="observacion"></label>
+  <button class="btn primary" type="submit">Registrar avance</button>
+</form>
+<p class="hint">El estado pasa a <b>En ejecución</b> con el primer avance y a <b>En operación</b> cuando el
+avance físico llega al 100 % o se registra la fecha real de operación. El avance financiero es el valor
+ejecutado <b>acumulado</b>; el % de ejecución se calcula contra el valor planeado.</p>
+{% endif %}
+{% endblock %}

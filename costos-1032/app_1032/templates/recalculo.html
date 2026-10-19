@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block title %}Recálculo mensual · {{ emp.nombre }}{% endblock %}
+{% block body %}
+<div class="page-head">
+  <a class="back" href="/empresa/{{ emp.id }}">← {{ emp.nombre }}</a>
+  <h1>Recálculo mensual de costos de referencia</h1>
+  <p class="sub">Seguimiento/control: recalcula los costos económicos de referencia <b>del mes</b>
+  y <b>acumulados</b> con los drivers reales (suscriptores N, consumo corregido por pérdidas CCP,
+  numeradores del balance clasificado), aplicando las fórmulas del estudio. <b>No re-fija la
+  tarifa cobrada</b> (esa es el costo del estudio indexado; ver <a href="/empresa/{{ emp.id }}/mensual">Operación mensual</a>);
+  sirve para monitorear CCP y pérdidas y para acumular la línea base del recálculo anual
+  (art. 2.1.2.1.1.9). CCP del mes: AF + pérdidas reconocidas con tope <b>IPUF* = {{ '%.0f'|format(ipuf) }}</b>
+  m³/susc·mes (art. 2.1.2.1.3.3).</p>
+</div>
+
+<div class="actions">
+  {% if puede_procesar %}
+  <form method="post" action="/empresa/{{ emp.id }}/recalcular-mes">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <button class="btn primary" type="submit">Recalcular meses</button>
+  </form>
+  {% endif %}
+</div>
+
+{% if not tiene_base %}
+  <p class="empty">No hay parámetros base cargados para esta empresa (numeradores del año base,
+  N, CCP, factores). Se siembran con <code>seed_recalculo.py</code> o se cargan por la API.</p>
+{% endif %}
+
+{% if serie %}
+  {% for servicio, filas in serie.items() %}
+  <h2 class="serv-h">Costo de referencia del mes · {{ servicio }}</h2>
+  <table class="tabla">
+    <thead><tr>
+      <th>Mes</th><th>Año tar.</th><th class="r">N</th><th class="r">AF (m³)</th><th class="r">AP (m³)</th>
+      <th class="r">IANC</th><th class="r">CCP (m³)</th>
+      <th class="r">CMA</th><th class="r">CMO</th><th class="r">CMI</th><th class="r">CMICT</th>
+      <th>Origen</th>
+    </tr></thead>
+    <tbody>
+      {% for f in filas %}
+      <tr>
+        <td class="comp">{{ meses[f.mes] }}-{{ f.anio }}</td>
+        <td class="c"><span class="tag {{ 'al' if (f.anio|anio_tar(f.mes))=='Inicio' else '' }}">{{ f.anio|anio_tar(f.mes) }}</span></td>
+        <td class="num">{{ f.n_mes|valor('susc') if f.n_mes is not none else '—' }}</td>
+        <td class="num">{{ f.af_mes|valor('m³') if f.af_mes is not none else '—' }}</td>
+        <td class="num">{{ f.ap_mes|valor('m³') if f.ap_mes else '—' }}</td>
+        <td class="num">{{ '%.1f'|format(f.ianc) ~ '%' if f.ianc is not none else '—' }}</td>
+        <td class="num">{{ f.ccp_mes|valor('m³') if f.ccp_mes is not none else '—' }}</td>
+        <td class="num">{{ f.cma_mes|valor('$/susc·mes') if f.cma_mes is not none else '—' }}</td>
+        <td class="num">{{ f.cmo_mes|valor('$/m³') if f.cmo_mes is not none else '—' }}</td>
+        <td class="num">{{ f.cmi_mes|valor('$/m³') if f.cmi_mes is not none else '—' }}</td>
+        <td class="num">{{ f.cmict_mes|valor('$/m³') if f.cmict_mes is not none else '—' }}</td>
+        <td class="c"><span class="tag {{ 'ac' if f.origen_numerador=='balance' else '' }}">{{ 'balance' if f.origen_numerador=='balance' else 'prorrateo' }}</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <h3 class="sub" style="margin:10px 0 2px">Acumulado y suficiencia · {{ servicio }}</h3>
+  <table class="tabla">
+    <thead><tr>
+      <th>Mes</th><th class="r">CMA acum.</th><th class="r">CMO acum.</th><th class="r">CMICT acum.</th>
+      <th class="r">Cobrado CF</th><th class="r">Ref. CF</th><th class="r">Brecha CF</th>
+      <th class="r">Cobrado CC</th><th class="r">Ref. CC</th><th class="r">Brecha CC</th>
+    </tr></thead>
+    <tbody>
+      {% for f in filas %}
+      <tr>
+        <td class="comp">{{ meses[f.mes] }}-{{ f.anio }}</td>
+        <td class="num">{{ f.cma_acum|valor('$/susc·mes') if f.cma_acum is not none else '—' }}</td>
+        <td class="num">{{ f.cmo_acum|valor('$/m³') if f.cmo_acum is not none else '—' }}</td>
+        <td class="num">{{ f.cmict_acum|valor('$/m³') if f.cmict_acum is not none else '—' }}</td>
+        <td class="num">{{ f.cobrado_cf|valor('$') if f.cobrado_cf is not none else '—' }}</td>
+        <td class="num">{{ f.ref_cf|valor('$') if f.ref_cf is not none else '—' }}</td>
+        <td class="num {{ 'pos' if (f.brecha_cf or 0) >= 0 else 'neg' }}">{{ f.brecha_cf|valor('$') if f.brecha_cf is not none else '—' }}</td>
+        <td class="num">{{ f.cobrado_cc|valor('$') if f.cobrado_cc is not none else '—' }}</td>
+        <td class="num">{{ f.ref_cc|valor('$') if f.ref_cc is not none else '—' }}</td>
+        <td class="num {{ 'pos' if (f.brecha_cc or 0) >= 0 else 'neg' }}">{{ f.brecha_cc|valor('$') if f.brecha_cc is not none else '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endfor %}
+  <p class="hint"><b>Brecha</b> = costo cobrado (indexado) − costo de referencia del mes. Positiva:
+  la tarifa cobrada cubre el costo del mes (suficiencia); negativa: el costo del mes supera lo
+  cobrado. CMI es estructural (BCR₀ anual); CMA/CMO/CMICT se recalculan con los drivers del mes.
+  «Origen» indica si los numeradores vienen del <b>balance del mes</b> clasificado o del
+  <b>prorrateo</b> del año base (/12) cuando aún no se cargó balance.</p>
+{% else %}
+  <p class="empty">Aún no hay recálculo.
+  {% if puede_procesar %}Cargue suscriptores (comercial), macromedición y, si lo tiene, el balance del mes; luego use «Recalcular meses».{% endif %}</p>
+{% endif %}
+
+{% if puede_cargar %}
+<h2 class="serv-h">Cargar el balance de prueba del mes</h2>
+<form method="post" action="/empresa/{{ emp.id }}/cargar-balance" enctype="multipart/form-data" class="carga-form">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <label>Balance de prueba <span class="muted2">· cualquier formato (xlsx/csv); se auto-detecta y clasifica</span>
+    <input type="file" name="archivo" accept=".xlsx,.xlsm,.csv" required>
+  </label>
+  <label>Año <input type="number" name="anio" value="2026" style="width:90px"></label>
+  <label>Mes
+    <select name="mes">{% for m in [7,8,9,10,11,12] %}<option value="{{ m }}">{{ meses[m] }}</option>{% endfor %}</select>
+  </label>
+  <button class="btn primary" type="submit">Clasificar y recalcular</button>
+</form>
+<p class="hint">El sistema lee el balance (sin importar el software contable), lo clasifica con el
+catálogo de la empresa (criterios de la Res. 1032) y obtiene los numeradores CACe/COCe/CE/CIQ/
+ICTA/ITO/TA del mes. Las cuentas que no estén en el catálogo se reportan como «sin clasificar».</p>
+
+<h2 class="serv-h">Cargar macromedición del mes (agua producida)</h2>
+<form method="post" action="/empresa/{{ emp.id }}/cargar-csv" enctype="multipart/form-data" class="carga-form">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <input type="hidden" name="tipo" value="macromedicion">
+  <label>Macromedición <span class="muted2">· CSV por punto: anio, mes, servicio, punto, m3_producido</span>
+    <input type="file" name="archivo" accept=".csv" required>
+  </label>
+  <button class="btn" type="submit">Cargar macromedición</button>
+</form>
+<p class="hint">El agua producida alimenta las pérdidas (IANC = producida − facturada) y el CCP.
+No hay reporte mensual del SUI de producción; es un cargue propio por punto de macromedición.
+Los suscriptores y el agua facturada se cargan en <a href="/empresa/{{ emp.id }}/mensual">Operación mensual</a>.</p>
+{% endif %}
+{% endblock %}

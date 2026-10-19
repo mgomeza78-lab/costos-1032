@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Usuarios · Costos 1032{% endblock %}
+{% block body %}
+<div class="page-head">
+  <h1>Usuarios y credenciales</h1>
+  <p class="sub">Emite credenciales. Un usuario <b>Empresa</b> o <b>Auditor</b> queda
+  atado a una empresa y solo verá esa; <b>Analista</b> y <b>Administrador</b> ven todas.</p>
+</div>
+
+<table class="tabla">
+  <thead><tr><th>Nombre</th><th>Correo</th><th>Rol</th><th>Empresa</th><th>MFA</th><th>Estado</th></tr></thead>
+  <tbody>
+    {% for u in usuarios %}
+    <tr>
+      <td>{{ u.nombre }}</td>
+      <td class="mono">{{ u.email }}</td>
+      <td><span class="role role-{{ u.rol }}">{{ rbac.rol_nombre(u.rol) }}</span></td>
+      <td>{{ u.empresa or '—' }}</td>
+      <td class="c">{{ '✓' if u.mfa_activo else '—' }}</td>
+      <td>{{ 'activo' if u.activo else 'inactivo' }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h2 class="serv-h">Emitir credencial</h2>
+<form method="post" action="/usuarios" class="form wide">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <div class="grid2">
+    <label>Nombre<input name="nombre" required></label>
+    <label>Correo<input type="email" name="email" required></label>
+    <label>Rol
+      <select name="rol" required>
+        {% for r in roles %}<option value="{{ r.codigo }}">{{ r.nombre }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Empresa (solo rol Empresa / Auditor)
+      <select name="empresa_id">
+        <option value="">— (no aplica)</option>
+        {% for e in empresas %}<option value="{{ e.id }}">{{ e.nombre }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Contraseña temporal<input name="password" required></label>
+  </div>
+  <p class="hint">Mínimo {{ min_len }} caracteres, con letra, número y símbolo. El usuario
+  deberá cambiarla en su primer ingreso.</p>
+  <button class="btn primary" type="submit">Emitir credencial</button>
+</form>
+{% endblock %}

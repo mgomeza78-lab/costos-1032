@@ -1,0 +1,32 @@
+# =====================================================================
+#  render.yaml — Blueprint para desplegar el aplicativo en Render.
+#  La BASE DE DATOS va en Supabase (persistente, por el Session Pooler).
+#  Aquí solo se define el APLICATIVO, que se conecta a esa base por la
+#  variable DB_APP_URL. Las claves NO van en este archivo: Render te
+#  pedirá llenarlas al crear el Blueprint (marcadas abajo con sync:false).
+#
+#  Uso: con este archivo en la raíz del repositorio, en Render elige
+#  "New +" -> "Blueprint" y conecta el repo.
+# =====================================================================
+services:
+  - type: web
+    name: costos-1032
+    runtime: python
+    plan: free
+    # region: virginia      # (opcional) en el panel elige la más cercana (US East, como Supabase)
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "uvicorn main:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: APP_ENV
+        value: prod
+      - key: APP_SECRET_KEY
+        generateValue: true       # Render genera sola una clave de sesión aleatoria
+      # --- Conexión a Supabase (Session Pooler). La pegas en el panel de Render ---
+      - key: DB_APP_URL
+        sync: false
+        # Formato: postgresql+psycopg://app_user.<ref>:CLAVE_APP@aws-0-...pooler.supabase.com:5432/postgres?sslmode=require
+      # (Opcional, solo para administración; NO hace falta para entrar y navegar)
+      # - key: DB_OWNER_URL
+      #   sync: false
+      # - key: SEED_PASSWORD
+      #   sync: false

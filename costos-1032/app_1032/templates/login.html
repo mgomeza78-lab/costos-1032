@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Ingreso · Costos 1032{% endblock %}
+{% block body %}
+<div class="login-card">
+  <h1>Estudios de costos CRA 1032</h1>
+  <p class="sub">Plataforma multiempresa de costos y tarifas de acueducto y alcantarillado.</p>
+  <form method="post" action="/login" class="form">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <label>Correo
+      <input type="email" name="email" required autofocus placeholder="usuario@empresa.com">
+    </label>
+    <label>Contraseña
+      <input type="password" name="password" required placeholder="••••••••">
+    </label>
+    <button type="submit" class="btn primary">Ingresar</button>
+  </form>
+  <p class="hint">Cada usuario entra directo a su alcance: el administrador ve todas
+  las empresas; el usuario de una empresa solo ve la suya.</p>
+</div>
+{% endblock %}
