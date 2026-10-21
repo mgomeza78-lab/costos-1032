@@ -1,13 +1,18 @@
 {% extends "base.html" %}
 {% block title %}Empresas · Costos 1032{% endblock %}
 {% block body %}
-<div class="page-head">
-  <h1>Empresas</h1>
-  <p class="sub">
-    {% if user.allow_all %}Acceso a todas las empresas registradas.
-    {% else %}Acceso restringido a su empresa.{% endif %}
-    <strong>{{ empresas|length }}</strong> visible{{ '' if empresas|length==1 else 's' }} para {{ user.email }}.
-  </p>
+<div class="page-head with-action">
+  <div>
+    <h1>Empresas</h1>
+    <p class="sub">
+      {% if user.allow_all %}Acceso a todas las empresas registradas.
+      {% else %}Acceso restringido a su empresa.{% endif %}
+      <strong>{{ empresas|length }}</strong> visible{{ '' if empresas|length==1 else 's' }} para {{ user.email }}.
+    </p>
+  </div>
+  {% if rbac.can(user,'crear_empresa') %}
+  <a class="btn primary" href="/empresa-nueva">+ Nueva empresa</a>
+  {% endif %}
 </div>
 
 {% if empresas %}

@@ -39,6 +39,8 @@ nav.rail{position:sticky;top:0;align-self:start;height:100vh;overflow-y:auto;
 .rail .sublabel{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#7ba79d;font-weight:700;margin:16px 8px 7px}
 .rail .rail-emp{color:#fff;font-family:var(--head);font-size:14.5px;margin:2px 8px 4px;line-height:1.2}
 .rail .rail-back{display:inline-block;color:#9dc2ba;font-size:12px;margin:0 8px 6px}
+.rail a.rail-edit{display:inline-block;color:#e7c6a0;font-size:12px;margin:0 8px 8px;border-bottom:1px dotted rgba(231,198,160,.5)}
+.rail a.rail-edit:hover{color:#fff;text-decoration:none}
 .rail ol.rail-nav{list-style:none;margin:0;padding:0;counter-reset:s}
 .rail .rail-nav li{margin:1px 0}
 .rail a.link{counter-increment:s;display:flex;gap:10px;align-items:baseline;padding:8px 10px;border-radius:9px;
@@ -66,6 +68,9 @@ main{min-width:0}
 
 /* ===== encabezado de página ===== */
 .page-head{margin-bottom:22px}
+.page-head.with-action{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap}
+.page-head.with-action .btn{white-space:nowrap}
+.btn-link.edit{color:var(--copper,#b5703a)}
 .page-head h1{margin:.08em 0;font-size:clamp(24px,3vw,33px)}
 .page-head .sub{color:var(--muted);margin:.25em 0;max-width:80ch}
 .back{display:inline-block;color:var(--muted);font-size:13px;margin-bottom:6px}

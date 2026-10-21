@@ -124,6 +124,21 @@ def _dest(nxt, default, query):
     return f"{base}{'&' if '?' in base else '?'}{query}"
 
 
+def _destino_inicio(user):
+    """Pantalla de entrada tras el login. El administrador y el analista ven el
+    panel de empresas; los demás usuarios (empresa/auditor) van directo a la
+    empresa que tengan asignada."""
+    if not user:
+        return "/login"
+    if rbac.can(user, "ver_otras_empresas"):      # admin + analista → panel
+        return "/panel"
+    eid = user.get("empresa_id")
+    if not eid:
+        ids = user.get("empresa_ids") or []
+        eid = ids[0] if ids else None
+    return f"/empresa/{eid}" if eid else "/panel"
+
+
 def _leer_csv(archivo):
     """Lee el CSV subido con detección de codificación (los reportes del SUI son Latin-1)."""
     raw = archivo.file.read()
@@ -150,13 +165,14 @@ def _complete_login(request, u):
 # ------------------------------------------------------------------ auth
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
-    return RedirectResponse("/panel" if session_user(request) else "/login", status_code=303)
+    u = session_user(request)
+    return RedirectResponse(_destino_inicio(u) if u else "/login", status_code=303)
 
 
 @app.get("/login", response_class=HTMLResponse)
 def login_form(request: Request):
-    if session_user(request):
-        return RedirectResponse("/panel", status_code=303)
+    if (u := session_user(request)):
+        return RedirectResponse(_destino_inicio(u), status_code=303)
     return tpl.TemplateResponse(request, "login.html", _ctx(request))
 
 
@@ -188,7 +204,8 @@ def login_post(request: Request, email: str = Form(...), password: str = Form(..
         request.session["mfa_pending"] = {"id": u["id"], "email": u["email"]}
         return RedirectResponse("/mfa", status_code=303)
     _complete_login(request, u)
-    destino = "/cuenta?msg=Debe+cambiar+su+contraseña" if u["debe_cambiar_pass"] else "/panel"
+    destino = ("/cuenta?msg=Debe+cambiar+su+contraseña" if u["debe_cambiar_pass"]
+               else _destino_inicio(session_user(request)))
     return RedirectResponse(destino, status_code=303)
 
 
@@ -211,7 +228,7 @@ def mfa_post(request: Request, codigo: str = Form(...), csrf: str = Form("")):
         request.session.pop("mfa_pending", None)
         _complete_login(request, u)
         db.audit(scope_of(request.session["user"]), "login_mfa_ok", "sesión")
-        return RedirectResponse("/panel", status_code=303)
+        return RedirectResponse(_destino_inicio(session_user(request)), status_code=303)
     db.audit({"email": pend["email"]}, "login_mfa_fallido", "sesión")
     return RedirectResponse("/mfa?err=Código+MFA+inválido", status_code=303)
 
@@ -392,12 +409,9 @@ def empresa_nueva_form(request: Request):
 
 @app.post("/empresa-nueva")
 def empresa_nueva_post(request: Request, codigo: str = Form(...), nombre: str = Form(""),
-                       suscriptores: str = Form(""), n_aps: str = Form(""),
-                       codigo_sui: str = Form(""), segmento_id: str = Form(""),
-                       municipios: list[str] = Form([]),
-                       presta_ac: str = Form(None), presta_al: str = Form(None),
+                       suscriptores: str = Form(""), codigo_sui: str = Form(""),
                        fecha_688: str = Form(""), fecha_1032: str = Form(""),
-                       tardia: str = Form(None), r825: str = Form(None), csrf: str = Form("")):
+                       aps_items: list[str] = Form([], alias="aps"), csrf: str = Form("")):
     if (r := _need_login(request)):
         return r
     if (bad := _bad_csrf(request, csrf)):
@@ -413,33 +427,35 @@ def empresa_nueva_post(request: Request, codigo: str = Form(...), nombre: str = 
     codigo = codigo.strip().upper().replace(" ", "_")
     base = nucleo_service.perfil_resumen(codigo) if nucleo_service.perfil_existe(codigo) else {}
     susc = _i(suscriptores)
+
+    # Municipios atendidos con su servicio por APS ("coddane:servicio")
+    pares, vistos = [], set()
+    for a in (aps_items or []):
+        cod, _, serv = (a or "").partition(":")
+        cod = cod.strip(); serv = (serv or "ambos").strip().lower()
+        if cod.isdigit() and len(cod) == 5 and serv in ("ac", "al", "ambos") and cod not in vistos:
+            vistos.add(cod); pares.append((cod, serv))
+    presta_ac = any(s in ("ac", "ambos") for _, s in pares)
+    presta_al = any(s in ("al", "ambos") for _, s in pares)
+    f688 = (base.get("fecha_inicio_688") or fecha_688.strip() or "2016-07-01")
+    f1032 = (base.get("fecha_inicio_1032") or fecha_1032.strip() or "2026-07-01")
+    tardia = bool(base.get("aplicacion_1032_tardia")) or (str(f1032) > "2026-07-01")
     try:
         with db.scope_conn(scope_of(user)) as conn:
             seg_sug, _m = terr.segmento_por_suscriptores(conn, susc)
-            if r825 is not None:
-                seg = 4                               # aplicaba Res. 825 en todas las APS → segmento 4
-            elif segmento_id and segmento_id.isdigit():
-                seg = int(segmento_id)                # elección manual (p. ej. optar por segmento superior)
-            else:
-                seg = base.get("segmento") or seg_sug or 2
+            seg = base.get("segmento") or seg_sug or 2      # automático por suscriptores
             segrow = conn.execute(text("SELECT r, kct FROM segmento WHERE id=:s"),
                                   {"s": seg}).mappings().first()
             data = {
-                "codigo": codigo,
-                "nombre": nombre.strip() or base.get("nombre") or codigo,
-                "municipio": base.get("municipio"),
-                "segmento_id": seg,
-                "presta_ac": (presta_ac is not None) or bool(base.get("presta_ac")),
-                "presta_al": (presta_al is not None) or bool(base.get("presta_al")),
+                "codigo": codigo, "nombre": nombre.strip() or base.get("nombre") or codigo,
+                "municipio": base.get("municipio"), "segmento_id": seg,
+                "presta_ac": presta_ac or bool(base.get("presta_ac")),
+                "presta_al": presta_al or bool(base.get("presta_al")),
                 "esquema": base.get("esquema"),
                 "r": base.get("r") or (float(segrow["r"]) if segrow else None),
                 "kct": base.get("kct") or (float(segrow["kct"]) if segrow else None),
-                "f688": (base.get("fecha_inicio_688") or fecha_688 or None),
-                "f1032": (base.get("fecha_inicio_1032") or fecha_1032 or None),
-                "tardia": (tardia is not None) or bool(base.get("aplicacion_1032_tardia")),
-                "sui": codigo_sui.strip() or None,
-                "naps": _i(n_aps),
-                "sseg": susc,
+                "f688": f688 or None, "f1032": f1032 or None, "tardia": tardia,
+                "sui": codigo_sui.strip() or None, "naps": len(pares) or None, "sseg": susc,
             }
             eid = conn.execute(text(
                 "INSERT INTO empresa (codigo,nombre,nit,municipio,segmento_id,presta_ac,presta_al,"
@@ -447,19 +463,142 @@ def empresa_nueva_post(request: Request, codigo: str = Form(...), nombre: str = 
                 " codigo_sui,n_aps,suscriptores_seg) "
                 "VALUES (:codigo,:nombre,NULL,:municipio,:segmento_id,:presta_ac,:presta_al,"
                 " :esquema,:r,:kct,:f688,:f1032,:tardia,:sui,:naps,:sseg) RETURNING id"), data).scalar()
-            terr.set_municipios(conn, eid, municipios)
-            if municipios and not data["municipio"]:
+            terr.set_municipios(conn, eid, [c for c, _ in pares])
+            for idx, (cod, serv) in enumerate(pares, start=1):
+                aps.guardar(conn, eid, cod, {"servicios": serv, "numero_aps": idx}, user["user_id"])
+            if pares and not data["municipio"]:
                 prim = conn.execute(text(
                     "SELECT m.nombre || ' (' || d.nombre || ')' FROM municipio m "
                     "JOIN departamento d ON d.cod_dane = m.cod_dpto WHERE m.cod_dane = :c"),
-                    {"c": (municipios[0] or "").strip()}).scalar()
+                    {"c": pares[0][0]}).scalar()
                 if prim:
-                    conn.execute(text("UPDATE empresa SET municipio=:m WHERE id=:e"),
-                                 {"m": prim, "e": eid})
+                    conn.execute(text("UPDATE empresa SET municipio=:m WHERE id=:e"), {"m": prim, "e": eid})
     except Exception as e:
         return RedirectResponse(f"/empresa-nueva?err=No+se+pudo+crear+({type(e).__name__})", status_code=303)
     db.audit(scope_of(user), "crear_empresa", "empresa", None, codigo)
     return RedirectResponse("/panel?msg=Empresa+creada:+" + codigo, status_code=303)
+
+
+# ------------------------------------------------------------------ editar empresa (admin + analista)
+@app.get("/empresa/{eid}/editar", response_class=HTMLResponse)
+def empresa_editar_form(request: Request, eid: int):
+    if (r := _need_login(request)):
+        return r
+    user = session_user(request)
+    if not rbac.can(user, "editar_empresa"):
+        return RedirectResponse(f"/empresa/{eid}?err=No+autorizado", status_code=303)
+    with db.scope_conn(scope_of(user)) as conn:
+        emp = conn.execute(text("SELECT * FROM empresa WHERE id=:e"), {"e": eid}).mappings().first()
+        if not emp:
+            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        segs = conn.execute(text("SELECT id, nombre, susc_min, susc_max FROM segmento ORDER BY id")).mappings().all()
+        deptos = terr.departamentos(conn)
+        munis = terr.municipios(conn)
+        # municipios ya atendidos con el servicio declarado en su APS (si existe)
+        actuales = conn.execute(text(
+            "SELECT em.cod_dane, m.nombre AS municipio, d.nombre AS departamento, "
+            "       COALESCE(a.servicios, 'ambos') AS servicios "
+            "FROM empresa_municipio em "
+            "JOIN municipio m ON m.cod_dane = em.cod_dane "
+            "JOIN departamento d ON d.cod_dane = m.cod_dpto "
+            "LEFT JOIN aps a ON a.empresa_id = em.empresa_id AND a.cod_dane = em.cod_dane "
+            "WHERE em.empresa_id = :e ORDER BY d.nombre, m.nombre"),
+            {"e": eid}).mappings().all()
+    return tpl.TemplateResponse(request, "empresa_editar.html", _ctx(
+        request, emp=emp, segmentos=segs, departamentos=deptos, municipios=munis,
+        actuales=actuales))
+
+
+@app.post("/empresa/{eid}/editar")
+def empresa_editar_post(request: Request, eid: int, nombre: str = Form(""),
+                        suscriptores: str = Form(""), codigo_sui: str = Form(""),
+                        fecha_688: str = Form(""), fecha_1032: str = Form(""),
+                        aps_items: list[str] = Form([], alias="aps"), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    if not rbac.can(user, "editar_empresa"):
+        return RedirectResponse(f"/empresa/{eid}?err=No+autorizado", status_code=303)
+
+    def _i(x):
+        d = "".join(ch for ch in (x or "") if ch.isdigit())
+        return int(d) if d else None
+
+    susc = _i(suscriptores)
+    pares, vistos = [], set()
+    for a in (aps_items or []):
+        cod, _, serv = (a or "").partition(":")
+        cod = cod.strip(); serv = (serv or "ambos").strip().lower()
+        if cod.isdigit() and len(cod) == 5 and serv in ("ac", "al", "ambos") and cod not in vistos:
+            vistos.add(cod); pares.append((cod, serv))
+    presta_ac = any(s in ("ac", "ambos") for _, s in pares)
+    presta_al = any(s in ("al", "ambos") for _, s in pares)
+    f688 = fecha_688.strip() or None
+    f1032 = fecha_1032.strip() or None
+    tardia = bool(f1032 and str(f1032) > "2026-07-01")
+    try:
+        with db.scope_conn(scope_of(user)) as conn:
+            emp = conn.execute(text("SELECT * FROM empresa WHERE id=:e"), {"e": eid}).mappings().first()
+            if not emp:
+                return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+            # Segmento automático por suscriptores; si cambia, se refrescan r y kct.
+            seg_sug, _m = terr.segmento_por_suscriptores(conn, susc) if susc else (None, None)
+            seg = seg_sug or emp["segmento_id"]
+            r_val, kct_val = emp["r"], emp["kct"]
+            if seg != emp["segmento_id"]:
+                sr = conn.execute(text("SELECT r, kct FROM segmento WHERE id=:s"),
+                                  {"s": seg}).mappings().first()
+                if sr:
+                    r_val, kct_val = float(sr["r"]), float(sr["kct"])
+            data = {
+                "e": eid, "nombre": nombre.strip() or emp["nombre"], "segmento_id": seg,
+                "presta_ac": presta_ac, "presta_al": presta_al, "r": r_val, "kct": kct_val,
+                "f688": f688 or emp["fecha_inicio_688"], "f1032": f1032 or emp["fecha_inicio_1032"],
+                "tardia": tardia, "sui": codigo_sui.strip() or emp["codigo_sui"],
+                "naps": len(pares) or None, "sseg": susc if susc is not None else emp["suscriptores_seg"],
+            }
+            conn.execute(text(
+                "UPDATE empresa SET nombre=:nombre, segmento_id=:segmento_id, presta_ac=:presta_ac, "
+                " presta_al=:presta_al, r=:r, kct=:kct, fecha_inicio_688=:f688, fecha_inicio_1032=:f1032, "
+                " aplicacion_1032_tardia=:tardia, codigo_sui=:sui, n_aps=:naps, suscriptores_seg=:sseg "
+                "WHERE id=:e"), data)
+            # Reconciliación de municipios/APS sin destruir la configuración ya hecha:
+            actuales = {row[0] for row in conn.execute(text(
+                "SELECT cod_dane FROM empresa_municipio WHERE empresa_id=:e"), {"e": eid}).all()}
+            objetivo = {c for c, _ in pares}
+            for cod in actuales - objetivo:                 # municipios retirados
+                conn.execute(text("DELETE FROM aps WHERE empresa_id=:e AND cod_dane=:c"),
+                             {"e": eid, "c": cod})
+                conn.execute(text("DELETE FROM empresa_municipio WHERE empresa_id=:e AND cod_dane=:c"),
+                             {"e": eid, "c": cod})
+            for idx, (cod, serv) in enumerate(pares, start=1):
+                conn.execute(text("INSERT INTO empresa_municipio(empresa_id,cod_dane) VALUES (:e,:c) "
+                                  "ON CONFLICT DO NOTHING"), {"e": eid, "c": cod})
+                existe = conn.execute(text("SELECT 1 FROM aps WHERE empresa_id=:e AND cod_dane=:c"),
+                                      {"e": eid, "c": cod}).first()
+                if existe:                                   # conserva el detalle del APS; solo refresca el servicio
+                    conn.execute(text(
+                        "UPDATE aps SET servicios=:s, numero_aps=COALESCE(numero_aps,:n), "
+                        " actualizado_por=:u, actualizado_en=now() WHERE empresa_id=:e AND cod_dane=:c"),
+                        {"s": serv, "n": idx, "u": user["user_id"], "e": eid, "c": cod})
+                else:
+                    aps.guardar(conn, eid, cod, {"servicios": serv, "numero_aps": idx}, user["user_id"])
+            # Municipio principal (rótulo) = primer APS, si quedó alguno.
+            if pares:
+                prim = conn.execute(text(
+                    "SELECT m.nombre || ' (' || d.nombre || ')' FROM municipio m "
+                    "JOIN departamento d ON d.cod_dane = m.cod_dpto WHERE m.cod_dane = :c"),
+                    {"c": pares[0][0]}).scalar()
+                if prim:
+                    conn.execute(text("UPDATE empresa SET municipio=:m WHERE id=:e"), {"m": prim, "e": eid})
+    except Exception as e:
+        return RedirectResponse(f"/empresa/{eid}/editar?err=No+se+pudo+guardar+({type(e).__name__})",
+                                status_code=303)
+    db.audit(scope_of(user), "editar_empresa", "empresa", eid, emp["codigo"])
+    return RedirectResponse(f"/empresa/{eid}/aps?msg=Empresa+actualizada;+ajuste+el+detalle+de+cada+APS",
+                            status_code=303)
 
 
 # ------------------------------------------------------------------ usuarios (admin)

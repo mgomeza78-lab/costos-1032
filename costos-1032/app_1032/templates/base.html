@@ -24,6 +24,7 @@
       <a class="rail-back" href="/panel">← Empresas</a>
       <div class="rail-emp">{{ emp.nombre }}</div>
       <div class="sublabel">Estudio de costos · período de inicio</div>
+      {% if rbac.can(user,'editar_empresa') %}<a class="rail-edit" href="/empresa/{{ emp.id }}/editar">✎ Editar empresa / áreas</a>{% endif %}
 
       <div class="rail-sec">Gestión de información</div>
       <ol class="rail-nav">
@@ -46,8 +47,6 @@
     {% else %}
       <div class="sublabel">Navegación</div>
       <ol class="rail-nav">
-        <li><a class="link {{ 'active' if request.url.path in ['/panel','/'] }}" href="/panel">Empresas</a></li>
-        {% if rbac.can(user,'crear_empresa') %}<li><a class="link {{ 'active' if '/empresa-nueva' in request.url.path }}" href="/empresa-nueva">Nueva empresa</a></li>{% endif %}
         {% if rbac.can(user,'administrar_usuarios') %}<li><a class="link {{ 'active' if '/usuarios' in request.url.path }}" href="/usuarios">Usuarios</a></li>{% endif %}
         {% if rbac.can(user,'administrar_ipc') %}<li><a class="link {{ 'active' if '/ipc' in request.url.path }}" href="/ipc">IPC / indexación</a></li>{% endif %}
         <li><a class="link {{ 'active' if '/periodos' in request.url.path }}" href="/periodos">Años tarifarios</a></li>

@@ -6,6 +6,7 @@
   <h1>{{ emp.nombre }}</h1>
   <p class="sub">{{ emp.codigo }} · {{ emp.municipio or '—' }} · Segmento {{ emp.segmento_id }}
     {% if emp.presta_ac %}· Acueducto{% endif %}{% if emp.presta_al %} · Alcantarillado{% endif %}</p>
+  {% if rbac.can(user,'editar_empresa') %}<p><a class="btn-link edit" href="/empresa/{{ emp.id }}/editar">✎ Editar empresa y áreas (APS) →</a></p>{% endif %}
   <p><a class="btn-link" href="/empresa/{{ emp.id }}/aps">Configuración del APS →</a>
      <a class="btn-link" href="/empresa/{{ emp.id }}/dashboard">Tablero de indicadores →</a>
      <a class="btn-link" href="/empresa/{{ emp.id }}/mensual">Operación mensual e indexación →</a>
