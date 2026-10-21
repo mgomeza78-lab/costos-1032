@@ -12,10 +12,14 @@ import nucleo_service as ns
 from security import hash_password
 
 SEG = [
-    # id, nombre, susc_min, susc_max, r, kct, ipuf*, art_r, art_kct
+    # id, nombre, susc_min, susc_max, r, kct, ipuf*, art_r, art_kct  (Res. CRA 1032, art. 2.1.2.1.1.6)
     (1, "Primer segmento (> 300.000 suscriptores)", 300001, None, 0.0858, 0.0178, 6.0,
      "2.1.2.1.3.1.7", "2.1.2.1.3.1.8"),
-    (2, "Segundo segmento (90.000 – 300.000 suscriptores)", 90000, 300000, 0.0903, 0.0154, 6.0,
+    (2, "Segundo segmento (90.001 – 300.000 suscriptores)", 90001, 300000, 0.0903, 0.0154, 6.0,
+     "2.1.2.1.3.1.7", "2.1.2.1.3.1.8"),
+    (3, "Tercer segmento (17.001 – 90.000 suscriptores)", 17001, 90000, 0.0910, 0.0162, 6.0,
+     "2.1.2.1.3.1.7", "2.1.2.1.3.1.8"),
+    (4, "Cuarto segmento (5.001 – 17.000 suscriptores)", 5001, 17000, 0.0910, 0.0203, 6.0,
      "2.1.2.1.3.1.7", "2.1.2.1.3.1.8"),
 ]
 ROLES = [(1, "admin", "Administrador"), (2, "analista", "Analista"),
@@ -65,6 +69,19 @@ def main():
                     " unidad,procedencia,fuente,articulo) VALUES (:e,:s,:cp,:v,:u,:p,:f,:a)"),
                     {"e": row, "s": f["servicio"], "cp": f["componente"], "v": f["valor"],
                      "u": f["unidad"], "p": f["procedencia"], "f": f["fuente"], "a": f["articulo"]})
+
+        # municipios atendidos + datos de alta (ilustrativos para la demo)
+        MUNIS = {"LAS_CEIBAS": (["41001", "41524"], 2, 112000),
+                 "ESSMAR":     (["47001"], 1, None),
+                 "AMB":        (["68001", "68276", "68307", "68547"], 1, None)}
+        for code, (munis, naps, sseg) in MUNIS.items():
+            if code not in emp_id:
+                continue
+            c.execute(text("UPDATE empresa SET n_aps=:n, suscriptores_seg=:s WHERE id=:e"),
+                      {"n": naps, "s": sseg, "e": emp_id[code]})
+            for cod in munis:
+                c.execute(text("INSERT INTO empresa_municipio(empresa_id,cod_dane) VALUES (:e,:c) "
+                               "ON CONFLICT DO NOTHING"), {"e": emp_id[code], "c": cod})
 
         # administrador (consultor) — ve todas las empresas
         c.execute(text("INSERT INTO usuario(email,nombre,password_hash,rol_id,empresa_id) "

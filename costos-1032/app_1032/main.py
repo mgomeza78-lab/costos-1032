@@ -13,7 +13,7 @@ política de contraseñas y auto-servicio de contraseña/MFA.
 import os
 from datetime import datetime, timezone
 from fastapi import FastAPI, Request, Form, UploadFile, File
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
@@ -24,6 +24,14 @@ import config, db, rbac, nucleo_service
 import operacion_service as ops
 import recalculo_service as rc
 import inversiones_service as inv
+import subsidios_service as subs
+import dashboard_service as dash
+import territorio_service as terr
+import aps_service as aps
+import costos_service as cpart
+import bcr_service as bcr
+import poir_cmi_service as poir
+import ccp_service as ccp
 import periodos as per
 import ingesta
 import lector_balance as lb
@@ -101,6 +109,19 @@ def _bad_csrf(request, csrf):
         destino = request.url.path
         return RedirectResponse(f"{destino}?err=Token+de+seguridad+inválido,+reintente", status_code=303)
     return None
+
+
+def _next_or(nxt, default):
+    """Destino de redirección: respeta un `next` interno seguro, o usa el predeterminado."""
+    nxt = (nxt or "").strip()
+    if nxt.startswith("/empresa/") and "//" not in nxt and " " not in nxt and "\n" not in nxt:
+        return nxt
+    return default
+
+
+def _dest(nxt, default, query):
+    base = _next_or(nxt, default)
+    return f"{base}{'&' if '?' in base else '?'}{query}"
 
 
 def _leer_csv(archivo):
@@ -360,18 +381,23 @@ def empresa_nueva_form(request: Request):
     if not rbac.can(session_user(request), "crear_empresa"):
         return RedirectResponse("/panel?err=No+autorizado", status_code=303)
     with db.scope_conn(scope_of(session_user(request))) as conn:
-        segs = conn.execute(text("SELECT id, nombre FROM segmento ORDER BY id")).mappings().all()
+        segs = conn.execute(text("SELECT id, nombre, susc_min, susc_max FROM segmento ORDER BY id")).mappings().all()
+        deptos = terr.departamentos(conn)
+        munis = terr.municipios(conn)
         existentes = {r0[0] for r0 in conn.execute(text("SELECT codigo FROM empresa")).all()}
     perfiles = [c for c in nucleo_service.codigos_disponibles() if c not in existentes]
-    return tpl.TemplateResponse(request, "empresa_nueva.html", _ctx(request, segmentos=segs, perfiles=perfiles))
+    return tpl.TemplateResponse(request, "empresa_nueva.html", _ctx(
+        request, segmentos=segs, perfiles=perfiles, departamentos=deptos, municipios=munis))
 
 
 @app.post("/empresa-nueva")
 def empresa_nueva_post(request: Request, codigo: str = Form(...), nombre: str = Form(""),
-                       municipio: str = Form(""), segmento_id: int = Form(2),
+                       suscriptores: str = Form(""), n_aps: str = Form(""),
+                       codigo_sui: str = Form(""), segmento_id: str = Form(""),
+                       municipios: list[str] = Form([]),
                        presta_ac: str = Form(None), presta_al: str = Form(None),
                        fecha_688: str = Form(""), fecha_1032: str = Form(""),
-                       tardia: str = Form(None), csrf: str = Form("")):
+                       tardia: str = Form(None), r825: str = Form(None), csrf: str = Form("")):
     if (r := _need_login(request)):
         return r
     if (bad := _bad_csrf(request, csrf)):
@@ -379,28 +405,57 @@ def empresa_nueva_post(request: Request, codigo: str = Form(...), nombre: str = 
     user = session_user(request)
     if not rbac.can(user, "crear_empresa"):
         return RedirectResponse("/panel?err=No+autorizado", status_code=303)
+
+    def _i(x):
+        d = "".join(ch for ch in (x or "") if ch.isdigit())
+        return int(d) if d else None
+
     codigo = codigo.strip().upper().replace(" ", "_")
     base = nucleo_service.perfil_resumen(codigo) if nucleo_service.perfil_existe(codigo) else {}
-    data = {
-        "codigo": codigo,
-        "nombre": nombre.strip() or base.get("nombre") or codigo,
-        "municipio": municipio.strip() or base.get("municipio"),
-        "segmento_id": base.get("segmento") or segmento_id,
-        "presta_ac": (presta_ac is not None) or bool(base.get("presta_ac")),
-        "presta_al": (presta_al is not None) or bool(base.get("presta_al")),
-        "esquema": base.get("esquema"),
-        "r": base.get("r"), "kct": base.get("kct"),
-        "f688": (base.get("fecha_inicio_688") or fecha_688 or None),
-        "f1032": (base.get("fecha_inicio_1032") or fecha_1032 or None),
-        "tardia": (tardia is not None) or bool(base.get("aplicacion_1032_tardia")),
-    }
+    susc = _i(suscriptores)
     try:
         with db.scope_conn(scope_of(user)) as conn:
-            conn.execute(text(
+            seg_sug, _m = terr.segmento_por_suscriptores(conn, susc)
+            if r825 is not None:
+                seg = 4                               # aplicaba Res. 825 en todas las APS → segmento 4
+            elif segmento_id and segmento_id.isdigit():
+                seg = int(segmento_id)                # elección manual (p. ej. optar por segmento superior)
+            else:
+                seg = base.get("segmento") or seg_sug or 2
+            segrow = conn.execute(text("SELECT r, kct FROM segmento WHERE id=:s"),
+                                  {"s": seg}).mappings().first()
+            data = {
+                "codigo": codigo,
+                "nombre": nombre.strip() or base.get("nombre") or codigo,
+                "municipio": base.get("municipio"),
+                "segmento_id": seg,
+                "presta_ac": (presta_ac is not None) or bool(base.get("presta_ac")),
+                "presta_al": (presta_al is not None) or bool(base.get("presta_al")),
+                "esquema": base.get("esquema"),
+                "r": base.get("r") or (float(segrow["r"]) if segrow else None),
+                "kct": base.get("kct") or (float(segrow["kct"]) if segrow else None),
+                "f688": (base.get("fecha_inicio_688") or fecha_688 or None),
+                "f1032": (base.get("fecha_inicio_1032") or fecha_1032 or None),
+                "tardia": (tardia is not None) or bool(base.get("aplicacion_1032_tardia")),
+                "sui": codigo_sui.strip() or None,
+                "naps": _i(n_aps),
+                "sseg": susc,
+            }
+            eid = conn.execute(text(
                 "INSERT INTO empresa (codigo,nombre,nit,municipio,segmento_id,presta_ac,presta_al,"
-                " esquema,r,kct,fecha_inicio_688,fecha_inicio_1032,aplicacion_1032_tardia) "
+                " esquema,r,kct,fecha_inicio_688,fecha_inicio_1032,aplicacion_1032_tardia,"
+                " codigo_sui,n_aps,suscriptores_seg) "
                 "VALUES (:codigo,:nombre,NULL,:municipio,:segmento_id,:presta_ac,:presta_al,"
-                " :esquema,:r,:kct,:f688,:f1032,:tardia)"), data)
+                " :esquema,:r,:kct,:f688,:f1032,:tardia,:sui,:naps,:sseg) RETURNING id"), data).scalar()
+            terr.set_municipios(conn, eid, municipios)
+            if municipios and not data["municipio"]:
+                prim = conn.execute(text(
+                    "SELECT m.nombre || ' (' || d.nombre || ')' FROM municipio m "
+                    "JOIN departamento d ON d.cod_dane = m.cod_dpto WHERE m.cod_dane = :c"),
+                    {"c": (municipios[0] or "").strip()}).scalar()
+                if prim:
+                    conn.execute(text("UPDATE empresa SET municipio=:m WHERE id=:e"),
+                                 {"m": prim, "e": eid})
     except Exception as e:
         return RedirectResponse(f"/empresa-nueva?err=No+se+pudo+crear+({type(e).__name__})", status_code=303)
     db.audit(scope_of(user), "crear_empresa", "empresa", None, codigo)
@@ -488,14 +543,15 @@ def mensual(request: Request, eid: int):
 def cargar(request: Request, eid: int, anio: int = Form(...), mes: int = Form(...),
            servicio: str = Form(...), suscriptores: str = Form(""), m3: str = Form(""),
            facturacion: str = Form(""), novedades: str = Form(""),
-           origen: str = Form("archivo_propio"), csrf: str = Form("")):
+           origen: str = Form("archivo_propio"), next: str = Form(""), csrf: str = Form("")):
     if (r := _need_login(request)):
         return r
     if (bad := _bad_csrf(request, csrf)):
         return bad
     user = session_user(request)
+    dflt = f"/empresa/{eid}/mensual"
     if not rbac.can(user, "cargar_mensual"):
-        return RedirectResponse(f"/empresa/{eid}/mensual?err=No+autorizado", status_code=303)
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
 
     def _num(x):
         x = (x or "").strip().replace(",", ".")
@@ -516,10 +572,10 @@ def cargar(request: Request, eid: int, anio: int = Form(...), mes: int = Form(..
                  "m3": _num(m3), "fa": _num(facturacion), "nv": novedades.strip() or None,
                  "og": origen, "up": user["user_id"]})
     except Exception as e:
-        return RedirectResponse(f"/empresa/{eid}/mensual?err=No+se+pudo+cargar+({type(e).__name__})",
+        return RedirectResponse(_dest(next, dflt, f"err=No+se+pudo+cargar+({type(e).__name__})"),
                                 status_code=303)
     db.audit(scope_of(user), "carga_mensual", "empresa", eid, f"{ops.MESES.get(mes,mes)}-{anio} {servicio}")
-    return RedirectResponse(f"/empresa/{eid}/mensual?msg=Carga+registrada", status_code=303)
+    return RedirectResponse(_dest(next, dflt, "msg=Carga+registrada"), status_code=303)
 
 
 @app.post("/empresa/{eid}/procesar")
@@ -545,16 +601,17 @@ def procesar(request: Request, eid: int, csrf: str = Form("")):
 
 @app.post("/empresa/{eid}/cargar-csv")
 def cargar_csv(request: Request, eid: int, tipo: str = Form(...),
-               archivo: UploadFile = File(...), csrf: str = Form("")):
+               archivo: UploadFile = File(...), next: str = Form(""), csrf: str = Form("")):
     if (r := _need_login(request)):
         return r
     if (bad := _bad_csrf(request, csrf)):
         return bad
     user = session_user(request)
+    dflt = f"/empresa/{eid}/mensual"
     if not rbac.can(user, "cargar_mensual"):
-        return RedirectResponse(f"/empresa/{eid}/mensual?err=No+autorizado", status_code=303)
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
     if tipo not in ingesta.TIPOS:
-        return RedirectResponse(f"/empresa/{eid}/mensual?err=Tipo+inválido", status_code=303)
+        return RedirectResponse(_dest(next, dflt, "err=Tipo+inválido"), status_code=303)
     contenido = _leer_csv(archivo)
     with db.scope_conn(scope_of(user)) as conn:
         emp = conn.execute(text("SELECT id FROM empresa WHERE id=:e"), {"e": eid}).mappings().first()
@@ -564,10 +621,10 @@ def cargar_csv(request: Request, eid: int, tipo: str = Form(...),
         if tipo in ("comercial", "factores") and ok:
             ops.derivar_factura(conn, eid)
     db.audit(scope_of(user), "cargar_csv", "empresa", eid, f"{tipo}: {ok} filas, {len(err)} errores")
-    aviso = f"{tipo}:+{ok}+filas+cargadas"
+    aviso = f"msg={tipo}:+{ok}+filas+cargadas"
     if err:
         aviso += f";+{len(err)}+con+error+(" + ",+".join(err[:3]).replace(" ", "+") + ")"
-    return RedirectResponse(f"/empresa/{eid}/mensual?msg={aviso}", status_code=303)
+    return RedirectResponse(_dest(next, dflt, aviso), status_code=303)
 
 
 @app.post("/empresa/{eid}/cargar-sui")
@@ -642,14 +699,15 @@ def _catalogo_path(codigo):
 
 @app.post("/empresa/{eid}/cargar-balance")
 def cargar_balance(request: Request, eid: int, anio: int = Form(...), mes: int = Form(...),
-                   archivo: UploadFile = File(...), csrf: str = Form("")):
+                   archivo: UploadFile = File(...), next: str = Form(""), csrf: str = Form("")):
     if (r := _need_login(request)):
         return r
     if (bad := _bad_csrf(request, csrf)):
         return bad
     user = session_user(request)
+    dflt = f"/empresa/{eid}/recalculo"
     if not rbac.can(user, "cargar_mensual"):
-        return RedirectResponse(f"/empresa/{eid}/recalculo?err=No+autorizado", status_code=303)
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
     import os as _os, tempfile
     raw = archivo.file.read()
     nombre = (archivo.filename or "").lower()
@@ -668,7 +726,7 @@ def cargar_balance(request: Request, eid: int, anio: int = Form(...), mes: int =
             filas, _hr, _cols = lb.leer_csv(texto or raw.decode("latin-1"))
     except Exception as e:
         return RedirectResponse(
-            f"/empresa/{eid}/recalculo?err=No+se+pudo+leer+el+balance+({type(e).__name__})", status_code=303)
+            _dest(next, dflt, f"err=No+se+pudo+leer+el+balance+({type(e).__name__})"), status_code=303)
     with db.scope_conn(scope_of(user)) as conn:
         emp = conn.execute(text("SELECT codigo FROM empresa WHERE id=:e"), {"e": eid}).mappings().first()
         if not emp:
@@ -676,7 +734,7 @@ def cargar_balance(request: Request, eid: int, anio: int = Form(...), mes: int =
         cat_path = _catalogo_path(emp["codigo"])
         if not cat_path:
             return RedirectResponse(
-                f"/empresa/{eid}/recalculo?err=Falta+el+catálogo+de+clasificación+de+esta+empresa",
+                _dest(next, dflt, "err=Falta+el+catálogo+de+clasificación+de+esta+empresa"),
                 status_code=303)
         catalogo = clf.cargar_catalogo(open(cat_path, encoding="utf-8").read())
         sub, comp, sin = clf.clasificar(filas, catalogo)
@@ -686,10 +744,10 @@ def cargar_balance(request: Request, eid: int, anio: int = Form(...), mes: int =
         rc.recalcular(conn, eid)
     db.audit(scope_of(user), "cargar_balance", "empresa", eid,
              f"{ops.MESES.get(mes,mes)}-{anio}: {n} numeradores, {len(sin)} cuentas sin clasificar")
-    aviso = f"Balance+{ops.MESES.get(mes,mes)}-{anio}:+numeradores+clasificados+y+recálculo+hecho"
+    aviso = f"msg=Balance+{ops.MESES.get(mes,mes)}-{anio}:+numeradores+clasificados+y+recálculo+hecho"
     if sin:
         aviso += f";+{len(sin)}+cuentas+sin+clasificar"
-    return RedirectResponse(f"/empresa/{eid}/recalculo?msg={aviso}", status_code=303)
+    return RedirectResponse(_dest(next, dflt, aviso), status_code=303)
 
 
 @app.get("/empresa/{eid}/inversiones", response_class=HTMLResponse)
@@ -697,16 +755,31 @@ def inversiones(request: Request, eid: int):
     if (r := _need_login(request)):
         return r
     user = session_user(request)
+    sec = request.query_params.get("sec") or "bcr"
     with db.scope_conn(scope_of(user)) as conn:
         emp = conn.execute(text("SELECT * FROM empresa WHERE id=:e"), {"e": eid}).mappings().first()
         if not emp:
             return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
         proyectos = inv.tablero(conn, eid)
         res = inv.resumen(conn, eid)
+        servicios = [s for s, on in (("acueducto", emp["presta_ac"]), ("alcantarillado", emp["presta_al"])) if on] or ["acueducto"]
+        bcr_activos = bcr.lista(conn, eid)
+        r_emp = float(emp["r"]) if emp["r"] is not None else 0.0903
+        bcr0 = bcr.bcr0_calculo(conn, eid, r_emp)
+        bcr_params = bcr.params(conn, eid)
+        bcr_series = bcr.serie_list(conn, eid)
+        bcr_ingresos = {s: bcr.ingresos_vp(conn, eid, s) for s in servicios}
+        bcr_mods = {s: poir.mods_list(conn, eid, s) for s in servicios}
+        bcr_cmi = {s: poir.resumen_cmi(conn, eid, s) for s in servicios}
+        cumpl = bcr.cumplimiento(conn, eid)
+        proy = {s: bcr.proyeccion(conn, eid, s, r_emp) for s in servicios}
     return tpl.TemplateResponse(request, "inversiones.html", _ctx(
-        request, emp=emp, proyectos=proyectos, resumen=res,
+        request, emp=emp, proyectos=proyectos, resumen=res, sec=sec,
         clasificaciones=inv.CLASIFICACIONES, estados=inv.ESTADOS,
         comp_ac=inv.COMPONENTES_AC, comp_al=inv.COMPONENTES_AL,
+        servicios=servicios, bcr_activos=bcr_activos, bcr0=bcr0, bcr_comp=bcr.COMPONENTES,
+        bcr_serv=bcr.SERVICIOS, bcr_params=bcr_params, bcr_series=bcr_series, bcr_ingresos=bcr_ingresos,
+        bcr_mods=bcr_mods, bcr_cmi=bcr_cmi, cumpl=cumpl, proy=proy, r_emp=r_emp,
         puede_cargar=rbac.can(user, "cargar_mensual")))
 
 
@@ -780,6 +853,642 @@ def inversion_avance(request: Request, eid: int, proyecto_id: int = Form(...),
     db.audit(scope_of(user), "registrar_avance", "empresa", eid,
              f"proyecto {proyecto_id} {ops.MESES.get(mes,mes)}-{anio}")
     return RedirectResponse(f"/empresa/{eid}/inversiones?msg=Avance+registrado", status_code=303)
+
+
+# ------------------------------------------------------------------ tablero de indicadores
+@app.get("/empresa/{eid}/dashboard", response_class=HTMLResponse)
+def dashboard(request: Request, eid: int):
+    if (r := _need_login(request)):
+        return r
+    user = session_user(request)
+    with db.scope_conn(scope_of(user)) as conn:
+        emp = conn.execute(text("SELECT * FROM empresa WHERE id=:e"), {"e": eid}).mappings().first()
+        if not emp:
+            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        datos = dash.resumen(conn, eid)
+    return tpl.TemplateResponse(request, "dashboard.html", _ctx(
+        request, emp=emp, d=datos, meses=ops.MESES))
+
+
+# ------------------------------------------------------------------ balance de subsidios y contribuciones (FSRI)
+@app.get("/empresa/{eid}/subsidios", response_class=HTMLResponse)
+def subsidios(request: Request, eid: int):
+    if (r := _need_login(request)):
+        return r
+    user = session_user(request)
+    with db.scope_conn(scope_of(user)) as conn:
+        emp = conn.execute(text("SELECT * FROM empresa WHERE id=:e"), {"e": eid}).mappings().first()
+        if not emp:
+            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        anios = subs.anios_disponibles(conn, eid)
+        sel = request.query_params.get("anio")
+        anio = anios[0] if anios else None
+        if sel and sel.isdigit() and int(sel) in anios:
+            anio = int(sel)
+        bal = subs.balance(conn, eid, anio)
+    return tpl.TemplateResponse(request, "subsidios.html", _ctx(
+        request, emp=emp, bal=bal, anios=anios, anio=anio, meses=ops.MESES))
+
+
+# ------------------------------------------------------------------ Configuración del APS (art. 2.1.2.1.1.5)
+@app.get("/empresa/{eid}/aps", response_class=HTMLResponse)
+def aps_config(request: Request, eid: int):
+    if (r := _need_login(request)):
+        return r
+    user = session_user(request)
+    with db.scope_conn(scope_of(user)) as conn:
+        emp = conn.execute(text("SELECT * FROM empresa WHERE id=:e"), {"e": eid}).mappings().first()
+        if not emp:
+            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        res = aps.resumen(conn, eid)
+        sel = request.query_params.get("mun")
+        if not sel and res["items"]:
+            sel = res["items"][0]["cod_dane"]        # primer municipio por defecto
+        actual, archivos = None, []
+        if sel:
+            actual = aps.obtener(conn, eid, sel)
+            if actual:
+                archivos = aps.archivos(conn, eid, actual["id"])
+    return tpl.TemplateResponse(request, "aps.html", _ctx(
+        request, emp=emp, res=res, sel=sel, actual=dict(actual) if actual else None,
+        archivos=archivos, SERVICIOS=aps.SERVICIOS, ZONAS=aps.ZONAS,
+        SISTEMA_RURAL=aps.SISTEMA_RURAL, INTERCONEXION=aps.INTERCONEXION,
+        TIPO_REGIONAL=aps.TIPO_REGIONAL, INSTRUMENTOS_OT=aps.INSTRUMENTOS_OT,
+        CATEGORIAS=aps.CATEGORIAS_ARCHIVO, EXT=sorted(aps.EXT_PERMITIDAS),
+        puede_editar=rbac.can(user, "cargar_mensual")))
+
+
+@app.post("/empresa/{eid}/aps/guardar")
+async def aps_guardar(request: Request, eid: int):
+    if (r := _need_login(request)):
+        return r
+    form = await request.form()
+    if (bad := _bad_csrf(request, form.get("csrf"))):
+        return bad
+    user = session_user(request)
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(f"/empresa/{eid}/aps?err=No+autorizado", status_code=303)
+    cod = (form.get("cod_dane") or "").strip()
+
+    def _b(n):
+        return form.get(n) is not None
+    def _i(n):
+        v = "".join(ch for ch in (form.get(n) or "") if ch.isdigit())
+        return int(v) if v else None
+    def _txt(n):
+        return (form.get(n) or "").strip() or None
+
+    d = {
+        "numero_aps": _i("numero_aps"), "nombre": _txt("nombre"), "codigo_aps": _txt("codigo_aps"),
+        "servicios": form.get("servicios") or "ambos",
+        "aps_difiere_servicios": _b("aps_difiere_servicios"),
+        "zona": form.get("zona") or "urbana", "sistema_rural": form.get("sistema_rural") or "na",
+        "esquema_regional": _b("esquema_regional"),
+        "sistema_interconexion": form.get("sistema_interconexion") or "na",
+        "tipo_regional": form.get("tipo_regional") or "na",
+        "mercado_regional_declarado": _b("mercado_regional_declarado"),
+        "aplicaba_825": _b("aplicaba_825"), "menor_5000": _b("menor_5000"),
+        "pdet": _b("pdet"), "zomac": _b("zomac"),
+        "ed_particular": _b("ed_particular"), "ed_urbano_zdu": _b("ed_urbano_zdu"),
+        "ed_rural_zrni": _b("ed_rural_zrni"), "toma_posesion_sspd": _b("toma_posesion_sspd"),
+        "georref_sistema": _txt("georref_sistema") or "MAGNA-SIRGAS",
+        "georref_presentada": _b("georref_presentada"), "area_ha": _fnum(form.get("area_ha")),
+        "instrumento_ot": _txt("instrumento_ot"), "instrumento_ot_acto": _txt("instrumento_ot_acto"),
+        "pmaa": _b("pmaa"), "reportado_municipio": _b("reportado_municipio"),
+        "reportado_fecha": _txt("reportado_fecha"), "reportado_acto": _txt("reportado_acto"),
+        "observacion": _txt("observacion"),
+    }
+    try:
+        with db.scope_conn(scope_of(user)) as conn:
+            _aid, err = aps.guardar(conn, eid, cod, d, user["user_id"])
+        if err:
+            return RedirectResponse(f"/empresa/{eid}/aps?mun={cod}&err=" + err.replace(" ", "+"),
+                                    status_code=303)
+    except Exception as e:
+        return RedirectResponse(f"/empresa/{eid}/aps?mun={cod}&err=No+se+pudo+guardar+({type(e).__name__})",
+                                status_code=303)
+    db.audit(scope_of(user), "aps_guardar", "empresa", eid, cod)
+    return RedirectResponse(f"/empresa/{eid}/aps?mun={cod}&msg=APS+guardada", status_code=303)
+
+
+@app.post("/empresa/{eid}/aps/archivo")
+def aps_archivo_subir(request: Request, eid: int, cod_dane: str = Form(...),
+                      categoria: str = Form("soporte_general"),
+                      archivo: UploadFile = File(...), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(f"/empresa/{eid}/aps?err=No+autorizado", status_code=303)
+    cod = (cod_dane or "").strip()
+    raw = archivo.file.read()
+    nombre = (archivo.filename or "archivo").strip()
+    ext = nombre.rsplit(".", 1)[-1].lower() if "." in nombre else ""
+    if ext not in aps.EXT_PERMITIDAS:
+        return RedirectResponse(f"/empresa/{eid}/aps?mun={cod}&err=Formato+no+admitido+({ext})",
+                                status_code=303)
+    if len(raw) > aps.MAX_BYTES:
+        return RedirectResponse(f"/empresa/{eid}/aps?mun={cod}&err=Archivo+supera+25+MB", status_code=303)
+    if categoria not in aps.CATEGORIAS_ARCHIVO:
+        categoria = "soporte_general"
+    try:
+        with db.scope_conn(scope_of(user)) as conn:
+            a = aps.obtener(conn, eid, cod)
+            if a:
+                a_id = a["id"]
+            else:
+                a_id, err = aps.guardar(conn, eid, cod, {}, user["user_id"])  # crea el APS con valores por defecto
+                if err:
+                    return RedirectResponse(f"/empresa/{eid}/aps?mun={cod}&err=" + err.replace(" ", "+"),
+                                            status_code=303)
+            aps.guardar_archivo(conn, eid, a_id, categoria, nombre, ext, raw, user["user_id"])
+    except Exception as e:
+        return RedirectResponse(f"/empresa/{eid}/aps?mun={cod}&err=No+se+pudo+subir+({type(e).__name__})",
+                                status_code=303)
+    db.audit(scope_of(user), "aps_archivo", "empresa", eid, f"{cod}:{categoria}:{nombre}")
+    return RedirectResponse(f"/empresa/{eid}/aps?mun={cod}&msg=Soporte+cargado", status_code=303)
+
+
+@app.get("/empresa/{eid}/aps/archivo/{aid}")
+def aps_archivo_bajar(request: Request, eid: int, aid: int):
+    if (r := _need_login(request)):
+        return r
+    user = session_user(request)
+    with db.scope_conn(scope_of(user)) as conn:
+        f = aps.archivo(conn, eid, aid)
+    if not f:
+        return RedirectResponse(f"/empresa/{eid}/aps?err=Archivo+no+disponible", status_code=303)
+    import mimetypes
+    media = mimetypes.guess_type(f["nombre"] or "")[0] or "application/octet-stream"
+    seguro = (f["nombre"] or "archivo").replace('"', "")
+    return Response(content=bytes(f["contenido"]), media_type=media,
+                    headers={"Content-Disposition": f'attachment; filename="{seguro}"'})
+
+
+@app.post("/empresa/{eid}/aps/archivo/{aid}/eliminar")
+def aps_archivo_eliminar(request: Request, eid: int, aid: int,
+                         cod_dane: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(f"/empresa/{eid}/aps?err=No+autorizado", status_code=303)
+    with db.scope_conn(scope_of(user)) as conn:
+        aps.eliminar_archivo(conn, eid, aid)
+    db.audit(scope_of(user), "aps_archivo_eliminar", "empresa", eid, f"{cod_dane}:{aid}")
+    return RedirectResponse(f"/empresa/{eid}/aps?mun={cod_dane.strip()}&msg=Soporte+eliminado", status_code=303)
+
+
+# ------------------------------------------------------------------ Actualización de costos (indexación 3 %)
+ANIOS_TAR = {2026: "Período de inicio (jul–dic 2026)", 2027: "Primer año tarifario (2027)"}
+
+
+def _emp_or_redirect(conn, eid):
+    return conn.execute(text("SELECT * FROM empresa WHERE id=:e"), {"e": eid}).mappings().first()
+
+
+@app.get("/empresa/{eid}/actualizacion", response_class=HTMLResponse)
+def actualizacion(request: Request, eid: int):
+    if (r := _need_login(request)):
+        return r
+    user = session_user(request)
+    with db.scope_conn(scope_of(user)) as conn:
+        emp = _emp_or_redirect(conn, eid)
+        if not emp:
+            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        serie = ops.tablero(conn, eid)
+    resumen = {}
+    for serv, rows in serie.items():
+        if not rows:
+            continue
+        ult = rows[-1]
+        resumen[serv] = {
+            "cf": ult["cargo_fijo"], "cc": ult["cargo_consumo"],
+            "var_ipcs": ult["variacion_acum"], "var_ipc": ult["var_ipc"],
+            "anio": ult["anio"], "mes": ult["mes"]}
+    return tpl.TemplateResponse(request, "actualizacion.html", _ctx(
+        request, emp=emp, serie=serie, resumen=resumen, gatillo=ops.GATILLO, meses=ops.MESES))
+
+
+# ------------------------------------------------------------------ Validación de información por año tarifario
+@app.get("/empresa/{eid}/validacion", response_class=HTMLResponse)
+def validacion(request: Request, eid: int):
+    if (r := _need_login(request)):
+        return r
+    user = session_user(request)
+    with db.scope_conn(scope_of(user)) as conn:
+        emp = _emp_or_redirect(conn, eid)
+        if not emp:
+            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        apsres = aps.resumen(conn, eid)
+
+        def _por_anio(sql):
+            return dict(conn.execute(text(sql), {"e": eid}).all())
+        com = _por_anio("SELECT anio, count(DISTINCT (mes,servicio)) FROM carga_mensual WHERE empresa_id=:e GROUP BY anio")
+        bal = _por_anio("SELECT anio, count(DISTINCT (mes,servicio)) FROM numerador_mensual WHERE empresa_id=:e GROUP BY anio")
+        agua = _por_anio("SELECT anio, count(DISTINCT (mes,servicio)) FROM macromedicion WHERE empresa_id=:e GROUP BY anio")
+        fsub = _por_anio("SELECT vigencia AS anio, count(*) FROM factor_subsidio WHERE empresa_id=:e GROUP BY vigencia")
+    n_serv = (1 if emp["presta_ac"] else 0) + (1 if emp["presta_al"] else 0) or 1
+    anios = [2026, 2027]
+    esperado = {2026: 6 * n_serv, 2027: 12 * n_serv}   # meses × servicios
+    fuentes = [
+        {"clave": "aps", "nombre": "Configuración del APS", "general": True,
+         "valor": f"{apsres['n_completos']}/{apsres['n_municipios']} completos",
+         "ok": apsres["n_municipios"] > 0 and apsres["n_completos"] == apsres["n_municipios"]},
+        {"clave": "comercial", "nombre": "Comercial (suscriptores y consumos)", "datos": com},
+        {"clave": "balance", "nombre": "Balance de prueba (numeradores CMO/CMI/CMICT)", "datos": bal},
+        {"clave": "agua", "nombre": "Agua producida / macromedición", "datos": agua},
+        {"clave": "subsidios", "nombre": "Factores de subsidio y contribución", "datos": fsub, "por_registro": True},
+        {"clave": "costos_part", "nombre": "Costos particulares (art. Res. 1032)", "pendiente": True},
+    ]
+    return tpl.TemplateResponse(request, "validacion.html", _ctx(
+        request, emp=emp, fuentes=fuentes, anios=anios, esperado=esperado,
+        anios_tar=ANIOS_TAR, n_serv=n_serv))
+
+
+# ------------------------------------------------------------------ Resultados · Evolución de costos y tarifa
+@app.get("/empresa/{eid}/evolucion", response_class=HTMLResponse)
+def evolucion(request: Request, eid: int):
+    if (r := _need_login(request)):
+        return r
+    user = session_user(request)
+    with db.scope_conn(scope_of(user)) as conn:
+        emp = _emp_or_redirect(conn, eid)
+        if not emp:
+            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        serie = ops.tablero(conn, eid)
+    return tpl.TemplateResponse(request, "evolucion.html", _ctx(
+        request, emp=emp, serie=serie, meses=ops.MESES))
+
+
+# ------------------------------------------------------------------ Resultados · Simulador tarifario
+@app.get("/empresa/{eid}/simulador", response_class=HTMLResponse)
+def simulador(request: Request, eid: int):
+    if (r := _need_login(request)):
+        return r
+    user = session_user(request)
+    try:
+        consumo = float((request.query_params.get("consumo") or "16").replace(",", "."))
+    except ValueError:
+        consumo = 16.0
+    basico = 16.0   # consumo básico de referencia (m³/suscriptor·mes)
+    with db.scope_conn(scope_of(user)) as conn:
+        emp = _emp_or_redirect(conn, eid)
+        if not emp:
+            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        tarifas = conn.execute(text(
+            "SELECT DISTINCT ON (servicio) servicio, cargo_fijo, cargo_consumo, anio, mes "
+            "FROM tarifa_vigente WHERE empresa_id=:e ORDER BY servicio, anio DESC, mes DESC"),
+            {"e": eid}).mappings().all()
+        factores = conn.execute(text(
+            "SELECT DISTINCT ON (servicio, clase) servicio, clase, factor_cargofijo, factor_consumo "
+            "FROM factor_subsidio WHERE empresa_id=:e ORDER BY servicio, clase, vigencia DESC"),
+            {"e": eid}).mappings().all()
+    tar = {t["servicio"]: t for t in tarifas}
+    fac = {(f["servicio"], f["clase"]): f for f in factores}
+    m3s = min(consumo, basico)
+    resto = max(consumo - basico, 0.0)
+    filas = []
+    for clase, nombre in ops.CLASES.items():
+        fila = {"clase": clase, "nombre": nombre, "serv": {}, "total": 0.0, "total_pleno": 0.0}
+        hay = False
+        for serv, t in tar.items():
+            CF = float(t["cargo_fijo"] or 0.0)
+            CC = float(t["cargo_consumo"] or 0.0)
+            f = fac.get((serv, clase))
+            fcf = float(f["factor_cargofijo"]) if f and f["factor_cargofijo"] is not None else 0.0
+            fcc = float(f["factor_consumo"]) if f and f["factor_consumo"] is not None else 0.0
+            cf_fact = CF * (1 + fcf)
+            cc_fact = CC * (m3s * (1 + fcc) + resto)
+            pleno = CF + CC * consumo
+            fila["serv"][serv] = {"cf": cf_fact, "cc": cc_fact, "total": cf_fact + cc_fact, "pleno": pleno,
+                                  "fcf": fcf, "fcc": fcc, "tiene_factor": f is not None}
+            fila["total"] += cf_fact + cc_fact
+            fila["total_pleno"] += pleno
+            hay = True
+        if hay:
+            filas.append(fila)
+    return tpl.TemplateResponse(request, "simulador.html", _ctx(
+        request, emp=emp, filas=filas, consumo=consumo, basico=basico,
+        servicios=list(tar.keys()), hay_tarifa=bool(tar)))
+
+
+# ------------------------------------------------------------------ Resultados · Suficiencia financiera
+@app.get("/empresa/{eid}/suficiencia", response_class=HTMLResponse)
+def suficiencia(request: Request, eid: int):
+    if (r := _need_login(request)):
+        return r
+    user = session_user(request)
+    with db.scope_conn(scope_of(user)) as conn:
+        emp = _emp_or_redirect(conn, eid)
+        if not emp:
+            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        # Facturación teórica del último mes con tarifa, por servicio
+        filas = conn.execute(text(
+            "SELECT tv.servicio, tv.anio, tv.mes, tv.cargo_fijo, tv.cargo_consumo, "
+            "       cm.suscriptores, cm.m3_facturados "
+            "FROM tarifa_vigente tv "
+            "LEFT JOIN carga_mensual cm ON cm.empresa_id=tv.empresa_id AND cm.anio=tv.anio "
+            "     AND cm.mes=tv.mes AND cm.servicio=tv.servicio "
+            "WHERE tv.empresa_id=:e AND (tv.anio,tv.mes) = ("
+            "   SELECT anio,mes FROM tarifa_vigente WHERE empresa_id=:e ORDER BY anio DESC, mes DESC LIMIT 1) "
+            "ORDER BY tv.servicio"), {"e": eid}).mappings().all()
+    serv = []
+    tot_ing = 0.0
+    for r0 in filas:
+        CF = float(r0["cargo_fijo"] or 0.0); CC = float(r0["cargo_consumo"] or 0.0)
+        susc = r0["suscriptores"] or 0; m3 = float(r0["m3_facturados"] or 0.0)
+        ingreso = CF * susc + CC * m3
+        tot_ing += ingreso
+        serv.append({"servicio": r0["servicio"], "anio": r0["anio"], "mes": r0["mes"],
+                     "cf": CF, "cc": CC, "susc": susc, "m3": m3, "ingreso": ingreso,
+                     "tiene_cantidades": susc or m3})
+    return tpl.TemplateResponse(request, "suficiencia.html", _ctx(
+        request, emp=emp, serv=serv, tot_ing=tot_ing, meses=ops.MESES))
+
+
+# ------------------------------------------------------------------ Menú único «Cargar información»
+@app.get("/empresa/{eid}/cargar", response_class=HTMLResponse)
+def cargar_info(request: Request, eid: int):
+    if (r := _need_login(request)):
+        return r
+    user = session_user(request)
+    fuente = request.query_params.get("fuente") or "comercial"
+    with db.scope_conn(scope_of(user)) as conn:
+        emp = _emp_or_redirect(conn, eid)
+        if not emp:
+            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        com = conn.execute(text(
+            "SELECT anio, mes, servicio, suscriptores, m3_facturados, origen FROM carga_mensual "
+            "WHERE empresa_id=:e ORDER BY anio DESC, mes DESC, servicio"), {"e": eid}).mappings().all()
+        bal = conn.execute(text(
+            "SELECT anio, mes, servicio, count(*) AS n, sum(valor) AS total FROM numerador_mensual "
+            "WHERE empresa_id=:e GROUP BY anio, mes, servicio ORDER BY anio DESC, mes DESC, servicio"),
+            {"e": eid}).mappings().all()
+        agua = conn.execute(text(
+            "SELECT anio, mes, servicio, count(*) AS puntos, sum(m3_producido) AS m3 FROM macromedicion "
+            "WHERE empresa_id=:e GROUP BY anio, mes, servicio ORDER BY anio DESC, mes DESC, servicio"),
+            {"e": eid}).mappings().all()
+        costos = cpart.lista(conn, eid)
+        ajuste_coc = cpart.ajuste_coc(conn, eid)
+        servicios_emp = [s for s, on in (("acueducto", emp["presta_ac"]), ("alcantarillado", emp["presta_al"])) if on] or ["acueducto"]
+        ccp_fap = {s: ccp.get(conn, eid, s) for s in servicios_emp}
+    return tpl.TemplateResponse(request, "cargar.html", _ctx(
+        request, emp=emp, fuente=fuente, com=com, bal=bal, agua=agua, costos=costos,
+        ajuste_coc=ajuste_coc, ccp_fap=ccp_fap, servicios_emp=servicios_emp,
+        ivh_opc=ccp.IVH_OPC, met_opc=ccp.MET_OPC,
+        meses=ops.MESES, anios_tar=ANIOS_TAR, cat_cp=cpart.CATEGORIAS,
+        serv_cp=cpart.SERVICIOS, puede_cargar=rbac.can(user, "cargar_mensual")))
+
+
+@app.post("/empresa/{eid}/cargar-costo-particular")
+def cargar_costo_particular(request: Request, eid: int, anio: int = Form(...),
+                            servicio: str = Form("acueducto"), categoria: str = Form(""),
+                            concepto: str = Form(...), valor: str = Form(""), unidad: str = Form(""),
+                            cantidad: str = Form(""), precio_unitario: str = Form(""),
+                            cuenta_contable: str = Form(""), valor_contable: str = Form(""),
+                            origen: str = Form("empresa"), observacion: str = Form(""),
+                            next: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    dflt = f"/empresa/{eid}/cargar?fuente=costos"
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
+    try:
+        with db.scope_conn(scope_of(user)) as conn:
+            if not _emp_or_redirect(conn, eid):
+                return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+            _cid, err = cpart.guardar(conn, eid, {
+                "anio": anio, "servicio": servicio, "categoria": categoria, "concepto": concepto,
+                "valor": _fnum(valor), "unidad": unidad, "cantidad": _fnum(cantidad),
+                "precio_unitario": _fnum(precio_unitario), "cuenta_contable": cuenta_contable,
+                "valor_contable": _fnum(valor_contable), "origen": origen,
+                "observacion": observacion}, user["user_id"])
+        if err:
+            return RedirectResponse(_dest(next, dflt, "err=" + err.replace(" ", "+")), status_code=303)
+    except Exception as e:
+        return RedirectResponse(_dest(next, dflt, f"err=No+se+pudo+guardar+({type(e).__name__})"),
+                                status_code=303)
+    db.audit(scope_of(user), "costo_particular", "empresa", eid, f"{anio} {servicio}: {concepto}")
+    return RedirectResponse(_dest(next, dflt, "msg=Costo+particular+guardado"), status_code=303)
+
+
+@app.post("/empresa/{eid}/costo-particular/{cid}/eliminar")
+def eliminar_costo_particular(request: Request, eid: int, cid: int,
+                              next: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    dflt = f"/empresa/{eid}/cargar?fuente=costos"
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
+    with db.scope_conn(scope_of(user)) as conn:
+        cpart.eliminar(conn, eid, cid)
+    db.audit(scope_of(user), "costo_particular_eliminar", "empresa", eid, str(cid))
+    return RedirectResponse(_dest(next, dflt, "msg=Costo+particular+eliminado"), status_code=303)
+
+
+@app.post("/empresa/{eid}/ccp-fap")
+def ccp_fap_guardar(request: Request, eid: int, servicio: str = Form("acueducto"),
+                    aplica: str = Form(None), ipuf_real: str = Form(""), ipuf_planeado: str = Form(""),
+                    ivh: str = Form(""), metodologia: str = Form(""), cumplio: str = Form(""),
+                    observacion: str = Form(""), next: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    dflt = f"/empresa/{eid}/cargar?fuente=ccp"
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
+    d = {"aplica": aplica is not None, "ipuf_real": _fnum(ipuf_real),
+         "ipuf_planeado": _fnum(ipuf_planeado), "ivh": ivh or None, "metodologia": metodologia or None,
+         "cumplio_meta": (True if cumplio == "si" else (False if cumplio == "no" else None)),
+         "observacion": observacion}
+    with db.scope_conn(scope_of(user)) as conn:
+        if not _emp_or_redirect(conn, eid):
+            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        fap, nota = ccp.set_fap(conn, eid, servicio, d)
+    db.audit(scope_of(user), "ccp_fap", "empresa", eid, f"{servicio}: Fap={fap}")
+    if fap is None:
+        msg = "Fap+pendiente+(falta+información)"
+    else:
+        msg = ("Fap+" + servicio + "+=+" + ("%.2f" % fap).replace(".", ",")).replace(" ", "+")
+    return RedirectResponse(_dest(next, dflt, "msg=" + msg), status_code=303)
+
+
+# ------------------------------------------------------------------ Inventario de activos de la BCR
+@app.post("/empresa/{eid}/bcr-activo")
+def bcr_guardar(request: Request, eid: int, id: str = Form(""), servicio: str = Form(...),
+                componente: str = Form(...), nombre: str = Form(...), valor_bruto: str = Form(""),
+                plazo_remanente: str = Form(""), cuota_anual: str = Form(""),
+                valor_pendiente: str = Form(""), origen: str = Form("BCR0"),
+                observacion: str = Form(""), tipo_activo: str = Form(""), vida_util: str = Form(""),
+                via688: str = Form(""), vp_cmi_q: str = Form(""), vpr0: str = Form(""),
+                va0: str = Form(""), anio_poir: str = Form(""), ejecucion_real: str = Form(""),
+                fecha_operacion: str = Form(""), next: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    dflt = f"/empresa/{eid}/inversiones?sec=bcr"
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
+    try:
+        with db.scope_conn(scope_of(user)) as conn:
+            if not _emp_or_redirect(conn, eid):
+                return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+            _aid, err = bcr.guardar(conn, eid, {
+                "id": int(id) if (id or "").isdigit() else None, "servicio": servicio,
+                "componente": componente, "nombre": nombre, "valor_bruto": _fnum(valor_bruto),
+                "plazo_remanente": _fnum(plazo_remanente), "cuota_anual": _fnum(cuota_anual),
+                "valor_pendiente": _fnum(valor_pendiente), "origen": origen,
+                "observacion": observacion, "tipo_activo": tipo_activo, "vida_util": _fnum(vida_util),
+                "via688": _fnum(via688), "vp_cmi_q": _fnum(vp_cmi_q), "vpr0": _fnum(vpr0),
+                "va0": _fnum(va0), "anio_poir": int(anio_poir) if (anio_poir or "").strip().isdigit() else None,
+                "ejecucion_real": _fnum(ejecucion_real), "fecha_operacion": fecha_operacion.strip() or None},
+                user["user_id"])
+        if err:
+            return RedirectResponse(_dest(next, dflt, "err=" + err.replace(" ", "+")), status_code=303)
+    except Exception as e:
+        return RedirectResponse(_dest(next, dflt, f"err=No+se+pudo+guardar+({type(e).__name__})"),
+                                status_code=303)
+    db.audit(scope_of(user), "bcr_activo", "empresa", eid, f"{servicio} C{componente}: {nombre}")
+    return RedirectResponse(_dest(next, dflt, "msg=Activo+de+la+BCR+guardado"), status_code=303)
+
+
+@app.post("/empresa/{eid}/bcr-activo/{aid}/eliminar")
+def bcr_eliminar(request: Request, eid: int, aid: int, next: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    dflt = f"/empresa/{eid}/inversiones?sec=bcr"
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
+    with db.scope_conn(scope_of(user)) as conn:
+        bcr.eliminar(conn, eid, aid)
+    db.audit(scope_of(user), "bcr_activo_eliminar", "empresa", eid, str(aid))
+    return RedirectResponse(_dest(next, dflt, "msg=Activo+eliminado"), status_code=303)
+
+
+@app.post("/empresa/{eid}/bcr-param")
+def bcr_param_guardar(request: Request, eid: int, servicio: str = Form(...), r688: str = Form(""),
+                      ipc_dic_2014: str = Form(""), ipc_dic_2025: str = Form(""),
+                      fecha_inicio_688: str = Form(""), provision_poir: str = Form(""),
+                      ccp_2025: str = Form(""), observacion: str = Form(""),
+                      next: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    dflt = f"/empresa/{eid}/inversiones?sec=bcr"
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
+    with db.scope_conn(scope_of(user)) as conn:
+        if not _emp_or_redirect(conn, eid):
+            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        ok, err = bcr.param_set(conn, eid, servicio, {
+            "r688": _fnum(r688), "ipc_dic_2014": _fnum(ipc_dic_2014), "ipc_dic_2025": _fnum(ipc_dic_2025),
+            "fecha_inicio_688": fecha_inicio_688.strip() or None, "provision_poir": _fnum(provision_poir),
+            "ccp_2025": _fnum(ccp_2025), "observacion": observacion})
+    if err:
+        return RedirectResponse(_dest(next, dflt, "err=" + err.replace(" ", "+")), status_code=303)
+    db.audit(scope_of(user), "bcr_param", "empresa", eid, servicio)
+    return RedirectResponse(_dest(next, dflt, "msg=Parámetros+688+guardados"), status_code=303)
+
+
+@app.post("/empresa/{eid}/bcr-serie")
+def bcr_serie_guardar(request: Request, eid: int, servicio: str = Form(...),
+                      anio_tarifario: int = Form(...), q_m3: str = Form(""),
+                      cmi_cobrado: str = Form(""), next: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    dflt = f"/empresa/{eid}/inversiones?sec=bcr"
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
+    with db.scope_conn(scope_of(user)) as conn:
+        if not _emp_or_redirect(conn, eid):
+            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        bcr.serie_set(conn, eid, servicio, anio_tarifario, _fnum(q_m3), _fnum(cmi_cobrado))
+    db.audit(scope_of(user), "bcr_serie", "empresa", eid, f"{servicio} año {anio_tarifario}")
+    return RedirectResponse(_dest(next, dflt, "msg=Serie+688+guardada"), status_code=303)
+
+
+@app.post("/empresa/{eid}/bcr-poir-mods")
+def bcr_poir_mods(request: Request, eid: int, servicio: str = Form(...), fechas: str = Form(""),
+                  next: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    dflt = f"/empresa/{eid}/inversiones?sec=bcr"
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
+    crudas = fechas.replace(";", " ").replace(",", " ").replace("\n", " ").split()
+    with db.scope_conn(scope_of(user)) as conn:
+        if not _emp_or_redirect(conn, eid):
+            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        p = bcr.param_get(conn, eid, servicio)
+        fi = p["fecha_inicio_688"] if p else None
+        n = poir.mods_set(conn, eid, servicio, crudas, fi)
+    db.audit(scope_of(user), "poir_mods", "empresa", eid, f"{servicio}: {n} modificaciones")
+    return RedirectResponse(_dest(next, dflt, f"msg={n}+modificaciones+del+POIR+registradas"), status_code=303)
+
+
+@app.post("/empresa/{eid}/bcr-poir-cmi")
+def bcr_poir_cmi(request: Request, eid: int, servicio: str = Form(...),
+                 modificacion: int = Form(...), archivo: UploadFile = File(...),
+                 next: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    dflt = f"/empresa/{eid}/inversiones?sec=bcr"
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
+    nombre = (archivo.filename or "").lower()
+    if not nombre.endswith((".xlsx", ".xlsm")):
+        return RedirectResponse(_dest(next, dflt, "err=Suba+un+archivo+Excel+(.xlsx)"), status_code=303)
+    raw = archivo.file.read()
+    filas, err = poir.leer_excel_cmi(raw)
+    if err and not filas:
+        return RedirectResponse(_dest(next, dflt, "err=" + ("; ".join(err)).replace(" ", "+")), status_code=303)
+    with db.scope_conn(scope_of(user)) as conn:
+        if not _emp_or_redirect(conn, eid):
+            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        n_act, n_cmi = poir.ingesta_modificacion(conn, eid, servicio, modificacion, filas, user["user_id"])
+    db.audit(scope_of(user), "poir_cmi", "empresa", eid,
+             f"{servicio} mod {modificacion}: {n_act} activos nuevos, {n_cmi} CMI")
+    return RedirectResponse(_dest(next, dflt,
+        f"msg=Mod+{modificacion}:+{n_cmi}+CMI+cargados+({n_act}+activos+nuevos)"), status_code=303)
+
+
+@app.get("/empresa/{eid}/bcr-poir-plantilla")
+def bcr_poir_plantilla(request: Request, eid: int):
+    if (r := _need_login(request)):
+        return r
+    data = poir.plantilla_bytes()
+    return Response(content=data,
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": 'attachment; filename="plantilla_cmi_poir.xlsx"'})
 
 
 @app.post("/ipc/cargar")
