@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% block title %}Editar {{ emp.nombre }} · Costos 1032{% endblock %}
+{% block body %}
+<div class="page-head">
+  <a class="back" href="/empresa/{{ emp.id }}">← {{ emp.nombre }}</a>
+  <h1>Editar empresa</h1>
+  <p class="sub">Ajusta los datos del prestador y, sobre todo, los <b>municipios atendidos</b> (un APS por
+  municipio) con los servicios de cada uno. El <b>segmento</b> se recalcula según los suscriptores. Al
+  guardar podrás afinar el detalle de cada APS (georreferenciación, ordenamiento, etc.). El código no se
+  modifica porque identifica el perfil y los datos ya cargados.</p>
+</div>
+
+<form method="post" action="/empresa/{{ emp.id }}/editar" class="form wide" id="editForm">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <div class="grid2">
+    <label>Código
+      <input value="{{ emp.codigo }}" disabled>
+    </label>
+    <label>Nombre <input name="nombre" value="{{ emp.nombre }}" placeholder="Razón social"></label>
+    <label>Código SUI <input name="codigo_sui" value="{{ emp.codigo_sui or '' }}" placeholder="ID del prestador en el SUI (SSPD)"></label>
+    <label>Suscriptores (corte 31‑dic‑2024)
+      <input type="number" id="susc" name="suscriptores" min="0" step="1"
+             value="{{ emp.suscriptores_seg if emp.suscriptores_seg is not none else '' }}"
+             placeholder="total de todas las APS; servicio con más suscriptores">
+    </label>
+    <label>Inicio aplicación 688 <input type="date" name="fecha_688" value="{{ emp.fecha_inicio_688 or '2016-07-01' }}"></label>
+    <label>Inicio aplicación 1032 <input type="date" id="f1032" name="fecha_1032" value="{{ emp.fecha_inicio_1032 or '2026-07-01' }}"></label>
+  </div>
+  <div class="seg-auto">Segmento asignado automáticamente:
+    <b id="segOut">Segmento {{ emp.segmento_id }}</b> <span id="segHint" class="muted2"></span>
+    <span id="tardiaHint" class="muted2"></span>
+  </div>
+
+  <h2 class="serv-h">Municipios atendidos (un APS por municipio)</h2>
+  <p class="hint">Elige el departamento para ver sus municipios, agrégalos con <b>“Agregar →”</b> y, en el
+  cuadro de la derecha, selecciona los servicios de cada APS. Quita los que ya no atienda con <b>“quitar”</b>.
+  Retirar un municipio elimina su APS y sus soportes.</p>
+  <div class="transfer">
+    <div class="tcol">
+      <label>Departamento
+        <select id="fdepto">
+          <option value="">— elige un departamento —</option>
+          {% for d in departamentos %}<option value="{{ d.cod_dane }}">{{ d.nombre }}</option>{% endfor %}
+        </select>
+      </label>
+      <input id="fmun" placeholder="buscar municipio…" style="margin:6px 0">
+      <select id="disponibles" multiple size="12" style="width:100%">
+        {% for m in municipios %}
+        <option value="{{ m.cod_dane }}" data-dpto="{{ m.cod_dpto }}" data-nom="{{ m.nombre }} ({{ m.departamento }})"
+                data-txt="{{ (m.nombre ~ ' ' ~ m.departamento)|lower }}" hidden>{{ m.nombre }} ({{ m.departamento }})</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="tmid">
+      <button type="button" id="btnAdd" class="btn">Agregar →</button>
+    </div>
+    <div class="tcol">
+      <div class="sublabel">APS seleccionados</div>
+      <div id="seleccionados" class="sel-box"><p class="muted2" id="selEmpty">Aún no has agregado municipios.</p></div>
+    </div>
+  </div>
+
+  <button class="btn primary" type="submit" style="margin-top:14px">Guardar cambios</button>
+</form>
+
+<style>
+.seg-auto{margin:8px 0 4px;font-size:14px}
+.seg-auto b{color:var(--teal);font-family:var(--head)}
+.transfer{display:grid;grid-template-columns:1fr auto 1fr;gap:14px;align-items:start}
+.tmid{display:flex;align-items:center;justify-content:center;padding-top:40px}
+.sel-box{background:var(--paper);border:1px solid var(--line);border-radius:var(--r);padding:8px;min-height:220px}
+.sel-row{display:flex;gap:8px;align-items:center;padding:6px 4px;border-bottom:1px solid var(--line)}
+.sel-row span.nom{flex:1;font-size:13px}
+.sel-row select{font-size:12.5px}
+.sel-row .quitar{background:none;border:0;color:var(--danger);cursor:pointer;font-size:12px}
+@media(max-width:720px){.transfer{grid-template-columns:1fr}.tmid{padding:0}}
+</style>
+
+<script>
+(function () {
+  var SEG = [
+    {% for s in segmentos %}{id: {{ s.id }}, min: {{ s.susc_min or 0 }}, max: {{ s.susc_max if s.susc_max is not none else 'null' }}},
+    {% endfor %}
+  ];
+  // APS ya atendidos (precargados en el cuadro de la derecha)
+  var PRE = [
+    {% for a in actuales %}{cod: "{{ a.cod_dane }}", serv: "{{ a.servicios }}"},
+    {% endfor %}
+  ];
+
+  // ---- segmento automático ----
+  var susc = document.getElementById('susc'), segOut = document.getElementById('segOut'),
+      hint = document.getElementById('segHint');
+  function seg() {
+    var n = parseInt(susc.value || '0', 10), f = null;
+    if (n > 5000) { for (var i=0;i<SEG.length;i++){var s=SEG[i]; if (n>=s.min && (s.max===null||n<=s.max)){f=s.id;break;}} }
+    if (f) { segOut.textContent = 'Segmento ' + f; hint.textContent = ''; }
+    else if (n>0 && n<=5000) { segOut.textContent = '—'; hint.textContent = '≤ 5.000 suscriptores: fuera del ámbito (verificar)'; }
+  }
+  susc.addEventListener('input', seg); if (susc.value) seg();
+
+  // ---- aplicación tardía desde la fecha 1032 ----
+  var f1032 = document.getElementById('f1032'), tHint = document.getElementById('tardiaHint');
+  function tardia(){ tHint.textContent = (f1032.value && f1032.value > '2026-07-01') ? '· Aplicación 1032 tardía (fecha posterior al 1‑jul‑2026)' : ''; }
+  f1032.addEventListener('input', tardia); tardia();
+
+  // ---- filtro de municipios por departamento/búsqueda ----
+  var fdepto = document.getElementById('fdepto'), fmun = document.getElementById('fmun'),
+      disp = document.getElementById('disponibles');
+  function filt() {
+    var d = fdepto.value, q = (fmun.value||'').toLowerCase().trim();
+    for (var i=0;i<disp.options.length;i++){ var o=disp.options[i];
+      if (o.dataset.added==='1'){ o.hidden=true; continue; }
+      o.hidden = !(d && o.getAttribute('data-dpto')===d && (!q || (o.getAttribute('data-txt')||'').indexOf(q)>=0));
+    }
+  }
+  fdepto.addEventListener('change', filt); fmun.addEventListener('input', filt);
+
+  // ---- lista de traspaso (agregar/quitar) con servicios por APS ----
+  var box = document.getElementById('seleccionados'), empty = document.getElementById('selEmpty');
+  function refreshEmpty(){ empty.style.display = box.querySelectorAll('.sel-row').length ? 'none' : 'block'; }
+  function add(opt, serv){
+    if (!opt || opt.dataset.added==='1') return;
+    serv = serv || 'ambos';
+    opt.dataset.added='1'; opt.hidden=true; opt.selected=false;
+    var row=document.createElement('div'); row.className='sel-row'; row.dataset.cod=opt.value;
+    var hid=document.createElement('input'); hid.type='hidden'; hid.name='aps'; hid.value=opt.value+':'+serv;
+    var nom=document.createElement('span'); nom.className='nom'; nom.textContent=opt.getAttribute('data-nom');
+    var sel=document.createElement('select');
+    sel.innerHTML='<option value="ambos">Acueducto y alcantarillado</option><option value="ac">Solo acueducto</option><option value="al">Solo alcantarillado</option>';
+    sel.value=serv;
+    sel.addEventListener('change', function(){ hid.value=opt.value+':'+sel.value; });
+    var q=document.createElement('button'); q.type='button'; q.className='quitar'; q.textContent='quitar';
+    q.addEventListener('click', function(){ opt.dataset.added='0'; row.remove(); refreshEmpty(); filt(); });
+    row.appendChild(nom); row.appendChild(sel); row.appendChild(q); row.appendChild(hid);
+    box.appendChild(row); refreshEmpty();
+  }
+  function optByCod(cod){ return Array.prototype.filter.call(disp.options, function(o){return o.value===cod;})[0]; }
+
+  document.getElementById('btnAdd').addEventListener('click', function(){
+    var sel=Array.prototype.filter.call(disp.options, function(o){return o.selected && !o.hidden;});
+    sel.forEach(function(o){ add(o); }); filt();
+  });
+  disp.addEventListener('dblclick', function(){ Array.prototype.filter.call(disp.options,function(o){return o.selected;}).forEach(function(o){ add(o); }); filt(); });
+
+  // precarga de los APS ya atendidos
+  PRE.forEach(function(p){ add(optByCod(p.cod), p.serv); });
+
+  document.getElementById('editForm').addEventListener('submit', function(e){
+    if (!box.querySelector('.sel-row')) { e.preventDefault(); alert('La empresa debe tener al menos un municipio (APS).'); }
+  });
+})();
+</script>
+{% endblock %}

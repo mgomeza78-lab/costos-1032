@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}{{ emp.nombre }} · Costos 1032{% endblock %}
+{% block body %}
+<div class="page-head">
+  <a class="back" href="/panel">← Empresas</a>
+  <h1>{{ emp.nombre }}</h1>
+  <p class="sub">{{ emp.codigo }} · {{ emp.municipio or '—' }} · Segmento {{ emp.segmento_id }}
+    {% if emp.presta_ac %}· Acueducto{% endif %}{% if emp.presta_al %} · Alcantarillado{% endif %}</p>
+  {% if rbac.can(user,'editar_empresa') %}<p><a class="btn-link edit" href="/empresa/{{ emp.id }}/editar">✎ Editar empresa y áreas (APS) →</a></p>{% endif %}
+  <p><a class="btn-link" href="/empresa/{{ emp.id }}/aps">Configuración del APS →</a>
+     <a class="btn-link" href="/empresa/{{ emp.id }}/dashboard">Tablero de indicadores →</a>
+     <a class="btn-link" href="/empresa/{{ emp.id }}/mensual">Operación mensual e indexación →</a>
+     <a class="btn-link" href="/empresa/{{ emp.id }}/recalculo">Recálculo mensual de costos →</a>
+     <a class="btn-link" href="/empresa/{{ emp.id }}/inversiones">Inversiones / POIR →</a>
+     <a class="btn-link" href="/empresa/{{ emp.id }}/subsidios">Subsidios y contribuciones →</a></p>
+</div>
+
+<section class="ficha">
+  <div><span>Tasa r</span><b>{{ (emp.r*100)|round(2) if emp.r else '—' }}%</b></div>
+  <div><span>Capital de trabajo k_ct</span><b>{{ (emp.kct*100)|round(2) if emp.kct else '—' }}%</b></div>
+  <div><span>Inicio 1032</span><b>{{ emp.fecha_inicio_1032 or '—' }}</b></div>
+  <div><span>Inicio 688</span><b>{{ emp.fecha_inicio_688 or '—' }}</b></div>
+  {% if emp.aplicacion_1032_tardia %}<div><span>Aplicación 1032</span><b class="warn">tardía</b></div>{% endif %}
+</section>
+
+<div class="actions">
+  {% if rbac.can(user,'recalcular') and tiene_perfil %}
+  <form method="post" action="/empresa/{{ emp.id }}/recalcular">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <button class="btn primary" type="submit">Recalcular con el núcleo validado</button>
+  </form>
+  {% elif rbac.can(user,'recalcular') and not tiene_perfil %}
+  <span class="note">Sin perfil de cálculo en el núcleo para «{{ emp.codigo }}».</span>
+  {% endif %}
+</div>
+
+{% if por_servicio %}
+  {% for servicio, filas in por_servicio.items() %}
+  <h2 class="serv-h">{{ servicio if servicio != '—' else 'Conjunto / otros' }}</h2>
+  <table class="tabla">
+    <thead><tr><th>Componente</th><th class="r">Valor</th><th>Unidad</th>
+      <th>Procedencia</th><th>Artículo Res. 1032</th></tr></thead>
+    <tbody>
+      {% for f in filas %}
+      <tr>
+        <td class="comp">{{ f.componente }}</td>
+        <td class="r num">{{ f.valor|valor(f.unidad) }}</td>
+        <td>{{ f.unidad or '' }}</td>
+        <td><span class="proc proc-{{ f.procedencia }}">{{ f.procedencia or '—' }}</span></td>
+        <td class="art">{{ f.articulo or '' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endfor %}
+  <p class="hint">Costos económicos de referencia del período de inicio. Los valores
+  provienen del núcleo de cálculo validado al peso frente al modelo de la empresa.</p>
+{% else %}
+  <p class="empty">Aún no hay costos calculados.
+  {% if rbac.can(user,'recalcular') %}Use «Recalcular» para generarlos.{% endif %}</p>
+{% endif %}
+{% endblock %}
