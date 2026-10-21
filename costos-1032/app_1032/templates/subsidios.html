@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Subsidios y contribuciones · {{ emp.nombre }}{% endblock %}
+{% block body %}
+<div class="page-head">
+  <a class="back" href="/empresa/{{ emp.id }}/dashboard">← Tablero</a>
+  <h1>Balance de subsidios y contribuciones</h1>
+  <p class="sub">Fondo de Solidaridad y Redistribución de Ingresos (FSRI) de
+  {{ emp.municipio or emp.nombre }}. Se calcula desde el comercial del SUI por clase de uso,
+  los factores de subsidio/contribución y la tarifa vigente (Ley 142 de 1994, arts. 89, 99 y 100;
+  Decreto 1077 de 2015, art. 2.3.4.2.2). Subsidios en negativo, contribuciones en positivo.</p>
+  {% if anios and anios|length > 1 %}
+  <form method="get" style="margin-top:.6rem">
+    <label>Año
+      <select name="anio" onchange="this.form.submit()">
+        {% for a in anios %}<option value="{{ a }}" {{ 'selected' if a==anio }}>{{ a }}</option>{% endfor %}
+      </select>
+    </label>
+    <noscript><button class="btn" type="submit">Ver</button></noscript>
+  </form>
+  {% endif %}
+</div>
+
+{% if not bal.hay_datos %}
+<p class="empty">Aún no hay datos del comercial cargados para esta empresa.
+Cargue la <b>Facturación del SUI</b> (formularios 6080/6081) en «Operación mensual» y vuelva aquí.</p>
+{% else %}
+{% set t = bal.total %}
+<div class="cards">
+  <div class="card"><div class="k">Subsidios otorgados</div><div class="v neg">{{ t.subsidios|valor('$') }}</div></div>
+  <div class="card"><div class="k">Contribuciones recaudadas</div><div class="v">{{ t.contribuciones|valor('$') }}</div></div>
+  <div class="card"><div class="k">{{ 'Superávit' if t.superavit else 'Déficit' }} del balance</div><div class="v {{ '' if t.superavit else 'neg' }}">{{ t.balance|valor('$') }}</div></div>
+  <div class="card"><div class="k">Cobertura</div><div class="v">{{ '%.1f'|format(t.cobertura*100) }}%</div></div>
+  <div class="card"><div class="k">Promedio mensual FSRI</div><div class="v {{ '' if t.superavit else 'neg' }}">{{ t.deficit_mensual|valor('$') }}</div></div>
+</div>
+<p class="hint">Balance {{ anio or 'acumulado' }} sobre {{ bal.n_meses }} mes(es) cargado(s). El
+{{ 'superávit' if t.superavit else 'déficit' }} corresponde al Fondo de Solidaridad del municipio,
+que lo cubre (o recibe) según el equilibrio entre subsidios y contribuciones.</p>
+
+{% for serv, s in bal.servicios.items() %}
+<h2 class="serv-h">{{ serv }} — balance {{ s.balance|valor('$') }} · cobertura {{ '%.1f'|format(s.cobertura*100) }}%</h2>
+<table class="tabla">
+  <thead><tr>
+    <th>Clase de uso</th><th class="r">Suscriptores</th><th class="r">m³</th><th class="r">m³ subsidiable</th>
+    <th class="r">F. cargo fijo</th><th class="r">F. consumo</th>
+    <th class="r">Subsidio</th><th class="r">Contribución</th><th class="r">Neto</th>
+  </tr></thead>
+  <tbody>
+    {% for c in s.clases %}
+    <tr>
+      <td class="comp">{{ c.nombre }}</td>
+      <td class="num">{{ c.n|valor('') }}</td>
+      <td class="num">{{ c.m3|valor('') }}</td>
+      <td class="num">{{ c.m3s|valor('') }}</td>
+      <td class="num">{{ '%.2f'|format(c.fcf) }}</td>
+      <td class="num">{{ '%.2f'|format(c.fcc) }}</td>
+      <td class="num neg">{{ c.sub|valor('$') if c.sub else '—' }}</td>
+      <td class="num">{{ c.con|valor('$') if c.con else '—' }}</td>
+      <td class="num">{{ (c.sub + c.con)|valor('$') }}</td>
+    </tr>
+    {% endfor %}
+    <tr class="tot">
+      <td class="comp"><b>Total {{ serv }}</b></td><td></td><td></td><td></td><td></td><td></td>
+      <td class="num neg"><b>{{ s.subsidios|valor('$') }}</b></td>
+      <td class="num"><b>{{ s.contribuciones|valor('$') }}</b></td>
+      <td class="num"><b>{{ s.balance|valor('$') }}</b></td>
+    </tr>
+  </tbody>
+</table>
+{% endfor %}
+
+{% if bal.mensual and bal.mensual|length > 1 %}
+<h2 class="serv-h">Detalle mensual</h2>
+<table class="tabla">
+  <thead><tr><th>Mes</th><th class="r">Subsidios</th><th class="r">Contribuciones</th><th class="r">Balance</th></tr></thead>
+  <tbody>
+    {% for m in bal.mensual %}
+    <tr><td class="comp">{{ meses[m.mes] }}-{{ m.anio }}</td>
+      <td class="num neg">{{ m.subsidios|valor('$') }}</td>
+      <td class="num">{{ m.contribuciones|valor('$') }}</td>
+      <td class="num">{{ m.balance|valor('$') }}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<p class="hint"><b>Metodología.</b> Subsidio = (suscriptores × cargo fijo × factor de cargo fijo) +
+(m³ subsidiable × cargo por consumo × factor de consumo), para los estratos 1–3 con factor negativo.
+Contribución = (suscriptores × cargo fijo × factor) + (m³ × cargo por consumo × factor), para los
+estratos 5 y 6, comercial e industrial. El cargo por consumo incluye CMO + CMI + CMICT (con las tasas
+ambientales), base total de liquidación bajo la Resolución CRA 1032 de 2026.</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Suficiencia financiera · {{ emp.nombre }}{% endblock %}
+{% block body %}
+<div class="page-head">
+  <a class="back" href="/empresa/{{ emp.id }}">← {{ emp.nombre }}</a>
+  <h1>Suficiencia financiera</h1>
+  <p class="sub">Indicador de suficiencia a partir de la facturación teórica (tarifa vigente × cantidades
+  del último mes cargado). En el <b>período de inicio</b> la tarifa se fija igual al costo económico de
+  referencia, de modo que la suficiencia teórica es del 100 % por construcción; la verificación de
+  suficiencia real requiere el <b>recaudo efectivo</b> y los <b>costos del período</b>, que se
+  incorporarán en la fase de resultados del primer recálculo.</p>
+</div>
+
+{% if not serv %}
+<p class="empty">Aún no hay tarifa vigente ni cantidades cargadas para estimar la facturación.</p>
+{% else %}
+<div class="cards">
+  <div class="card"><div class="k">Facturación teórica mensual</div><div class="v">{{ tot_ing|valor('$') }}</div>
+    <div class="muted2">último mes con tarifa y cantidades</div></div>
+</div>
+
+<table class="tabla">
+  <thead><tr><th>Servicio</th><th>Mes</th><th class="r">Cargo fijo</th><th class="r">Cargo consumo</th>
+    <th class="r">Suscriptores</th><th class="r">m³ facturados</th><th class="r">Facturación mensual</th></tr></thead>
+  <tbody>
+    {% for s in serv %}
+    <tr>
+      <td class="comp">{{ s.servicio }}</td>
+      <td class="c">{{ meses.get(s.mes, s.mes) }}-{{ s.anio }}</td>
+      <td class="num">{{ s.cf|valor('$') }}</td>
+      <td class="num">{{ s.cc|valor('$') }}</td>
+      <td class="num">{{ s.susc|valor if s.susc else '—' }}</td>
+      <td class="num">{{ s.m3|valor if s.m3 else '—' }}</td>
+      <td class="num">{% if s.tiene_cantidades %}<b>{{ s.ingreso|valor('$') }}</b>{% else %}<span class="muted2">faltan cantidades</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="hint">Facturación mensual = cargo fijo × suscriptores + cargo por consumo × m³ facturados. Para
+completar el indicador de suficiencia se requiere cargar el recaudo real y los costos del período en la
+fase de carga de información.</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Actualización de costos · {{ emp.nombre }}{% endblock %}
+{% block body %}
+<div class="page-head">
+  <a class="back" href="/empresa/{{ emp.id }}">← {{ emp.nombre }}</a>
+  <h1>Actualización de costos</h1>
+  <p class="sub">Los costos económicos de referencia se actualizan cuando la variación acumulada del
+  índice alcanza el <b>3 %</b> desde la última actualización (art. 125 de la Ley 142 de 1994). La 1032
+  usa <b>dos canastas</b>: <b>IPC sin alimentos (IPCs)</b> para CMA, CMO y CMICT, e <b>IPC</b> para CMI;
+  cada una con su propio gatillo. La tarifa vigente = cargo fijo (CMA) + cargo por consumo (CMO+CMI+CMICT).</p>
+</div>
+
+{% if not resumen %}
+<p class="empty">Aún no hay tarifa vigente calculada. Cargue el IPC y procese la indexación en
+<a href="/empresa/{{ emp.id }}/mensual">Cargar información</a>.</p>
+{% else %}
+
+{% macro alerta(var, gatillo) %}
+  {% if var is none %}<span class="tag">sin dato</span>
+  {% elif var >= gatillo %}<span class="tag neg">Gatillo 3 % alcanzado · {{ (var*100)|round(2) }} %</span>
+  {% elif var >= gatillo*0.8 %}<span class="tag" style="background:#f0ead7;color:#8a6d1f">Cerca del límite · {{ (var*100)|round(2) }} %</span>
+  {% else %}<span class="tag ac">{{ (var*100)|round(2) }} % acumulado</span>{% endif %}
+{% endmacro %}
+
+{% for serv, d in resumen.items() %}
+<h2 class="serv-h">{{ serv }} <span class="muted2">· tarifa a {{ meses.get(d.mes, d.mes) }}-{{ d.anio }}</span></h2>
+<div class="cards">
+  <div class="card"><div class="k">Cargo fijo (CMA)</div><div class="v">{{ d.cf|valor('$') }}</div><div class="muted2">$/suscriptor·mes</div></div>
+  <div class="card"><div class="k">Cargo por consumo</div><div class="v">{{ d.cc|valor('$') }}</div><div class="muted2">$/m³ · CMO+CMI+CMICT</div></div>
+  <div class="card"><div class="k">Canasta IPCs (CMA/CMO/CMICT)</div><div style="margin-top:8px">{{ alerta(d.var_ipcs, gatillo) }}</div></div>
+  <div class="card"><div class="k">Canasta IPC (CMI)</div><div style="margin-top:8px">{{ alerta(d.var_ipc, gatillo) }}</div></div>
+</div>
+{% endfor %}
+
+<h2 class="serv-h">Evolución mensual del índice y la tarifa</h2>
+{% for serv, rows in serie.items() %}
+<h3 style="font-family:var(--head);font-size:14px;color:var(--teal-deep);margin:14px 0 4px">{{ serv }}</h3>
+<table class="tabla">
+  <thead><tr><th>Mes</th><th class="r">IPCs</th><th class="r">Var. IPCs</th><th class="r">IPC</th>
+    <th class="r">Var. IPC</th><th class="r">Cargo fijo</th><th class="r">Cargo consumo</th><th>Indexación</th></tr></thead>
+  <tbody>
+    {% for x in rows %}
+    <tr>
+      <td class="comp">{{ meses.get(x.mes, x.mes) }}-{{ x.anio }}</td>
+      <td class="num">{{ x.ipcs|valor if x.ipcs is not none else '—' }}</td>
+      <td class="num">{{ (x.variacion_acum*100)|round(2) ~ ' %' if x.variacion_acum is not none else '—' }}</td>
+      <td class="num">{{ x.ipc|valor if x.ipc is not none else '—' }}</td>
+      <td class="num">{{ (x.var_ipc*100)|round(2) ~ ' %' if x.var_ipc is not none else '—' }}</td>
+      <td class="num">{{ x.cargo_fijo|valor('$') }}</td>
+      <td class="num">{{ x.cargo_consumo|valor('$') }}</td>
+      <td class="c">{% if x.indexado %}<span class="tag ac">IPCs</span>{% endif %}{% if x.indexado_ipc %} <span class="tag al">IPC</span>{% endif %}{% if not x.indexado and not x.indexado_ipc %}—{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endfor %}
+<p class="hint">La columna «Indexación» marca el mes en que cada canasta superó el 3 % y se actualizó la
+tarifa; a partir de ese mes la variación acumulada se reinicia respecto del nuevo nivel.</p>
+{% endif %}
+{% endblock %}

@@ -4,8 +4,10 @@
 <div class="page-head">
   <a class="back" href="/panel">← Empresas</a>
   <h1>Dar de alta una empresa</h1>
-  <p class="sub">Registra el prestador (tenant). Si el código coincide con un perfil del
-  núcleo, sus atributos se completan automáticamente.</p>
+  <p class="sub">Registra el prestador (tenant). Indica el número de suscriptores al corte de la
+  Res. CRA 1032 (31‑dic‑2024) y el sistema sugiere el segmento; agrega el número de APS, los
+  municipios atendidos y el código SUI. Si el código coincide con un perfil del núcleo, sus
+  atributos se completan automáticamente.</p>
 </div>
 
 <form method="post" action="/empresa-nueva" class="form wide">
@@ -13,20 +15,27 @@
   <div class="grid2">
     <label>Código
       <input name="codigo" required placeholder="LAS_CEIBAS" list="perfiles">
-      <datalist id="perfiles">
-        {% for p in perfiles %}<option value="{{ p }}">{% endfor %}
-      </datalist>
+      <datalist id="perfiles">{% for p in perfiles %}<option value="{{ p }}">{% endfor %}</datalist>
     </label>
     <label>Nombre
-      <input name="nombre" placeholder="Razón social (opcional si el código es un perfil)">
+      <input name="nombre" placeholder="Razón social">
     </label>
-    <label>Municipio
-      <input name="municipio" placeholder="Municipio (Departamento)">
+    <label>Código SUI
+      <input name="codigo_sui" placeholder="ID del prestador en el SUI (SSPD)">
+    </label>
+    <label>Número de APS
+      <input type="number" name="n_aps" min="1" step="1" placeholder="p. ej. 1">
+    </label>
+    <label>Suscriptores (corte 31‑dic‑2024)
+      <input type="number" id="susc" name="suscriptores" min="0" step="1"
+             placeholder="total de todas las APS; servicio con más suscriptores">
     </label>
     <label>Segmento
-      <select name="segmento_id">
+      <select id="segmento" name="segmento_id">
+        <option value="">— según suscriptores —</option>
         {% for s in segmentos %}<option value="{{ s.id }}">{{ s.id }} · {{ s.nombre }}</option>{% endfor %}
       </select>
+      <span id="segHint" class="muted2"></span>
     </label>
     <label>Inicio aplicación 688 (opcional)
       <input type="date" name="fecha_688">
@@ -35,13 +44,77 @@
       <input type="date" name="fecha_1032" value="2026-07-01">
     </label>
   </div>
+
+  <h2 class="serv-h">Municipios atendidos</h2>
+  <p class="hint">Selecciona uno o varios (los prestadores regionales atienden varios). Filtra por
+  departamento o escribe para buscar; mantén Ctrl/Cmd para elegir varios.</p>
+  <div class="grid2">
+    <label>Filtrar por departamento
+      <select id="fdepto">
+        <option value="">Todos</option>
+        {% for d in departamentos %}<option value="{{ d.cod_dane }}">{{ d.nombre }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Buscar municipio
+      <input id="fmun" placeholder="escribe para filtrar…">
+    </label>
+  </div>
+  <select id="municipios" name="municipios" multiple size="10" style="width:100%">
+    {% for m in municipios %}
+    <option value="{{ m.cod_dane }}" data-dpto="{{ m.cod_dpto }}"
+            data-txt="{{ (m.nombre ~ ' ' ~ m.departamento)|lower }}">{{ m.nombre }} ({{ m.departamento }})</option>
+    {% endfor %}
+  </select>
+
   <div class="checks">
     <label class="chk"><input type="checkbox" name="presta_ac"> Presta acueducto</label>
     <label class="chk"><input type="checkbox" name="presta_al"> Presta alcantarillado</label>
     <label class="chk"><input type="checkbox" name="tardia"> Aplicación 1032 tardía</label>
+    <label class="chk"><input type="checkbox" name="r825"> Aplicaba Res. 825/2017 en todas las APS (→ segmento 4)</label>
   </div>
   <button class="btn primary" type="submit">Crear empresa</button>
 </form>
-<p class="hint">Perfiles del núcleo disponibles para auto-relleno:
-  {{ perfiles|join(', ') if perfiles else 'ninguno nuevo (todos ya registrados)' }}.</p>
+
+<script>
+(function () {
+  var SEG = [
+    {% for s in segmentos %}{id: {{ s.id }}, min: {{ s.susc_min or 0 }}, max: {{ s.susc_max if s.susc_max is not none else 'null' }}},
+    {% endfor %}
+  ];
+  var susc = document.getElementById('susc'),
+      seg = document.getElementById('segmento'),
+      hint = document.getElementById('segHint');
+  function suggest() {
+    var n = parseInt(susc.value || '0', 10), found = null;
+    if (n > 5000) {
+      for (var i = 0; i < SEG.length; i++) {
+        var s = SEG[i];
+        if (n >= s.min && (s.max === null || n <= s.max)) { found = s.id; break; }
+      }
+    }
+    if (found) {
+      hint.textContent = 'Sugerido: segmento ' + found;
+      if (seg.value === '' || seg.dataset.auto === '1') { seg.value = String(found); seg.dataset.auto = '1'; }
+    } else if (n > 0 && n <= 5000) {
+      hint.textContent = '≤ 5.000 suscriptores: fuera del ámbito (verificar)';
+    } else { hint.textContent = ''; }
+  }
+  susc.addEventListener('input', suggest);
+  seg.addEventListener('change', function () { seg.dataset.auto = '0'; });
+
+  var fdepto = document.getElementById('fdepto'),
+      fmun = document.getElementById('fmun'),
+      msel = document.getElementById('municipios');
+  function filt() {
+    var d = fdepto.value, q = (fmun.value || '').toLowerCase().trim();
+    for (var i = 0; i < msel.options.length; i++) {
+      var o = msel.options[i];
+      o.hidden = !((!d || o.getAttribute('data-dpto') === d) &&
+                   (!q || (o.getAttribute('data-txt') || '').indexOf(q) >= 0));
+    }
+  }
+  fdepto.addEventListener('change', filt);
+  fmun.addEventListener('input', filt);
+})();
+</script>
 {% endblock %}

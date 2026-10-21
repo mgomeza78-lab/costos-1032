@@ -1,133 +1,268 @@
 {% extends "base.html" %}
-{% block title %}Inversiones / POIR · {{ emp.nombre }}{% endblock %}
+{% block title %}Inversiones · CMI / POIR · {{ emp.nombre }}{% endblock %}
 {% block body %}
+{% set NEXT = '/empresa/' ~ emp.id ~ '/inversiones?sec=bcr' %}
+{% macro bar(pct, color) %}<div style="background:var(--aqua);border-radius:6px;height:11px;overflow:hidden"><div style="width:{{ [[pct,100]|min,2]|max }}%;height:100%;background:{{ color }}"></div></div>{% endmacro %}
+
 <div class="page-head">
   <a class="back" href="/empresa/{{ emp.id }}">← {{ emp.nombre }}</a>
-  <h1>Inversiones / POIR</h1>
-  <p class="sub">Registro de proyectos con los campos de la Res. CRA 1032 y seguimiento del avance
-  físico y financiero por corte, hasta la entrada en operación. Cada proyecto se clasifica como
-  <b>asociado al CMI_POIR</b> (opera desde 2027, art. 2.1.2.1.3.5.14) o de <b>reconocimiento expost</b>
-  con la fórmula general (art. 2.1.2.1.3.5). En el período de inicio solo se registra y hace
-  seguimiento: la base alimenta el primer recálculo y la verificación del <b>80 %</b> de ejecución
-  para entrar a la BCR₀.</p>
+  <h1>Inversiones · CMI / POIR</h1>
+  <p class="sub">Base de Capital Regulada (BCR) y Plan de Obras e Inversiones Regulado (POIR). En el
+  <b>período de inicio</b> el CMI se remunera solo con el <b>CMI_BCR</b> sobre la <b>BCR₀</b>
+  (art. 2.1.2.1.3.5, par. 1); el <b>CMI_POIR</b> opera desde el <b>primer año tarifario (2027)</b>
+  cuando los proyectos alcanzan el <b>80 %</b> de ejecución (art. 2.1.2.1.3.5.14).</p>
 </div>
 
-{% if resumen.n %}
+{# ---------- Resumen BCR₀ calculada ---------- #}
 <div class="cards">
-  <div class="card"><div class="k">Proyectos</div><div class="v">{{ resumen.n }}</div></div>
-  <div class="card"><div class="k">Planeado</div><div class="v">{{ resumen.tot_plan|valor('$') }}</div></div>
-  <div class="card"><div class="k">Ejecutado</div><div class="v">{{ resumen.tot_ejec|valor('$') }}</div></div>
-  <div class="card"><div class="k">Ejecución global</div><div class="v">{{ ('%.1f'|format(resumen.pct_global) ~ '%') if resumen.pct_global is not none else '—' }}</div></div>
+  {% for s in servicios %}{% set b = bcr0.get(s) %}
+  <div class="card"><div class="k">BCR₀ · {{ bcr_serv[s] }}</div><div class="v">{{ b.bcr|valor('$') }}</div>
+    <div class="muted2">CMI_BCR {{ b.cmi_bcr|valor('$') ~ ' /m³' if b.cmi_bcr is not none else 'falta CCP' }}</div></div>
+  {% endfor %}
+  <div class="card"><div class="k">Tasa de remuneración r</div><div class="v" style="font-size:22px">{{ (r_emp*100)|round(2) }} %</div>
+    <div class="muted2">art. 2.1.2.1.3.1.7</div></div>
 </div>
 
-<h2 class="serv-h">Ejecución por servicio (umbral 80 %)</h2>
-<table class="tabla">
-  <thead><tr><th>Servicio</th><th class="r">Planeado</th><th class="r">Ejecutado</th><th class="r">% ejecución</th><th>¿Supera 80 %?</th></tr></thead>
-  <tbody>
-    {% for s, d in resumen.por_servicio.items() %}
-    <tr>
-      <td class="comp">{{ s }}</td>
-      <td class="num">{{ d.planeado|valor('$') }}</td>
-      <td class="num">{{ d.ejecutado|valor('$') }}</td>
-      <td class="num">{{ ('%.1f'|format(d.pct) ~ '%') if d.pct is not none else '—' }}</td>
-      <td class="c">{% if d.supera_80 %}<span class="tag ac">sí</span>{% else %}<span class="tag al">no</span>{% endif %}</td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
-<p class="hint">Clasificación:
-  {% for k, d in resumen.por_clasif.items() %}<b>{{ clasificaciones[k] }}</b>: {{ d.n }} proy., {{ d.planeado|valor('$') }} planeado{% if not loop.last %} · {% endif %}{% endfor %}.</p>
-{% endif %}
+{# ---------- 1 · Reconstrucción de la BCR₀ de inicio ---------- #}
+<h2 class="serv-h">1 · Reconstrucción de la BCR₀ de inicio (marco 688)</h2>
+<p class="muted2">BCR₀ = VI688₀ + VIDIFCMI_688₀ (arts. 2.1.2.1.3.5.3 a .7). VA₀ⱼ = VPR₀ⱼ·(1+r688)^t·fa0;
+los VA₀ negativos se compensan contra activos con pendiente &gt; 0 (art. 2.1.2.1.5.2.1.1). CI = Σcak + BCR₀·r;
+CMI_BCR = CI / CCP.</p>
 
-<h2 class="serv-h">Proyectos</h2>
-{% if proyectos %}
-<table class="tabla">
-  <thead><tr>
-    <th>Código</th><th>Nombre</th><th>Servicio</th><th>Componente</th><th>Clasificación</th>
-    <th>Estado</th><th class="r">Planeado</th><th class="r">Ejecutado</th>
-    <th class="r">% físico</th><th class="r">% fin.</th><th>F. planeada</th><th>F. real</th>
-  </tr></thead>
-  <tbody>
-    {% for p in proyectos %}
-    <tr>
-      <td class="comp">{{ p.codigo_poir }}</td>
-      <td>{{ p.nombre }}</td>
-      <td>{{ p.servicio }}</td>
-      <td>{{ p.componente_sistema or '—' }}</td>
-      <td><span class="tag {{ 'ac' if p.clasificacion=='CMI_POIR' else '' }}">{{ 'CMI_POIR' if p.clasificacion=='CMI_POIR' else 'expost' }}</span></td>
-      <td><span class="tag {{ {'en_operacion':'ac','en_ejecucion':'al','suspendido':'neg'}.get(p.estado,'') }}">{{ estados[p.estado] }}</span></td>
-      <td class="num">{{ p.valor_planeado|valor('$') if p.valor_planeado is not none else '—' }}</td>
-      <td class="num">{{ p.avance_financiero|valor('$') if p.avance_financiero is not none else '—' }}</td>
-      <td class="num">{{ ('%.0f'|format(p.avance_fisico) ~ '%') if p.avance_fisico is not none else '—' }}</td>
-      <td class="num">{{ ('%.0f'|format(p.pct_financiero) ~ '%') if p.pct_financiero is not none else '—' }}</td>
-      <td class="c">{{ p.fecha_planeada_operacion or '—' }}</td>
-      <td class="c">{{ p.fecha_real_operacion or '—' }}</td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
-{% else %}
-<p class="empty">Aún no hay proyectos registrados.</p>
-{% endif %}
+{% for s in servicios %}{% set b = bcr0.get(s) %}{% set pa = bcr_params.get(s) %}
+<h3 style="font-family:var(--head);font-size:14.5px;color:var(--teal-deep);margin:16px 0 6px">{{ bcr_serv[s] }}</h3>
 
 {% if puede_cargar %}
-<h2 class="serv-h">Crear / actualizar proyecto</h2>
+<form method="post" action="/empresa/{{ emp.id }}/bcr-param" class="form-grid">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+  <input type="hidden" name="servicio" value="{{ s }}">
+  <label>r688 (fracción) <input name="r688" inputmode="decimal" value="{{ pa.r688 if pa and pa.r688 is not none else '' }}" placeholder="0,1485"></label>
+  <label>IPC dic-2014 <input name="ipc_dic_2014" inputmode="decimal" value="{{ pa.ipc_dic_2014 if pa and pa.ipc_dic_2014 is not none else '' }}"></label>
+  <label>IPC dic-2025 <input name="ipc_dic_2025" inputmode="decimal" value="{{ pa.ipc_dic_2025 if pa and pa.ipc_dic_2025 is not none else '' }}"></label>
+  <label>Inicio aplicación 688 <input type="date" name="fecha_inicio_688" value="{{ pa.fecha_inicio_688 if pa and pa.fecha_inicio_688 else '' }}"></label>
+  <label>Provisión POIR (Res. 950) <input name="provision_poir" inputmode="decimal" value="{{ pa.provision_poir if pa and pa.provision_poir is not none else '' }}"></label>
+  <label>CCP 2025 (m³/año) <input name="ccp_2025" inputmode="decimal" value="{{ pa.ccp_2025 if pa and pa.ccp_2025 is not none else '' }}"></label>
+  <button class="btn" type="submit">Guardar parámetros 688</button>
+</form>
+{% endif %}
+
+<div class="cards">
+  <div class="card"><div class="k">BCR₀ (Σ VA₀ compensado)</div><div class="v" style="font-size:22px">{{ b.bcr|valor('$') }}</div></div>
+  <div class="card"><div class="k">Σ cak</div><div class="v" style="font-size:22px">{{ b.cak|valor('$') }}</div></div>
+  <div class="card"><div class="k">CI = Σcak + BCR₀·r</div><div class="v" style="font-size:22px">{{ b.ci|valor('$') }}</div></div>
+  <div class="card"><div class="k">CMI_BCR</div><div class="v" style="font-size:22px">{{ b.cmi_bcr|valor('$') ~ ' /m³' if b.cmi_bcr is not none else '—' }}</div>
+    <div class="muted2">{% if b.descuento %}descuento compensado {{ b.descuento|valor('$') }} · {% endif %}t={{ b.t|round(3) if b.t is not none else '—' }} · fa0={{ b.fa0|round(4) if b.fa0 is not none else '—' }}</div></div>
+</div>
+{% if b.sin_param %}<p class="hint">Falta cargar los parámetros 688 ({{ bcr_serv[s] }}) para calcular el VA₀ a partir del VPR₀.</p>{% endif %}
+
+{# VP de los ingresos recuperados vía CMI (CMI×Q) #}
+<h4 style="margin:10px 0 2px;font-size:12.5px;color:var(--muted)">VP de los ingresos recuperados vía CMI (agua facturada × CMI cobrado, 688)</h4>
+{% set ing = bcr_ingresos.get(s) %}
+{% if ing and ing.filas %}
+<table class="tabla">
+  <thead><tr><th>Año tarif.</th><th class="r">Agua facturada (m³)</th><th class="r">CMI cobrado ($/m³)</th>
+    <th class="r">Ingreso (CMI·Q)</th><th class="r">Factor 1/(1+r688)^i</th><th class="r">VP del año</th></tr></thead>
+  <tbody>
+    {% for x in ing.filas %}<tr><td class="comp">{{ x.anio }}</td>
+      <td class="num">{{ x.q|valor if x.q is not none else '—' }}</td>
+      <td class="num">{{ x.cmi|valor('$') if x.cmi is not none else '—' }}</td>
+      <td class="num">{{ x.ingreso|valor('$') if x.ingreso is not none else '—' }}</td>
+      <td class="num">{{ x.factor|round(4) if x.factor is not none else '—' }}</td>
+      <td class="num">{{ x.vp|valor('$') if x.vp is not none else '—' }}</td></tr>{% endfor %}
+    <tr><td colspan="5" class="r"><b>VP de los ingresos — VP(CMI×Q)</b></td>
+      <td class="num"><b>{{ ing.total|valor('$') if ing.total is not none else 'falta r688' }}</b></td></tr>
+  </tbody>
+</table>
+<p class="hint">Este VP(CMI×Q) es el término que se resta al VIA688 para obtener el VPR₀
+(art. 2.1.2.1.3.5.5): <b>VPR₀ = VIA688 − VP(CMI×Q)</b>. Cuando un activo trae VIA688 y no se cargó su
+VPR₀, el sistema reparte este VP entre los activos en proporción a su VIA688 y deriva el VPR₀.</p>
+{% else %}<p class="muted2">Carga las series de agua facturada y CMI cobrado (abajo) y el r688 para calcular el VP de los ingresos.</p>{% endif %}
+{% if puede_cargar %}
+<form method="post" action="/empresa/{{ emp.id }}/bcr-serie" class="up-form">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+  <input type="hidden" name="servicio" value="{{ s }}">
+  <label>Año tarif. (1-10) <input name="anio_tarifario" inputmode="numeric" style="width:90px" required></label>
+  <label>Agua facturada (m³) <input name="q_m3" inputmode="decimal"></label>
+  <label>CMI cobrado ($/m³) <input name="cmi_cobrado" inputmode="decimal"></label>
+  <button class="btn" type="submit">Guardar año</button>
+</form>
+{% endif %}
+
+{# Ingresos por proyecto: CMI del POIR por activo (con modificaciones) #}
+<h4 style="margin:12px 0 2px;font-size:12.5px;color:var(--muted)">Ingresos por proyecto · CMI del POIR ({{ bcr_serv[s] }})</h4>
+{% set mods = bcr_mods.get(s) %}{% set cmis = bcr_cmi.get(s) %}
+<p class="muted2">El CMI es <b>por activo</b> y pudo cambiar con cada <b>modificación del POIR</b>. Indica las
+fechas de las modificaciones y sube un Excel por cada una (incluida la 0 = original). El sistema calcula el
+VIA y el VP(CMI×Q) por activo usando el CMI vigente en cada año.
+<a href="/empresa/{{ emp.id }}/bcr-poir-plantilla">Descargar plantilla Excel</a>.</p>
+{% if puede_cargar %}
+<form method="post" action="/empresa/{{ emp.id }}/bcr-poir-mods" class="up-form">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+  <input type="hidden" name="servicio" value="{{ s }}">
+  <label>Fechas de las modificaciones <span class="muted2">(una por línea o separadas por coma)</span>
+    <input name="fechas" placeholder="2019-07-01, 2022-01-01" style="min-width:260px"></label>
+  <button class="btn" type="submit">Registrar modificaciones</button>
+</form>
+{% endif %}
+{% if mods %}
+<p class="muted2">Modificaciones registradas: {% for m in mods %}<b>#{{ m.numero }}</b> ({{ m.fecha or '—' }}){% if not loop.last %} · {% endif %}{% endfor %}</p>
+{% if puede_cargar %}
+<div style="display:flex;gap:8px;flex-wrap:wrap;margin:6px 0">
+  {% for m in mods %}
+  <form method="post" action="/empresa/{{ emp.id }}/bcr-poir-cmi" enctype="multipart/form-data"
+        style="display:flex;gap:6px;align-items:center;border:1px solid var(--line);padding:6px 8px;border-radius:8px">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+    <input type="hidden" name="servicio" value="{{ s }}"><input type="hidden" name="modificacion" value="{{ m.numero }}">
+    <span class="muted2">Mod #{{ m.numero }}</span><input type="file" name="archivo" required>
+    <button class="btn" type="submit">Subir</button>
+  </form>
+  {% endfor %}
+</div>
+{% endif %}
+{% endif %}
+{% if cmis %}
+<table class="tabla">
+  <thead><tr><th>Código</th><th>Activo</th>{% for m in mods %}<th class="r">CMI mod {{ m.numero }}</th>{% endfor %}</tr></thead>
+  <tbody>
+    {% for c in cmis %}<tr><td class="comp">{{ c.codigo }}</td><td>{{ c.nombre }}</td>
+      {% for m in mods %}<td class="num">{{ c.cmi.get(m.numero)|valor('$') if c.cmi.get(m.numero) is not none else '—' }}</td>{% endfor %}</tr>{% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{# activos de la BCR del servicio #}
+<h4 style="margin:12px 0 2px;font-size:12.5px;color:var(--muted)">Activos de la BCR ({{ bcr_serv[s] }})</h4>
+{% set acts = bcr_activos|selectattr('servicio','equalto',s)|list %}
+{% if acts %}
+<table class="tabla">
+  <thead><tr><th>C</th><th>Activo</th><th>Origen</th><th class="r">VIA ($2014)</th><th class="r">VPR₀</th>
+    <th class="r">VA₀</th><th class="r">PRR</th><th class="r">cak</th><th></th></tr></thead>
+  <tbody>
+    {% for a in acts %}<tr>
+      <td><span class="tag {{ 'ac' if a.componente==1 else ('al' if a.componente==2 else '') }}">{{ a.componente }}</span></td>
+      <td>{{ a.nombre }}{% if a.tipo_activo %} <span class="muted2">· {{ a.tipo_activo }}</span>{% endif %}</td>
+      <td>{{ a.origen }}</td>
+      <td class="num">{{ a.via688|valor('$') if a.via688 is not none else '—' }}</td>
+      <td class="num">{{ a.vpr0|valor('$') if a.vpr0 is not none else '—' }}</td>
+      <td class="num">{{ a.va0|valor('$') if a.va0 is not none else (a.valor_pendiente|valor('$') if a.valor_pendiente is not none else '—') }}</td>
+      <td class="num">{{ a.plazo_remanente|round(2) if a.plazo_remanente is not none else '—' }}</td>
+      <td class="num">{{ a.cuota_anual|valor('$') if a.cuota_anual is not none else '—' }}</td>
+      <td class="c">{% if puede_cargar %}<form method="post" action="/empresa/{{ emp.id }}/bcr-activo/{{ a.id }}/eliminar" style="display:inline">
+        <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+        <button class="btn-link" type="submit">eliminar</button></form>{% endif %}</td></tr>{% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="empty">Sin activos registrados para {{ bcr_serv[s] }}.</p>{% endif %}
+{% endfor %}
+
+{% if puede_cargar %}
+<h4 style="margin:14px 0 2px;font-size:12.5px;color:var(--muted)">Agregar / actualizar activo de la BCR</h4>
+<form method="post" action="/empresa/{{ emp.id }}/bcr-activo" class="form-grid">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+  <label>Servicio <select name="servicio">{% for s in servicios %}<option value="{{ s }}">{{ bcr_serv[s] }}</option>{% endfor %}</select></label>
+  <label>Componente <select name="componente">{% for k,v in bcr_comp.items() %}<option value="{{ k }}">{{ k }} · {{ v }}</option>{% endfor %}</select></label>
+  <label>Origen <select name="origen">
+    <option value="VI287">VI287 (plan 287)</option><option value="VIdif287">VIdif287</option>
+    <option value="POIR688">POIR 688</option><option value="VIDIF_688">VIDIF_688</option>
+    <option value="VI_IAR">VI_IAR (ambiental)</option><option value="VI_AO">VI_AO (admin/oper)</option>
+    <option value="TERRENO">Terreno</option></select></label>
+  <label>Activo <input name="nombre" required></label>
+  <label>Tipo / actividad <input name="tipo_activo"></label>
+  <label>VIA688 ($2014) <input name="via688" inputmode="decimal"></label>
+  <label>VP(CMI×Q) <input name="vp_cmi_q" inputmode="decimal"></label>
+  <label>VPR₀ ($2014) <input name="vpr0" inputmode="decimal"></label>
+  <label>VA₀ ($2025) <span class="muted2">· o se calcula de VPR₀</span><input name="va0" inputmode="decimal"></label>
+  <label>PRR (años) <input name="plazo_remanente" inputmode="decimal"></label>
+  <label>cak ($) <input name="cuota_anual" inputmode="decimal"></label>
+  <label>Año POIR <input name="anio_poir" inputmode="numeric" style="width:90px"></label>
+  <label>Ejecución real POIR ($2014) <input name="ejecucion_real" inputmode="decimal"></label>
+  <label>Fecha de operación <input type="date" name="fecha_operacion"></label>
+  <label class="wide">Observación <input name="observacion"></label>
+  <button class="btn primary" type="submit">Guardar activo</button>
+</form>
+<p class="hint">Si cargas el <b>VPR₀</b> y los parámetros 688 del servicio, el VA₀ se calcula automáticamente;
+también puedes cargar el <b>VA₀</b> ya calculado por tu modelo. El <b>valor pendiente</b> que integra la BCR
+es el VA₀ después de la compensación de negativos.</p>
+{% endif %}
+
+{# ---------- 2 · Plan por año tarifario (POIR) ---------- #}
+<h2 class="serv-h">2 · Plan de inversiones por año tarifario (POIR)</h2>
+{% if proyectos %}
+<table class="tabla">
+  <thead><tr><th>Código</th><th>Proyecto</th><th>Servicio</th><th>Año planeado</th><th class="r">Valor planeado</th><th>Clasificación</th><th>Estado</th></tr></thead>
+  <tbody>
+    {% for p in proyectos %}<tr><td class="comp">{{ p.codigo_poir }}</td><td>{{ p.nombre }}</td><td>{{ p.servicio }}</td>
+      <td class="c">{{ p.fecha_planeada_operacion.year if p.fecha_planeada_operacion else '—' }}</td>
+      <td class="num">{{ p.valor_planeado|valor('$') if p.valor_planeado is not none else '—' }}</td>
+      <td><span class="tag {{ 'ac' if p.clasificacion=='CMI_POIR' else '' }}">{{ 'CMI_POIR' if p.clasificacion=='CMI_POIR' else 'expost' }}</span></td>
+      <td><span class="tag {{ {'en_operacion':'ac','en_ejecucion':'al','suspendido':'neg'}.get(p.estado,'') }}">{{ estados[p.estado] }}</span></td></tr>{% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="empty">Aún no hay proyectos del POIR.</p>{% endif %}
+
+{# ---------- 3 · Ejecución real por año ---------- #}
+<h2 class="serv-h">3 · Ejecución real por año tarifario</h2>
+{% if puede_cargar %}
 <form method="post" action="/empresa/{{ emp.id }}/inversion-nueva" class="form-grid">
   <input type="hidden" name="csrf" value="{{ csrf_token }}">
   <label>Código POIR <input name="codigo_poir" required></label>
   <label>Nombre <input name="nombre" required></label>
-  <label>Servicio
-    <select name="servicio">
-      {% if emp.presta_ac %}<option value="acueducto">acueducto</option>{% endif %}
-      {% if emp.presta_al %}<option value="alcantarillado">alcantarillado</option>{% endif %}
-    </select>
-  </label>
-  <label>APS <input name="aps" placeholder="área de prestación"></label>
-  <label>Componente del sistema
-    <input name="componente_sistema" list="componentes" placeholder="captación, tratamiento…">
-    <datalist id="componentes">
-      {% for c in comp_ac %}<option value="{{ c }}">{% endfor %}
-      {% for c in comp_al %}<option value="{{ c }}">{% endfor %}
-    </datalist>
-  </label>
-  <label>Meta asociada <input name="meta_asociada" placeholder="cobertura, continuidad, IRCA, pérdidas…"></label>
-  <label>Clasificación
-    <select name="clasificacion">
-      {% for k, v in clasificaciones.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}
-    </select>
-  </label>
-  <label>Origen
-    <select name="origen"><option value="POIR_nuevo">POIR nuevo</option><option value="POIR_688">POIR 688</option></select>
-  </label>
+  <label>Servicio <select name="servicio">{% for s in servicios %}<option value="{{ s }}">{{ bcr_serv[s] }}</option>{% endfor %}</select></label>
+  <label>Clasificación <select name="clasificacion">{% for k,v in clasificaciones.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</select></label>
   <label>Valor planeado ($) <input name="valor_planeado" inputmode="decimal"></label>
   <label>Fecha planeada de operación <input type="date" name="fecha_planeada_operacion"></label>
-  <label>VIA688 ($) <span class="muted2">· si POIR 688</span><input name="via688" inputmode="decimal"></label>
-  <label>VP recaudo ($) <input name="vp_recaudo" inputmode="decimal"></label>
   <label>Vida útil (años) <input name="vida_util" inputmode="decimal"></label>
-  <label class="wide">Observación <input name="observacion"></label>
-  <button class="btn primary" type="submit">Guardar proyecto</button>
+  <button class="btn" type="submit">Crear / actualizar proyecto</button>
 </form>
-
-<h2 class="serv-h">Registrar avance de un corte</h2>
-<form method="post" action="/empresa/{{ emp.id }}/inversion-avance" class="form-grid">
+<form method="post" action="/empresa/{{ emp.id }}/inversion-avance" class="form-grid" style="margin-top:4px">
   <input type="hidden" name="csrf" value="{{ csrf_token }}">
-  <label>Proyecto
-    <select name="proyecto_id" required>
-      {% for p in proyectos %}<option value="{{ p.id }}">{{ p.codigo_poir }} — {{ p.nombre }}</option>{% endfor %}
-    </select>
-  </label>
-  <label>Año <input type="number" name="anio" value="2026" style="width:90px"></label>
-  <label>Mes
-    <select name="mes">{% for m in [7,8,9,10,11,12] %}<option value="{{ m }}">{{ m }}</option>{% endfor %}</select>
-  </label>
-  <label>Avance físico (%) <input name="avance_fisico" inputmode="decimal" placeholder="0–100"></label>
-  <label>Avance financiero ($ acumulado) <input name="avance_financiero" inputmode="decimal"></label>
-  <label>Fecha real de operación <span class="muted2">· al entrar en operación</span><input type="date" name="fecha_real_operacion"></label>
-  <label class="wide">Observación <input name="observacion"></label>
-  <button class="btn primary" type="submit">Registrar avance</button>
+  <label>Proyecto <select name="proyecto_id" required>{% for p in proyectos %}<option value="{{ p.id }}">{{ p.codigo_poir }} — {{ p.nombre }}</option>{% endfor %}</select></label>
+  <label>Año tarifario <input type="number" name="anio" value="2027" style="width:100px"></label>
+  <label>Mes <select name="mes">{% for m in range(1,13) %}<option value="{{ m }}">{{ m }}</option>{% endfor %}</select></label>
+  <label>Avance físico (%) <input name="avance_fisico" inputmode="decimal"></label>
+  <label>Ejecutado acumulado ($) <input name="avance_financiero" inputmode="decimal"></label>
+  <label>Fecha real de operación <input type="date" name="fecha_real_operacion"></label>
+  <button class="btn" type="submit">Registrar ejecución</button>
 </form>
-<p class="hint">El estado pasa a <b>En ejecución</b> con el primer avance y a <b>En operación</b> cuando el
-avance físico llega al 100 % o se registra la fecha real de operación. El avance financiero es el valor
-ejecutado <b>acumulado</b>; el % de ejecución se calcula contra el valor planeado.</p>
 {% endif %}
+
+{# ---------- 4 · Nivel de cumplimiento por año ---------- #}
+<h2 class="serv-h">4 · Nivel de cumplimiento por año tarifario</h2>
+{% if cumpl %}
+<div class="cards">
+  {% for c in cumpl %}
+  <div class="card"><div class="k">Año tarifario {{ c.anio }}</div>
+    <div class="v" style="font-size:22px">{{ (c.pct)|round(1) ~ ' %' if c.pct is not none else '—' }}</div>
+    <div style="margin:6px 0">{{ bar(c.pct or 0, 'var(--good)' if c.supera else ('var(--amber)' if c.en_curso else 'var(--line)')) }}</div>
+    <div class="muted2">Planeado {{ c.planeado|valor('$') }} · Ejecutado {{ c.ejecutado|valor('$') }}</div>
+    <div style="margin-top:6px">{% if c.supera %}<span class="tag ac">≥ 80 % · entra a la BCR</span>{% elif c.en_curso %}<span class="tag" style="background:#f0ead7;color:#8a6d1f">en ejecución</span>{% else %}<span class="tag neg">pendiente</span>{% endif %}</div>
+  </div>
+  {% endfor %}
+</div>
+<p class="hint">Al superar el <b>80 %</b> de ejecución y entrar en operación, el valor incurrido se incorpora a la
+BCR del año siguiente; la no ejecución activa el mecanismo de provisión que la metodología evalúa al cierre
+del quinto año tarifario.</p>
+{% else %}<p class="empty">Aún no hay plan ni ejecución para evaluar el cumplimiento.</p>{% endif %}
+
+{# ---------- 5 · Proyección del CMI ---------- #}
+<h2 class="serv-h">5 · Proyección del CMI · próximos 5 años tarifarios</h2>
+<p class="muted2">Proyección <b>indicativa</b>: la BCR₀ se remunera a r y recupera su cak; los proyectos del POIR
+entran a la BCR en su año planeado (ejecución ≥ 80 %) y aportan CMI_POIR como anualidad. La demanda se toma
+de lo facturado o del CCP cargado.</p>
+{% for s in servicios %}{% set pr = proy.get(s) %}
+<h3 style="font-family:var(--head);font-size:14px;color:var(--teal-deep);margin:14px 0 4px">{{ bcr_serv[s] }}
+  <span class="muted2">· demanda {{ pr.demanda|valor('m³') if pr.demanda else 'sin dato' }} · vida útil {{ pr.vida_util|round(0)|int }} años</span></h3>
+<table class="tabla">
+  <thead><tr><th>Año tarifario</th><th class="r">BCR al cierre</th><th class="r">POIR acum.</th>
+    <th class="r">CMI_BCR ($/m³)</th><th class="r">CMI_POIR ($/m³)</th><th class="r">CMI total ($/m³)</th></tr></thead>
+  <tbody>
+    {% for f in pr.filas %}<tr><td class="comp">{{ f.anio }}</td>
+      <td class="num">{{ f.bcr|valor('$') }}</td><td class="num">{{ f.poir_acum|valor('$') }}</td>
+      <td class="num">{{ f.cmi_bcr|valor('$') if f.cmi_bcr is not none else '—' }}</td>
+      <td class="num">{{ f.cmi_poir|valor('$') if f.cmi_poir is not none else '—' }}</td>
+      <td class="num"><b>{{ f.cmi_total|valor('$') if f.cmi_total is not none else '—' }}</b></td></tr>{% endfor %}
+  </tbody>
+</table>
+{% if not pr.demanda %}<p class="hint">Carga el CCP 2025 o la información comercial de {{ bcr_serv[s] }} para estimar el CMI por m³.</p>{% endif %}
+{% endfor %}
 {% endblock %}

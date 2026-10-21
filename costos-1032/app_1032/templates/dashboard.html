@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}Tablero · {{ emp.nombre }}{% endblock %}
+{% block body %}
+<div class="page-head">
+  <a class="back" href="/empresa/{{ emp.id }}">← {{ emp.nombre }}</a>
+  <h1>Tablero de indicadores</h1>
+  <p class="sub">Resumen ejecutivo de los principales indicadores de {{ emp.nombre }}{% if d.comercial %} · comercial al corte {{ meses[d.comercial.mes] }}-{{ d.comercial.anio }}{% endif %}.</p>
+  <p><a class="btn-link" href="/empresa/{{ emp.id }}/subsidios">Balance de subsidios y contribuciones →</a>
+     <a class="btn-link" href="/empresa/{{ emp.id }}/mensual">Operación mensual →</a>
+     <a class="btn-link" href="/empresa/{{ emp.id }}/inversiones">Inversiones / POIR →</a></p>
+</div>
+
+{% set ac = d.comercial.por.get('acueducto') if d.comercial else none %}
+<div class="cards">
+  <div class="card"><div class="k">Suscriptores (acueducto)</div>
+    <div class="v">{{ ac.suscriptores|valor('') if ac else '—' }}</div></div>
+  <div class="card"><div class="k">Consumo facturado</div>
+    <div class="v">{{ (ac.m3|valor('') ~ ' m³') if ac and ac.m3 is not none else '—' }}</div></div>
+  <div class="card"><div class="k">Pérdidas (IANC)</div>
+    <div class="v">{{ ('%.1f'|format(d.perdidas.pct) ~ '%') if d.perdidas and d.perdidas.pct is not none else '—' }}</div></div>
+  <div class="card"><div class="k">Balance FSRI {{ d.subsidios_anio or '' }}</div>
+    <div class="v {{ 'neg' if (d.subsidios.hay_datos and d.subsidios.total.balance < 0) else '' }}">{{ d.subsidios.total.balance|valor('$') if d.subsidios.hay_datos else '—' }}</div></div>
+  <div class="card"><div class="k">Ejecución POIR</div>
+    <div class="v">{{ ('%.1f'|format(d.poir.pct_global) ~ '%') if d.poir and d.poir.pct_global is not none else '—' }}</div></div>
+</div>
+
+<h2 class="serv-h">Costos económicos de referencia (período de inicio)</h2>
+{% if d.costos %}
+<table class="tabla">
+  <thead><tr><th>Servicio</th><th class="r">CMA ($/susc·mes)</th><th class="r">CMO ($/m³)</th>
+    <th class="r">CMI ($/m³)</th><th class="r">CMICT ($/m³)</th><th class="r">Cargo consumo ($/m³)</th></tr></thead>
+  <tbody>
+    {% for serv, c in d.costos.items() %}
+    <tr>
+      <td class="comp">{{ serv }}</td>
+      <td class="num">{{ c.CMA|valor('$') }}</td>
+      <td class="num">{{ c.CMO|valor('$') }}</td>
+      <td class="num">{{ c.CMI|valor('$') }}</td>
+      <td class="num">{{ c.CMICT|valor('$') }}</td>
+      <td class="num">{{ ((c.CMO or 0)+(c.CMI or 0)+(c.CMICT or 0))|valor('$') }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="empty">Aún no hay costos calculados. Use «Recalcular» en la ficha de la empresa.</p>{% endif %}
+
+{% if d.tarifa %}
+<h2 class="serv-h">Tarifa vigente</h2>
+<table class="tabla">
+  <thead><tr><th>Servicio</th><th class="r">Cargo fijo ($/susc·mes)</th>
+    <th class="r">Cargo por consumo ($/m³)</th><th>Corte</th></tr></thead>
+  <tbody>
+    {% for serv, t in d.tarifa.items() %}
+    <tr><td class="comp">{{ serv }}</td>
+      <td class="num">{{ t.cargo_fijo|valor('$') }}</td>
+      <td class="num">{{ t.cargo_consumo|valor('$') }}</td>
+      <td class="c">{{ meses[t.mes] }}-{{ t.anio }}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<h2 class="serv-h">Balance de subsidios y contribuciones {{ d.subsidios_anio or '' }}</h2>
+{% if d.subsidios.hay_datos %}
+{% set s = d.subsidios.total %}
+<div class="cards">
+  <div class="card"><div class="k">Subsidios otorgados</div><div class="v neg">{{ s.subsidios|valor('$') }}</div></div>
+  <div class="card"><div class="k">Contribuciones recaudadas</div><div class="v">{{ s.contribuciones|valor('$') }}</div></div>
+  <div class="card"><div class="k">{{ 'Superávit' if s.superavit else 'Déficit' }} (FSRI)</div><div class="v {{ '' if s.superavit else 'neg' }}">{{ s.balance|valor('$') }}</div></div>
+  <div class="card"><div class="k">Cobertura</div><div class="v">{{ '%.1f'|format(s.cobertura*100) }}%</div></div>
+</div>
+<p class="hint">Promedio mensual a cargo del Fondo de Solidaridad del municipio:
+  <b>{{ s.deficit_mensual|valor('$') }}</b> ({{ d.subsidios.n_meses }} mes(es)).
+  <a href="/empresa/{{ emp.id }}/subsidios">Ver detalle por estrato →</a></p>
+{% else %}<p class="empty">Sin datos del comercial para calcular el balance.
+Cargue la facturación del SUI en «Operación mensual».</p>{% endif %}
+
+{% if d.poir and d.poir.n %}
+<h2 class="serv-h">Inversiones / POIR</h2>
+<div class="cards">
+  <div class="card"><div class="k">Proyectos</div><div class="v">{{ d.poir.n }}</div></div>
+  <div class="card"><div class="k">Planeado</div><div class="v">{{ d.poir.tot_plan|valor('$') }}</div></div>
+  <div class="card"><div class="k">Ejecutado</div><div class="v">{{ d.poir.tot_ejec|valor('$') }}</div></div>
+  <div class="card"><div class="k">Ejecución global</div><div class="v">{{ ('%.1f'|format(d.poir.pct_global) ~ '%') if d.poir.pct_global is not none else '—' }}</div></div>
+</div>
+{% endif %}
+
+<p class="hint">Los indicadores provienen de los datos ya cargados en el sistema (comercial del SUI,
+costos de referencia, macromedición e inversiones). El tablero no almacena datos nuevos:
+refleja el último corte disponible.</p>
+{% endblock %}

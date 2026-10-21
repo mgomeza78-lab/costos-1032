@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Evolución de costos · {{ emp.nombre }}{% endblock %}
+{% block body %}
+<div class="page-head">
+  <a class="back" href="/empresa/{{ emp.id }}">← {{ emp.nombre }}</a>
+  <h1>Evolución de costos y tarifa</h1>
+  <p class="sub">Trayectoria mensual del cargo fijo y del cargo por consumo a partir de los costos
+  económicos de referencia del período de inicio, con el factor acumulado de indexación. Al correr
+  los recálculos del primer año tarifario (2027), esta vista incorporará la evolución por componente
+  (CMA, CMO, CMI, CMICT).</p>
+</div>
+
+{% if not serie %}
+<p class="empty">Aún no hay tarifa vigente para mostrar evolución.</p>
+{% else %}
+{% for serv, rows in serie.items() %}
+<h2 class="serv-h">{{ serv }}</h2>
+<table class="tabla">
+  <thead><tr><th>Mes</th><th class="r">Cargo fijo</th><th class="r">Cargo consumo</th>
+    <th class="r">Factor acumulado</th><th class="r">Suscriptores</th><th class="r">m³ facturados</th><th>Indexación</th></tr></thead>
+  <tbody>
+    {% for x in rows %}
+    <tr>
+      <td class="comp">{{ meses.get(x.mes, x.mes) }}-{{ x.anio }}</td>
+      <td class="num">{{ x.cargo_fijo|valor('$') }}</td>
+      <td class="num">{{ x.cargo_consumo|valor('$') }}</td>
+      <td class="num">{{ x.factor_acumulado|round(4) if x.factor_acumulado is not none else '—' }}</td>
+      <td class="num">{{ x.suscriptores|valor if x.suscriptores is not none else '—' }}</td>
+      <td class="num">{{ x.m3_facturados|valor if x.m3_facturados is not none else '—' }}</td>
+      <td class="c">{% if x.indexado %}<span class="tag ac">IPCs</span>{% endif %}{% if x.indexado_ipc %} <span class="tag al">IPC</span>{% endif %}{% if not x.indexado and not x.indexado_ipc %}—{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endfor %}
+<p class="hint">El factor acumulado es el cociente entre el cargo fijo vigente y el cargo fijo base del
+período de inicio; refleja el efecto de las indexaciones por el gatillo del 3 %.</p>
+{% endif %}
+{% endblock %}

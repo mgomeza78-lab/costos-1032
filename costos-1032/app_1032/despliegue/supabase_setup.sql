@@ -770,4 +770,8 @@ CREATE POLICY at_mod ON ano_tarifario FOR ALL USING (app_allow_all()) WITH CHECK
 GRANT SELECT, INSERT, UPDATE, DELETE ON ano_tarifario TO app_user;
 
 -- ---------- Contraseña del rol de aplicación ----------
+-- ---------- 009_subsidios: dimensión opcional de APS/municipio para el balance FSRI ----------
+ALTER TABLE carga_mensual_detalle ADD COLUMN IF NOT EXISTS municipio text;
+CREATE INDEX IF NOT EXISTS ix_cmd_mpio ON carga_mensual_detalle(empresa_id, municipio);
+
 ALTER ROLE app_user LOGIN PASSWORD 'CAMBIA_ESTA_CLAVE_app';

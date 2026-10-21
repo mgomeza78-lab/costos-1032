@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Validación de información · {{ emp.nombre }}{% endblock %}
+{% block body %}
+<div class="page-head">
+  <a class="back" href="/empresa/{{ emp.id }}">← {{ emp.nombre }}</a>
+  <h1>Validación de información</h1>
+  <p class="sub">Estado de la información cargada según el <b>año tarifario</b> al que corresponde.
+  El estudio actual cubre el <b>período de inicio</b> (jul–dic 2026); la información que se cargue para
+  <b>2027</b> alimentará el <b>primer recálculo</b>. La meta de meses esperados se calcula como meses del
+  período × servicios que presta la empresa ({{ n_serv }} servicio{{ 's' if n_serv>1 }}).</p>
+</div>
+
+{% macro cel(n, esp) %}
+  {% set n = n or 0 %}
+  {% if esp and n >= esp %}<span class="tag ac">{{ n }}/{{ esp }} ✓</span>
+  {% elif n > 0 %}<span class="tag" style="background:#f0ead7;color:#8a6d1f">{{ n }}{{ '/'~esp if esp }} parcial</span>
+  {% else %}<span class="tag neg">pendiente</span>{% endif %}
+{% endmacro %}
+
+<table class="tabla">
+  <thead><tr><th>Fuente de información</th>
+    {% for an in anios %}<th class="c">{{ anios_tar.get(an, an) }}</th>{% endfor %}
+  </tr></thead>
+  <tbody>
+    {% for f in fuentes %}
+    <tr>
+      <td class="comp">{{ f.nombre }}</td>
+      {% if f.general %}
+        <td class="c" colspan="{{ anios|length }}">
+          {% if f.ok %}<span class="tag ac">{{ f.valor }}</span>{% else %}<span class="tag" style="background:#f0ead7;color:#8a6d1f">{{ f.valor }}</span>{% endif %}
+        </td>
+      {% elif f.pendiente %}
+        <td class="c" colspan="{{ anios|length }}"><span class="muted2">Módulo por implementar (próxima fase)</span></td>
+      {% else %}
+        {% for an in anios %}
+          <td class="c">
+            {% if f.por_registro %}
+              {% set n = f.datos.get(an, 0) %}
+              {% if n %}<span class="tag ac">{{ n }} registros</span>{% else %}<span class="tag neg">pendiente</span>{% endif %}
+            {% else %}
+              {{ cel(f.datos.get(an, 0), esperado.get(an)) }}
+            {% endif %}
+          </td>
+        {% endfor %}
+      {% endif %}
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<p class="hint">El conteo de comercial, balance, agua producida se expresa como combinaciones mes×servicio
+cargadas frente a las esperadas. «Costos particulares» corresponde al formato de la Res. 1032 que se
+habilitará en la fase de carga de información. Los costos particulares y las metas se desarrollan
+cuantitativamente en el primer recálculo, con la línea base al cierre de 2026.</p>
+{% endblock %}

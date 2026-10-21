@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Simulador tarifario · {{ emp.nombre }}{% endblock %}
+{% block body %}
+<div class="page-head">
+  <a class="back" href="/empresa/{{ emp.id }}">← {{ emp.nombre }}</a>
+  <h1>Simulador tarifario</h1>
+  <p class="sub">Factura mensual estimada por estrato/clase a partir de la tarifa vigente (cargo fijo +
+  cargo por consumo) y de los factores de subsidio y contribución cargados. El subsidio/contribución
+  aplica al cargo fijo y al consumo básico ({{ basico|round(0)|int }} m³/suscriptor·mes); el consumo por
+  encima del básico se cobra a tarifa plena.</p>
+</div>
+
+<form method="get" action="/empresa/{{ emp.id }}/simulador" class="up-form">
+  <label>Consumo (m³/mes) <input name="consumo" inputmode="decimal" value="{{ consumo|round(1) }}" style="width:110px"></label>
+  <button class="btn primary" type="submit">Simular</button>
+</form>
+
+{% if not hay_tarifa %}
+<p class="empty">Aún no hay tarifa vigente. Procese la indexación en
+<a href="/empresa/{{ emp.id }}/mensual">Cargar información</a> para habilitar el simulador.</p>
+{% else %}
+<table class="tabla">
+  <thead><tr>
+    <th>Clase / estrato</th>
+    {% for s in servicios %}<th class="r">{{ s }} ($/mes)</th>{% endfor %}
+    <th class="r">Factura total</th>
+    <th class="r">Sin subsidio/contrib.</th>
+    <th class="r">Δ</th>
+  </tr></thead>
+  <tbody>
+    {% for f in filas %}
+    <tr>
+      <td class="comp">{{ f.nombre }}</td>
+      {% for s in servicios %}
+        <td class="num">{{ f.serv[s].total|valor('$') if s in f.serv else '—' }}{% if s in f.serv and not f.serv[s].tiene_factor %} <span class="muted2">s/f</span>{% endif %}</td>
+      {% endfor %}
+      <td class="num"><b>{{ f.total|valor('$') }}</b></td>
+      <td class="num">{{ f.total_pleno|valor('$') }}</td>
+      <td class="num">
+        {% set delta = f.total - f.total_pleno %}
+        {% if delta < -0.5 %}<span class="chip dn">{{ delta|valor('$') }}</span>
+        {% elif delta > 0.5 %}<span class="chip up">+{{ delta|valor('$') }}</span>
+        {% else %}—{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="hint">«s/f» = clase sin factor de subsidio/contribución cargado (se simula a tarifa plena). Δ negativo
+indica subsidio (estratos 1–3) y Δ positivo indica aporte de contribución (estratos 5–6, comercial e
+industrial). El cargo por consumo reúne CMO+CMI+CMICT; el cargo fijo corresponde al CMA.</p>
+{% endif %}
+{% endblock %}

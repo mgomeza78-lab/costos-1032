@@ -1,0 +1,219 @@
+{% extends "base.html" %}
+{% block title %}Configuración del APS · {{ emp.nombre }}{% endblock %}
+{% block body %}
+{% set a = actual or {} %}
+{% set selitem = (res['items'] | selectattr('cod_dane','equalto',sel) | first) if sel else none %}
+<div class="page-head">
+  <a class="back" href="/empresa/{{ emp.id }}">← {{ emp.nombre }}</a>
+  <h1>Configuración del APS</h1>
+  <p class="sub">Primer paso del estudio. Conforme al <b>art. 2.1.2.1.1.5</b> de la Res. CRA 1032 de 2026,
+  se establece <b>un Área de Prestación del Servicio – APS por cada municipio o distrito</b> que atiende
+  la empresa. Aquí se registran los criterios de configuración de prestación de cada APS y se adjuntan
+  los soportes (mapa georreferenciado en MAGNA-SIRGAS, instrumento de ordenamiento, Plan Maestro y
+  reporte al municipio) en formato Excel, CSV o PDF.</p>
+</div>
+
+<div class="cards">
+  <div class="card"><div class="k">Municipios atendidos</div><div class="v">{{ res.n_municipios }}</div></div>
+  <div class="card"><div class="k">APS configurados</div><div class="v">{{ res.n_configurados }}</div></div>
+  <div class="card"><div class="k">APS completos</div><div class="v">{{ res.n_completos }}</div></div>
+  <div class="card"><div class="k">Pendientes</div><div class="v {{ 'neg' if res.n_pendientes }}">{{ res.n_pendientes }}</div></div>
+</div>
+{% if not res.coincide_declarado %}
+<p class="hint"><b>Aviso:</b> la empresa declaró <b>{{ res.n_aps_declarado }}</b> APS al crearse, pero tiene
+<b>{{ res.n_municipios }}</b> municipios registrados. Debe haber un APS por municipio; revise los municipios
+atendidos o el número de APS declarado.</p>
+{% endif %}
+
+{% if res.n_municipios == 0 %}
+<p class="empty">La empresa no tiene municipios registrados. Los municipios atendidos (base de los APS)
+se asignan al crear o editar la empresa. Pida al administrador que los registre en
+<a href="/empresa-nueva">Nueva empresa</a>.</p>
+{% else %}
+
+<div class="aps-tabs">
+  {% for it in res['items'] %}
+    {% set st = 'none' if not it.aps else ('ok' if not it.faltantes else 'warn') %}
+    <a class="aps-tab {{ 'active' if it.cod_dane==sel }}" href="/empresa/{{ emp.id }}/aps?mun={{ it.cod_dane }}">
+      <span class="dot {{ st }}"></span>{{ it.municipio }}
+    </a>
+  {% endfor %}
+</div>
+
+{% if sel %}
+<div class="page-head" style="margin-bottom:10px">
+  <h2 style="margin:0">APS · {{ selitem.municipio if selitem else sel }}
+    <span class="muted2">({{ selitem.departamento if selitem else '' }} · DANE {{ sel }})</span></h2>
+  {% if selitem and selitem.condicion_especial %}
+  <div><span class="muted2">Condición especial:</span>
+    <ul class="ce">{% for c in selitem.condicion_especial %}<li>{{ c }}</li>{% endfor %}</ul></div>
+  {% endif %}
+  {% if selitem and selitem.faltantes %}
+  <div><span class="muted2">Información pendiente:</span>
+    <ul class="faltan">{% for f in selitem.faltantes %}<li>{{ f }}</li>{% endfor %}</ul></div>
+  {% elif a %}
+  <p class="hint">✓ Información mínima del APS completa para el período de inicio.</p>
+  {% endif %}
+</div>
+
+<form method="post" action="/empresa/{{ emp.id }}/aps/guardar" class="form wide">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <input type="hidden" name="cod_dane" value="{{ sel }}">
+
+  <fieldset class="grp">
+    <legend>Identificación y servicios</legend>
+    <div class="form-grid">
+      <label>Número de APS <input name="numero_aps" inputmode="numeric" value="{{ a.get('numero_aps','') if a.get('numero_aps') is not none else '' }}"></label>
+      <label>Nombre / rótulo <input name="nombre" value="{{ a.get('nombre','') or '' }}" placeholder="APS {{ selitem.municipio if selitem else '' }}"></label>
+      <label>Código del APS en el SUI <input name="codigo_aps" value="{{ a.get('codigo_aps','') or '' }}"></label>
+      <label>Servicios que presta
+        <select name="servicios">
+          {% for k,v in SERVICIOS.items() %}<option value="{{ k }}" {{ 'selected' if a.get('servicios','ambos')==k }}>{{ v }}</option>{% endfor %}
+        </select>
+      </label>
+    </div>
+    <div class="checks">
+      <label><input type="checkbox" name="aps_difiere_servicios" {{ 'checked' if a.get('aps_difiere_servicios') }}> El APS difiere entre servicios (presta uno solo, o acueducto/alcantarillado por separado)</label>
+    </div>
+  </fieldset>
+
+  <fieldset class="grp">
+    <legend>Zonas de prestación</legend>
+    <div class="form-grid">
+      <label>Zonas de prestación
+        <select name="zona">
+          {% for k,v in ZONAS.items() %}<option value="{{ k }}" {{ 'selected' if a.get('zona','urbana')==k }}>{{ v }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Sistema de la zona rural
+        <select name="sistema_rural">
+          {% for k,v in SISTEMA_RURAL.items() %}<option value="{{ k }}" {{ 'selected' if a.get('sistema_rural','na')==k }}>{{ v }}</option>{% endfor %}
+        </select>
+      </label>
+    </div>
+  </fieldset>
+
+  <fieldset class="grp">
+    <legend>Configuración regional y APS de menor tamaño</legend>
+    <div class="checks">
+      <label><input type="checkbox" name="esquema_regional" {{ 'checked' if a.get('esquema_regional') }}> Esquema regional (atiende dos o más municipios)</label>
+    </div>
+    <div class="form-grid">
+      <label>Interconexión
+        <select name="sistema_interconexion">
+          {% for k,v in INTERCONEXION.items() %}<option value="{{ k }}" {{ 'selected' if a.get('sistema_interconexion','na')==k }}>{{ v }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Tipo de esquema regional
+        <select name="tipo_regional">
+          {% for k,v in TIPO_REGIONAL.items() %}<option value="{{ k }}" {{ 'selected' if a.get('tipo_regional','na')==k }}>{{ v }}</option>{% endfor %}
+        </select>
+      </label>
+    </div>
+    <div class="checks">
+      <label><input type="checkbox" name="mercado_regional_declarado" {{ 'checked' if a.get('mercado_regional_declarado') }}> Mercado regional declarado vigente</label>
+      <label><input type="checkbox" name="aplicaba_825" {{ 'checked' if a.get('aplicaba_825') }}> Le aplicaba la Res. CRA 825 de 2017</label>
+      <label><input type="checkbox" name="menor_5000" {{ 'checked' if a.get('menor_5000') }}> APS con 5.000 suscriptores o menos</label>
+      <label><input type="checkbox" name="pdet" {{ 'checked' if a.get('pdet') }}> Municipio PDET</label>
+      <label><input type="checkbox" name="zomac" {{ 'checked' if a.get('zomac') }}> Municipio ZOMAC</label>
+    </div>
+  </fieldset>
+
+  <fieldset class="grp">
+    <legend>Esquemas diferenciales y condición especial</legend>
+    <div class="checks">
+      <label><input type="checkbox" name="ed_particular" {{ 'checked' if a.get('ed_particular') }}> Esquema diferencial de prestación en condición particular</label>
+      <label><input type="checkbox" name="ed_urbano_zdu" {{ 'checked' if a.get('ed_urbano_zdu') }}> Esquema diferencial urbano (ZDU · área de difícil gestión)</label>
+      <label><input type="checkbox" name="ed_rural_zrni" {{ 'checked' if a.get('ed_rural_zrni') }}> Zona rural con sistema no integrado (ZRNI)</label>
+      <label><input type="checkbox" name="toma_posesion_sspd" {{ 'checked' if a.get('toma_posesion_sspd') }}> En toma de posesión por la SSPD</label>
+    </div>
+    <p class="muted2">La 1032 asocia la condición especial a estas situaciones (ZRNI, ZDU, APS de menor tamaño/PDET/ZOMAC y toma de posesión). Se identifican aquí; su desarrollo cuantitativo corresponde al primer recálculo.</p>
+  </fieldset>
+
+  <fieldset class="grp">
+    <legend>Georreferenciación del APS</legend>
+    <div class="form-grid">
+      <label>Sistema de referencia <input name="georref_sistema" value="{{ a.get('georref_sistema','MAGNA-SIRGAS') or 'MAGNA-SIRGAS' }}"></label>
+      <label>Área del APS (ha) <input name="area_ha" inputmode="decimal" value="{{ a.get('area_ha','') if a.get('area_ha') is not none else '' }}"></label>
+    </div>
+    <div class="checks">
+      <label><input type="checkbox" name="georref_presentada" {{ 'checked' if a.get('georref_presentada') }}> Se adjunta el mapa con el polígono georreferenciado y el listado de coordenadas</label>
+    </div>
+  </fieldset>
+
+  <fieldset class="grp">
+    <legend>Ordenamiento del territorio y reporte al municipio</legend>
+    <div class="form-grid">
+      <label>Instrumento de ordenamiento
+        <select name="instrumento_ot">
+          <option value="" {{ 'selected' if not a.get('instrumento_ot') }}>— sin indicar —</option>
+          {% for k,v in INSTRUMENTOS_OT.items() %}<option value="{{ k }}" {{ 'selected' if a.get('instrumento_ot')==k }}>{{ v }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Acto que lo adopta <input name="instrumento_ot_acto" value="{{ a.get('instrumento_ot_acto','') or '' }}" placeholder="Acuerdo/Decreto n.º y año"></label>
+      <label>Fecha de reporte al municipio <input type="date" name="reportado_fecha" value="{{ a.get('reportado_fecha','') if a.get('reportado_fecha') is not none else '' }}"></label>
+      <label>Acto/soporte del reporte <input name="reportado_acto" value="{{ a.get('reportado_acto','') or '' }}"></label>
+    </div>
+    <div class="checks">
+      <label><input type="checkbox" name="pmaa" {{ 'checked' if a.get('pmaa') }}> Cuenta con Plan Maestro de Acueducto y Alcantarillado</label>
+      <label><input type="checkbox" name="reportado_municipio" {{ 'checked' if a.get('reportado_municipio') }}> APS reportada al municipio/distrito</label>
+    </div>
+  </fieldset>
+
+  <div class="form-grid">
+    <label class="wide">Observaciones <input name="observacion" value="{{ a.get('observacion','') or '' }}"></label>
+  </div>
+  {% if puede_editar %}
+  <button class="btn primary" type="submit">Guardar configuración del APS</button>
+  {% else %}
+  <p class="note">Su rol no permite editar la configuración del APS.</p>
+  {% endif %}
+</form>
+
+<h2 class="serv-h">Soportes documentales del APS</h2>
+{% if archivos %}
+<table class="tabla">
+  <thead><tr><th>Categoría</th><th>Archivo</th><th>Tipo</th><th class="r">Tamaño</th><th>Cargado</th><th></th></tr></thead>
+  <tbody>
+    {% for f in archivos %}
+    <tr>
+      <td>{{ CATEGORIAS.get(f.categoria, f.categoria) }}</td>
+      <td><a href="/empresa/{{ emp.id }}/aps/archivo/{{ f.id }}">{{ f.nombre }}</a></td>
+      <td class="c">{{ f.tipo or '—' }}</td>
+      <td class="num">{{ (f.tamano/1024)|round(0)|int }} KB</td>
+      <td class="c">{{ f.subido_en.strftime('%Y-%m-%d') if f.subido_en else '—' }}</td>
+      <td class="c">
+        {% if puede_editar %}
+        <form method="post" action="/empresa/{{ emp.id }}/aps/archivo/{{ f.id }}/eliminar" style="display:inline">
+          <input type="hidden" name="csrf" value="{{ csrf_token }}">
+          <input type="hidden" name="cod_dane" value="{{ sel }}">
+          <button class="btn-link" type="submit">eliminar</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">Aún no hay soportes cargados para este APS.</p>
+{% endif %}
+
+{% if puede_editar %}
+<form method="post" action="/empresa/{{ emp.id }}/aps/archivo" enctype="multipart/form-data" class="up-form">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <input type="hidden" name="cod_dane" value="{{ sel }}">
+  <label>Categoría
+    <select name="categoria">
+      {% for k,v in CATEGORIAS.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Archivo <input type="file" name="archivo" required></label>
+  <button class="btn primary" type="submit">Subir soporte</button>
+</form>
+<p class="hint">Formatos admitidos: {{ EXT|join(', ') }}. Máximo 25 MB por archivo. Si el APS aún no
+existe, se crea automáticamente con los valores por defecto al subir el primer soporte.</p>
+{% endif %}
+{% endif %}
+{% endif %}
+{% endblock %}
