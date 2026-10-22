@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <title>{% block title %}Estudios de costos CRA 1032{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Encode+Sans+Expanded:wght@500;600;700&family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+{% if user %}
+<div class="shell">
+  <nav class="rail">
+    <div class="brand">
+      <a href="/panel">SICTAA · <span>Costos 1032</span></a>
+      <small>Resolución CRA 1032 de 2026</small>
+    </div>
+
+    {% if emp %}
+      {% set p = request.url.path %}
+      <a class="rail-back" href="/panel">← Empresas</a>
+      <div class="rail-emp">{{ emp.nombre }}</div>
+      <div class="sublabel">Estudio de costos · período de inicio</div>
+      {% if rbac.can(user,'editar_empresa') %}<a class="rail-edit" href="/empresa/{{ emp.id }}/editar">✎ Editar empresa / áreas</a>{% endif %}
+
+      {% set en_gi = '/aps' in p or '/cargar' in p or '/mensual' in p or '/validacion' in p %}
+      <details class="rail-group" {{ 'open' if en_gi }}>
+        <summary>Gestión de información</summary>
+        <ol class="rail-nav">
+          <li><a class="link {{ 'active' if '/aps' in p }}" href="/empresa/{{ emp.id }}/aps">Configuración del APS</a></li>
+          <li><a class="link {{ 'active' if '/cargar' in p or '/mensual' in p }}" href="/empresa/{{ emp.id }}/cargar">Cargar información</a></li>
+          <li><a class="link {{ 'active' if '/validacion' in p }}" href="/empresa/{{ emp.id }}/validacion">Validación de información</a></li>
+        </ol>
+      </details>
+
+      {% set en_bcr = '/inversiones' in p %}
+      <details class="rail-group" {{ 'open' if en_bcr }}>
+        <summary>Base de capital regulado</summary>
+        <ol class="rail-nav">
+          <li><a class="link {{ 'active' if en_bcr and sec|default('')=='agua' }}" href="/empresa/{{ emp.id }}/inversiones?sec=agua">Agua facturada (688) y segmento</a></li>
+          <li><a class="link {{ 'active' if en_bcr and sec|default('')=='bcr' }}" href="/empresa/{{ emp.id }}/inversiones?sec=bcr">BCR de inicio</a></li>
+          <li><a class="link {{ 'active' if en_bcr and sec|default('')=='poir' }}" href="/empresa/{{ emp.id }}/inversiones?sec=poir">POIR 688</a></li>
+          <li><a class="link {{ 'active' if en_bcr and sec|default('')=='activos' }}" href="/empresa/{{ emp.id }}/inversiones?sec=activos">Activos administrativos y operativos</a></li>
+          <li><a class="link {{ 'active' if en_bcr and sec|default('')=='provision' }}" href="/empresa/{{ emp.id }}/inversiones?sec=provision">Provisión POIR (Res. 950)</a></li>
+        </ol>
+      </details>
+
+      <a class="rail-sec link-sec {{ 'active' if '/actualizacion' in p }}" href="/empresa/{{ emp.id }}/actualizacion">Actualización de costos</a>
+
+      {% set en_res = p == '/empresa/' ~ emp.id|string or '/evolucion' in p or '/simulador' in p or '/suficiencia' in p or '/subsidios' in p %}
+      <details class="rail-group" {{ 'open' if en_res }}>
+        <summary>Resultados</summary>
+        <ol class="rail-nav nonum">
+          <li><a class="link {{ 'active' if p == '/empresa/' ~ emp.id|string }}" href="/empresa/{{ emp.id }}">Costos de referencia actuales</a></li>
+          <li><a class="link {{ 'active' if '/evolucion' in p }}" href="/empresa/{{ emp.id }}/evolucion">Evolución</a></li>
+          <li><a class="link {{ 'active' if '/simulador' in p }}" href="/empresa/{{ emp.id }}/simulador">Simuladores tarifarios</a></li>
+          <li><a class="link {{ 'active' if '/suficiencia' in p }}" href="/empresa/{{ emp.id }}/suficiencia">Suficiencia financiera</a></li>
+          <li><a class="link {{ 'active' if '/subsidios' in p }}" href="/empresa/{{ emp.id }}/subsidios">Subsidios y contribuciones</a></li>
+        </ol>
+      </details>
+    {% else %}
+      <div class="sublabel">Navegación</div>
+      <ol class="rail-nav">
+        {% if rbac.can(user,'administrar_usuarios') %}<li><a class="link {{ 'active' if '/usuarios' in request.url.path }}" href="/usuarios">Usuarios</a></li>{% endif %}
+        {% if rbac.can(user,'administrar_ipc') %}<li><a class="link {{ 'active' if '/ipc' in request.url.path }}" href="/ipc">IPC / indexación</a></li>{% endif %}
+        <li><a class="link {{ 'active' if '/periodos' in request.url.path }}" href="/periodos">Años tarifarios</a></li>
+        <li><a class="link {{ 'active' if '/permisos' in request.url.path }}" href="/permisos">Permisos</a></li>
+        {% if rbac.can(user,'ver_auditoria') %}<li><a class="link {{ 'active' if '/auditoria' in request.url.path }}" href="/auditoria">Auditoría</a></li>{% endif %}
+      </ol>
+    {% endif %}
+
+    <div class="rail-foot">
+      <span class="uname">{{ user.nombre }}</span>
+      <span class="role role-{{ user.rol }}">{{ rbac.rol_nombre(user.rol) }}</span><br>
+      <a href="/cuenta">Mi cuenta</a> · <a class="logout" href="/logout">Salir</a>
+    </div>
+  </nav>
+
+  <main>
+    <div class="content">
+      {% if msg %}<div class="flash ok">{{ msg }}</div>{% endif %}
+      {% if err %}<div class="flash err">{{ err }}</div>{% endif %}
+      {% if user.debe_cambiar %}<div class="flash warn">Su contraseña es temporal. <a href="/cuenta">Cámbiela ahora</a>.</div>{% endif %}
+      {% block body %}{% endblock %}
+    </div>
+    <div class="foot">Plataforma multiempresa · Resolución CRA 1032 de 2026 · período de inicio
+      (1-jul-2026 a 31-dic-2026). Aislamiento por empresa con Row-Level Security.</div>
+  </main>
+</div>
+{% else %}
+<div class="login-wrap">
+  {% if msg %}<div class="flash ok">{{ msg }}</div>{% endif %}
+  {% if err %}<div class="flash err">{{ err }}</div>{% endif %}
+  {{ self.body() }}
+</div>
+{% endif %}
+</body>
+</html>
