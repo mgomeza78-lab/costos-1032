@@ -108,6 +108,47 @@ def _fa0(p):
     return None
 
 
+# WACC de la Resolución CRA 688 de 2014 por segmento de la 688 (dos segmentos):
+#   · Segmento 1 — Grandes prestadores con más de 100.000 suscriptores → 12,28 %.
+#   · Segmento 2 — Prestadores con 5.001–100.000 suscriptores        → 12,76 %.
+R688_SEG = {1: 0.1228, 2: 0.1276}
+IPUF_INICIO = 6.0   # IPUF* estándar del período de inicio (art. 2.1.2.1.3.5.2, par. 1): 6 m³/susc·mes
+
+
+def segmento_688(suscriptores):
+    """Segmento de la Res. 688 por número de suscriptores: 1 (>100.000), 2 (5.001–100.000)."""
+    if suscriptores is None:
+        return None
+    n = int(suscriptores)
+    if n > 100000:
+        return 1
+    if n > 5000:
+        return 2
+    return None
+
+
+def r688_de_segmento(seg):
+    return R688_SEG.get(seg)
+
+
+def ipc_dic(conn, anio):
+    """IPC de diciembre de un año desde la tabla de IPC (indice_ipc, mes 12), o None."""
+    return conn.execute(text("SELECT indice FROM indice_ipc WHERE anio=:a AND mes=12 ORDER BY 1 LIMIT 1"),
+                        {"a": anio}).scalar()
+
+
+def ccp_desde_consumos(conn, empresa_id, servicio, anio=2025, ipuf=IPUF_INICIO):
+    """CCP del año = m³ facturados + pérdidas aceptables (IPUF* × Σ suscriptores-mes).
+    Para el período de inicio IPUF* = 6 m³/susc·mes (art. 2.1.2.1.3.5.2, par. 1). None si no hay datos."""
+    row = conn.execute(text(
+        "SELECT coalesce(sum(m3_facturados),0) AS m3, coalesce(sum(suscriptores),0) AS susc, count(*) AS n "
+        "FROM carga_mensual WHERE empresa_id=:e AND servicio=:s AND anio=:a AND m3_facturados IS NOT NULL"),
+        {"e": empresa_id, "s": servicio, "a": anio}).mappings().first()
+    if not row or not row["n"]:
+        return None
+    return float(row["m3"]) + float(ipuf) * float(row["susc"])
+
+
 def param_get(conn, empresa_id, servicio):
     return conn.execute(text("SELECT * FROM bcr_param WHERE empresa_id=:e AND servicio=:s"),
                         {"e": empresa_id, "s": servicio}).mappings().first()
@@ -124,10 +165,14 @@ def param_set(conn, empresa_id, servicio, d):
     conn.execute(text(
         "INSERT INTO bcr_param(empresa_id,servicio,r688,ipc_dic_2014,ipc_dic_2025,fecha_inicio_688,"
         " provision_poir,ccp_2025,observacion) VALUES (:e,:s,:r,:i14,:i25,:f,:pv,:ccp,:ob) "
-        "ON CONFLICT (empresa_id,servicio) DO UPDATE SET r688=excluded.r688, "
-        " ipc_dic_2014=excluded.ipc_dic_2014, ipc_dic_2025=excluded.ipc_dic_2025, "
-        " fecha_inicio_688=excluded.fecha_inicio_688, provision_poir=excluded.provision_poir, "
-        " ccp_2025=excluded.ccp_2025, observacion=excluded.observacion, actualizado_en=now()"),
+        "ON CONFLICT (empresa_id,servicio) DO UPDATE SET "
+        " r688=COALESCE(excluded.r688, bcr_param.r688), "
+        " ipc_dic_2014=COALESCE(excluded.ipc_dic_2014, bcr_param.ipc_dic_2014), "
+        " ipc_dic_2025=COALESCE(excluded.ipc_dic_2025, bcr_param.ipc_dic_2025), "
+        " fecha_inicio_688=COALESCE(excluded.fecha_inicio_688, bcr_param.fecha_inicio_688), "
+        " provision_poir=COALESCE(excluded.provision_poir, bcr_param.provision_poir), "
+        " ccp_2025=COALESCE(excluded.ccp_2025, bcr_param.ccp_2025), "
+        " observacion=COALESCE(excluded.observacion, bcr_param.observacion), actualizado_en=now()"),
         {"e": empresa_id, "s": servicio, "r": d.get("r688"), "i14": d.get("ipc_dic_2014"),
          "i25": d.get("ipc_dic_2025"), "f": d.get("fecha_inicio_688") or None,
          "pv": d.get("provision_poir"), "ccp": d.get("ccp_2025"),
@@ -136,7 +181,7 @@ def param_set(conn, empresa_id, servicio, d):
 
 
 def serie_list(conn, empresa_id, servicio=None):
-    sql = ("SELECT servicio, anio_tarifario, q_m3, cmi_cobrado FROM bcr_serie WHERE empresa_id=:e")
+    sql = ("SELECT servicio, anio_tarifario, q_m3, cmi_cobrado, segmento FROM bcr_serie WHERE empresa_id=:e")
     p = {"e": empresa_id}
     if servicio:
         sql += " AND servicio=:s"; p["s"] = servicio
@@ -144,14 +189,14 @@ def serie_list(conn, empresa_id, servicio=None):
     return conn.execute(text(sql), p).mappings().all()
 
 
-def serie_set(conn, empresa_id, servicio, anio_tarifario, q_m3, cmi_cobrado):
+def serie_set(conn, empresa_id, servicio, anio_tarifario, q_m3, cmi_cobrado, segmento=None):
     if servicio not in SERVICIOS:
         return False, "servicio inválido"
     conn.execute(text(
-        "INSERT INTO bcr_serie(empresa_id,servicio,anio_tarifario,q_m3,cmi_cobrado) "
-        "VALUES (:e,:s,:a,:q,:c) ON CONFLICT (empresa_id,servicio,anio_tarifario) DO UPDATE SET "
-        " q_m3=excluded.q_m3, cmi_cobrado=excluded.cmi_cobrado"),
-        {"e": empresa_id, "s": servicio, "a": anio_tarifario, "q": q_m3, "c": cmi_cobrado})
+        "INSERT INTO bcr_serie(empresa_id,servicio,anio_tarifario,q_m3,cmi_cobrado,segmento) "
+        "VALUES (:e,:s,:a,:q,:c,:g) ON CONFLICT (empresa_id,servicio,anio_tarifario) DO UPDATE SET "
+        " q_m3=excluded.q_m3, cmi_cobrado=excluded.cmi_cobrado, segmento=excluded.segmento"),
+        {"e": empresa_id, "s": servicio, "a": anio_tarifario, "q": q_m3, "c": cmi_cobrado, "g": segmento})
     return True, None
 
 
@@ -169,6 +214,10 @@ def ingresos_vp(conn, empresa_id, servicio):
     """
     p = param_get(conn, empresa_id, servicio)
     r = float(p["r688"]) if p and p["r688"] is not None else None
+    if r is None:                                 # el r688 lo da el segmento de la 688
+        susc = conn.execute(text("SELECT suscriptores_seg FROM empresa WHERE id=:e"),
+                            {"e": empresa_id}).scalar()
+        r = r688_de_segmento(segmento_688(susc))
     filas, total = [], 0.0
     for s in serie_list(conn, empresa_id, servicio):
         i = int(s["anio_tarifario"])
@@ -224,20 +273,29 @@ def bcr0_calculo(conn, empresa_id, r_emp=None):
     Compensa negativos contra positivos del mismo servicio+componente (prioridad menor PRR).
     CI = Σcak + BCR₀·r; CMI_BCR = CI/CCP.
     """
+    emp_row = conn.execute(text(
+        "SELECT r, suscriptores_seg, fecha_inicio_688 FROM empresa WHERE id=:e"),
+        {"e": empresa_id}).mappings().first()
     if r_emp is None:
-        r_emp = conn.execute(text("SELECT r FROM empresa WHERE id=:e"), {"e": empresa_id}).scalar()
-        r_emp = float(r_emp) if r_emp is not None else 0.0
+        r_emp = float(emp_row["r"]) if (emp_row and emp_row["r"] is not None) else 0.0
+    # Valores que ya no se digitan: el r688 lo da el segmento de la 688; los IPC salen de la
+    # tabla; la fecha de inicio 688, de la empresa; el CCP, de los consumos del año base.
+    seg688 = segmento_688(emp_row["suscriptores_seg"]) if emp_row else None
+    r688_auto = r688_de_segmento(seg688)
+    i14, i25 = ipc_dic(conn, 2014), ipc_dic(conn, 2025)
+    fa0_auto = (float(i25) / float(i14)) if (i14 and i25) else None
+    fecha_auto = emp_row["fecha_inicio_688"] if emp_row else None
     ps = params(conn, empresa_id)
     activos = lista(conn, empresa_id)
     out = {}
     for s in ("acueducto", "alcantarillado"):
         p = ps.get(s)
-        r688 = float(p["r688"]) if p and p["r688"] is not None else None
-        t = _t_anios(p["fecha_inicio_688"]) if (p and p["fecha_inicio_688"]) else None
-        fa0 = _fa0(p) if p else None
-        ccp = float(p["ccp_2025"]) if (p and p["ccp_2025"] is not None) else None
+        r688 = float(p["r688"]) if (p and p["r688"] is not None) else r688_auto
+        fecha_inicio = (p["fecha_inicio_688"] if (p and p["fecha_inicio_688"]) else fecha_auto)
+        t = _t_anios(fecha_inicio) if fecha_inicio else None
+        fa0 = _fa0(p) if (p and p["ipc_dic_2014"] and p["ipc_dic_2025"]) else fa0_auto
+        ccp = float(p["ccp_2025"]) if (p and p["ccp_2025"] is not None) else ccp_desde_consumos(conn, empresa_id, s)
         vping = ingresos_vp(conn, empresa_id, s)["total"]          # VP de los ingresos (agregado)
-        fecha_inicio = p["fecha_inicio_688"] if p else None
         mods = poir.mods_list(conn, empresa_id, s)
         cmi_cod = poir.cmi_por_codigo(conn, empresa_id, s)         # CMI por activo por modificación
         serie_q = {int(x["anio_tarifario"]): (float(x["q_m3"]) if x["q_m3"] is not None else None)
@@ -305,9 +363,14 @@ def bcr0_calculo(conn, empresa_id, r_emp=None):
         serv["t"] = t
         serv["fa0"] = fa0
         serv["vp_ingresos"] = vping
-        serv["sin_param"] = p is None
+        serv["seg688"] = seg688
+        serv["sin_param"] = r688 is None          # sin r688 (segmento 688) no se puede derivar el VA₀
         out[s] = serv
     out["_r"] = r_emp
+    out["_seg688"] = seg688
+    out["_ipc_14"] = float(i14) if i14 else None
+    out["_ipc_25"] = float(i25) if i25 else None
+    out["_fecha_688"] = str(fecha_auto) if fecha_auto else None
     return out
 
 
