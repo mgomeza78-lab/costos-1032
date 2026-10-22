@@ -2,19 +2,31 @@
 {% block title %}Cargar información · {{ emp.nombre }}{% endblock %}
 {% block body %}
 {% set NEXT = '/empresa/' ~ emp.id ~ '/cargar?fuente=' ~ fuente %}
-{% macro aniotar(an) %}<span class="tag ac">{{ anios_tar.get(an, 'Año ' ~ an) }}</span>{% endmacro %}
+{% macro aniotar(an) %}<span class="tag ac">{{ an|anio_tar_base }}</span>{% endmacro %}
 {% macro servopts() %}
   {% if emp.presta_ac %}<option value="acueducto">Acueducto</option>{% endif %}
   {% if emp.presta_al %}<option value="alcantarillado">Alcantarillado</option>{% endif %}
+{% endmacro %}
+{# Selector de período tarifario + año de línea base (el año se llena por JS según el período) #}
+{% macro periodo_anio() %}
+  <label>Período tarifario
+    <select class="periodoSel">
+      {% for p in periodos_carga %}<option value="{{ p.clave }}" data-anios="{{ p.anios_cargar|join(',') }}" data-base="{{ p.anios_base[0] }}–{{ p.anios_base[1] }}"{{ ' selected' if p.es_inicio else '' }}>{{ p.etiqueta }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Año de línea base <select name="anio" class="anioSel"></select>
+    <small class="muted2 baseHint" style="display:block;margin-top:2px"></small>
+  </label>
 {% endmacro %}
 
 <div class="page-head">
   <a class="back" href="/empresa/{{ emp.id }}">← {{ emp.nombre }}</a>
   <h1>Cargar información</h1>
-  <p class="sub">Punto único de carga de los insumos del estudio. Cada archivo se etiqueta con el
-  <b>período</b> (año y mes) y el sistema deriva el <b>año tarifario</b>: jul–dic 2026 →
-  <b>período de inicio</b>; ene–dic 2027 → <b>primer año tarifario</b>. Revisa la completitud por año
-  en <a href="/empresa/{{ emp.id }}/validacion">Validación de información</a>.</p>
+  <p class="sub">Punto único de carga de los insumos del estudio. La información se carga por su
+  <b>línea base</b> (dos años calendario que se desplazan por período): el <b>período de inicio</b> usa
+  <b>2024 y 2025</b> (se cargan los dos); cada <b>año tarifario</b> solo agrega el año nuevo de su ventana
+  (año&nbsp;1 → 2026, año&nbsp;2 → 2027, …). Elige el período y el sistema ofrece el año que corresponde.
+  Revisa la completitud en <a href="/empresa/{{ emp.id }}/validacion">Validación de información</a>.</p>
 </div>
 
 <div class="aps-tabs">
@@ -31,21 +43,27 @@
 <p class="muted2">Suscriptores y consumos facturados por clase/estrato. El <b>maestro de facturación</b>
 es la misma información del <b>reporte comercial del SUI</b> (una sola fuente).</p>
 {% if puede_cargar %}
+<p class="muted2">Los suscriptores, consumos y facturación <b>salen del archivo que se carga</b> (no se
+digitan). Puedes subir <b>varios archivos a la vez</b>.</p>
 <form method="post" action="/empresa/{{ emp.id }}/cargar-csv" enctype="multipart/form-data" class="up-form">
   <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
   <input type="hidden" name="tipo" value="comercial">
-  <label>Archivo del maestro de facturación (CSV por clase) <input type="file" name="archivo" required></label>
-  <button class="btn primary" type="submit">Cargar maestro</button>
+  <label>Maestro de facturación — CSV por clase (columnas: <code>anio, mes, servicio, clase, suscriptores, m3, m3_subsidiable</code>). Puedes seleccionar varios archivos.
+    <input type="file" name="archivos" accept=".csv" multiple required></label>
+  <button class="btn primary" type="submit">Cargar archivo(s)</button>
 </form>
-<form method="post" action="/empresa/{{ emp.id }}/carga" class="form-grid" style="margin-top:4px">
+
+<h3 class="serv-h">Reporte original del SUI · cargar varios meses de una vez</h3>
+<p class="muted2">Si usas el archivo <b>original del SUI</b> (uno por mes), súbelos todos juntos: elige el
+<b>período</b>, el <b>año</b> y el <b>servicio</b>; el sistema detecta el <b>mes</b> por el nombre de cada
+archivo y puedes corregirlo antes de cargar. Así subes los 12 meses de un servicio en un solo paso.</p>
+<form method="post" action="/empresa/{{ emp.id }}/cargar-sui-lote" enctype="multipart/form-data" class="form-grid" id="suiLote">
   <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
-  <label>Año <select name="anio"><option>2026</option><option>2027</option></select></label>
-  <label>Mes <select name="mes">{% for m in range(1,13) %}<option value="{{ m }}">{{ meses.get(m,m) }}</option>{% endfor %}</select></label>
+  {{ periodo_anio() }}
   <label>Servicio <select name="servicio">{{ servopts() }}</select></label>
-  <label>Suscriptores <input name="suscriptores" inputmode="numeric"></label>
-  <label>m³ facturados <input name="m3" inputmode="decimal"></label>
-  <label>Facturación ($) <input name="facturacion" inputmode="decimal"></label>
-  <button class="btn" type="submit">Registrar totales del mes</button>
+  <label class="wide">Reportes del SUI (uno por mes) <input type="file" name="archivos" accept=".csv,.txt" multiple id="suiFiles"></label>
+  <div class="wide" id="suiRows" style="margin:4px 0"></div>
+  <button class="btn" type="submit">Cargar los meses seleccionados</button>
 </form>
 {% endif %}
 <h3 class="serv-h">Cargado</h3>
@@ -69,7 +87,7 @@ de costos. Fuente esperada: balance de prueba a nivel de cuenta (Excel o CSV).</
 {% if puede_cargar %}
 <form method="post" action="/empresa/{{ emp.id }}/cargar-balance" enctype="multipart/form-data" class="up-form">
   <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
-  <label>Año <select name="anio"><option>2026</option><option>2027</option></select></label>
+  {{ periodo_anio() }}
   <label>Mes <select name="mes">{% for m in range(1,13) %}<option value="{{ m }}">{{ meses.get(m,m) }}</option>{% endfor %}</select></label>
   <label>Balance de prueba (Excel / CSV) <input type="file" name="archivo" required></label>
   <button class="btn primary" type="submit">Cargar balance</button>
@@ -96,8 +114,20 @@ de macromedición (CSV) o el reporte del SUI.</p>
 <form method="post" action="/empresa/{{ emp.id }}/cargar-csv" enctype="multipart/form-data" class="up-form">
   <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
   <input type="hidden" name="tipo" value="macromedicion">
-  <label>Macromedición (CSV) <input type="file" name="archivo" required></label>
-  <button class="btn primary" type="submit">Cargar macromedición</button>
+  <label>Macromedición — CSV (columnas: <code>anio, mes, servicio, punto, m3_producido</code>). Puedes seleccionar varios archivos.
+    <input type="file" name="archivos" accept=".csv" multiple required></label>
+  <button class="btn primary" type="submit">Cargar archivo(s)</button>
+</form>
+<form method="post" action="/empresa/{{ emp.id }}/carga-agua" class="form-grid" style="margin-top:4px">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+  {{ periodo_anio() }}
+  <label>Mes <select name="mes">{% for m in range(1,13) %}<option value="{{ m }}">{{ meses.get(m,m) }}</option>{% endfor %}</select></label>
+  <label>Servicio <select name="servicio">{{ servopts() }}</select></label>
+  <label>Punto de macromedición <input name="punto" required placeholder="p. ej. PTAP Norte"></label>
+  <label>m³ producidos <input name="m3_producido" inputmode="decimal"></label>
+  <label>m³ bloque entregado <input name="m3_bloque_entregado" inputmode="decimal"></label>
+  <label>m³ bloque recibido <input name="m3_bloque_recibido" inputmode="decimal"></label>
+  <button class="btn" type="submit">Registrar punto del mes</button>
 </form>
 {% endif %}
 <h3 class="serv-h">Cargado</h3>
@@ -120,7 +150,7 @@ por año y servicio; el sistema los asocia al año tarifario correspondiente.</p
 {% if puede_cargar %}
 <form method="post" action="/empresa/{{ emp.id }}/cargar-costo-particular" class="form-grid">
   <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
-  <label>Año <select name="anio"><option>2026</option><option>2027</option></select></label>
+  {{ periodo_anio() }}
   <label>Servicio <select name="servicio">{{ servopts() }}<option value="general">General</option></select></label>
   <label>Categoría <input name="categoria" list="cp_cats" placeholder="CMO particular, tasas…">
     <datalist id="cp_cats">{% for c in cat_cp %}<option value="{{ c }}">{% endfor %}</datalist></label>
@@ -215,4 +245,49 @@ captación, (c) la <b>metodología anterior</b> (688/825) y (d) si <b>cumplió l
 (ya en el estándar), el Fap es 0. El Fap se descuenta del ISUF en el denominador del cargo por consumo,
 generando continuidad con las señales regulatorias de la Res. 688.</p>
 {% endif %}
+
+<script>
+// Llena el "Año de línea base" según el período elegido (el inicio ofrece los dos años).
+(function () {
+  function fill(sel) {
+    var form = sel.closest('form'); if (!form) return;
+    var ano = form.querySelector('.anioSel'); if (!ano) return;
+    var opt = sel.options[sel.selectedIndex];
+    var years = (opt.getAttribute('data-anios') || '').split(',').filter(Boolean);
+    ano.innerHTML = years.map(function (y) { return '<option value="' + y + '">' + y + '</option>'; }).join('');
+    var hint = form.querySelector('.baseHint');
+    if (hint) hint.textContent = 'ventana de línea base ' + (opt.getAttribute('data-base') || '')
+      + (years.length > 1 ? ' · cargue los dos años' : ' · solo falta este año');
+  }
+  document.querySelectorAll('.periodoSel').forEach(function (s) {
+    s.addEventListener('change', function () { fill(s); }); fill(s);
+  });
+})();
+
+// Lote del SUI: una fila por archivo con el mes detectado del nombre (corregible).
+(function () {
+  var inp = document.getElementById('suiFiles'); if (!inp) return;
+  var rows = document.getElementById('suiRows');
+  var MES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+  function guess(name) {
+    var n = name.toLowerCase();
+    var m = n.match(/(?:^|[^0-9])20\d\d[-_. ]?(0[1-9]|1[0-2])(?:[^0-9]|$)/);  // AAAA-MM
+    if (m) return parseInt(m[1], 10);
+    for (var i = 0; i < 12; i++) { if (n.indexOf(MES[i]) >= 0 || n.indexOf(MES[i].slice(0,3)) >= 0) return i + 1; }
+    m = n.match(/(?:^|[^0-9])(0[1-9]|1[0-2])(?:[^0-9]|$)/);                   // MM suelto
+    return m ? parseInt(m[1], 10) : 0;
+  }
+  function opts(sel) { var s = '<option value="">— mes —</option>'; for (var i = 1; i <= 12; i++) s += '<option value="' + i + '"' + (i === sel ? ' selected' : '') + '>' + i + ' · ' + MES[i-1] + '</option>'; return s; }
+  inp.addEventListener('change', function () {
+    rows.innerHTML = '';
+    Array.prototype.forEach.call(inp.files, function (f) {
+      var row = document.createElement('div');
+      row.style.cssText = 'display:flex;gap:8px;align-items:center;padding:3px 0;border-bottom:1px solid var(--line)';
+      var nm = document.createElement('span'); nm.textContent = f.name; nm.style.cssText = 'flex:1;font-size:12.5px';
+      var sel = document.createElement('select'); sel.name = 'mes'; sel.innerHTML = opts(guess(f.name));
+      row.appendChild(nm); row.appendChild(sel); rows.appendChild(row);
+    });
+  });
+})();
+</script>
 {% endblock %}

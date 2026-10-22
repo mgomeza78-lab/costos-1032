@@ -4,10 +4,10 @@
 <div class="page-head">
   <a class="back" href="/empresa/{{ emp.id }}">← {{ emp.nombre }}</a>
   <h1>Validación de información</h1>
-  <p class="sub">Estado de la información cargada según el <b>año tarifario</b> al que corresponde.
-  El estudio actual cubre el <b>período de inicio</b> (jul–dic 2026); la información que se cargue para
-  <b>2027</b> alimentará el <b>primer recálculo</b>. La meta de meses esperados se calcula como meses del
-  período × servicios que presta la empresa ({{ n_serv }} servicio{{ 's' if n_serv>1 }}).</p>
+  <p class="sub">Estado de la información de <b>línea base</b> del <b>período de inicio</b> (jul–dic 2026),
+  que se calcula con los años <b>2024 y 2025</b>. La meta de meses esperados por año es 12 × servicios que
+  presta la empresa ({{ n_serv }} servicio{{ 's' if n_serv>1 }}). Al avanzar a cada año tarifario se
+  agregará el año nuevo de la ventana (año&nbsp;1 → 2026, …).</p>
 </div>
 
 {% macro cel(n, esp) %}
