@@ -52,8 +52,6 @@ class SecurityHeaders(BaseHTTPMiddleware):
         resp.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         resp.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
         resp.headers["Content-Security-Policy"] = (
-            "default-src 'self'; img-src 'self' data:; style-src 'self'; "
-            "script-src 'self'; form-action 'self'; frame-ancestors 'none'; "
             "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
             "script-src 'self' 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; "
             "base-uri 'self'; object-src 'none'")
