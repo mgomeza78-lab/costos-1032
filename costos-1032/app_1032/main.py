@@ -54,6 +54,8 @@ class SecurityHeaders(BaseHTTPMiddleware):
         resp.headers["Content-Security-Policy"] = (
             "default-src 'self'; img-src 'self' data:; style-src 'self'; "
             "script-src 'self'; form-action 'self'; frame-ancestors 'none'; "
+            "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
+            "script-src 'self' 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; "
             "base-uri 'self'; object-src 'none'")
         if config.IS_PROD:
             resp.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
