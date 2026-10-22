@@ -19,7 +19,7 @@
     <label>Nombre <input name="nombre" value="{{ emp.nombre }}" placeholder="Razón social"></label>
     <label>Código SUI <input name="codigo_sui" value="{{ emp.codigo_sui or '' }}" placeholder="ID del prestador en el SUI (SSPD)"></label>
     <label>Suscriptores (corte 31‑dic‑2024)
-      <input type="number" id="susc" name="suscriptores" min="0" step="1"
+      <input type="text" inputmode="numeric" id="susc" name="suscriptores"
              value="{{ emp.suscriptores_seg if emp.suscriptores_seg is not none else '' }}"
              placeholder="total de todas las APS; servicio con más suscriptores">
     </label>
@@ -32,9 +32,10 @@
   </div>
 
   <h2 class="serv-h">Municipios atendidos (un APS por municipio)</h2>
-  <p class="hint">Elige el departamento para ver sus municipios, agrégalos con <b>“Agregar →”</b> y, en el
-  cuadro de la derecha, selecciona los servicios de cada APS. Quita los que ya no atienda con <b>“quitar”</b>.
-  Retirar un municipio elimina su APS y sus soportes.</p>
+  <p class="hint">Escribe el nombre del municipio en el buscador (lo encuentra en todo el país) o elige primero
+  un departamento para ver su lista. Agrégalos con <b>“Agregar →”</b> y, en el cuadro de la derecha, selecciona
+  los servicios de cada APS. Quita los que ya no atienda con <b>“quitar”</b>. Retirar un municipio elimina su
+  APS y sus soportes.</p>
   <div class="transfer">
     <div class="tcol">
       <label>Departamento
@@ -43,7 +44,7 @@
           {% for d in departamentos %}<option value="{{ d.cod_dane }}">{{ d.nombre }}</option>{% endfor %}
         </select>
       </label>
-      <input id="fmun" placeholder="buscar municipio…" style="margin:6px 0">
+      <input id="fmun" placeholder="escribe el municipio (p. ej. Bucaramanga)…" style="margin:6px 0">
       <select id="disponibles" multiple size="12" style="width:100%">
         {% for m in municipios %}
         <option value="{{ m.cod_dane }}" data-dpto="{{ m.cod_dpto }}" data-nom="{{ m.nombre }} ({{ m.departamento }})"
@@ -78,26 +79,36 @@
 
 <script>
 (function () {
+  // Rangos de segmento (art. 2.1.2.1.1.6). Se usan los de la BD y, si no llegan,
+  // un respaldo fijo con los valores de la resolución para que el cálculo nunca falle.
   var SEG = [
     {% for s in segmentos %}{id: {{ s.id }}, min: {{ s.susc_min or 0 }}, max: {{ s.susc_max if s.susc_max is not none else 'null' }}},
     {% endfor %}
   ];
+  if (!SEG.length) SEG = [{id:1,min:300001,max:null},{id:2,min:90001,max:300000},
+                          {id:3,min:17001,max:90000},{id:4,min:5001,max:17000}];
   // APS ya atendidos (precargados en el cuadro de la derecha)
   var PRE = [
     {% for a in actuales %}{cod: "{{ a.cod_dane }}", serv: "{{ a.servicios }}"},
     {% endfor %}
   ];
 
-  // ---- segmento automático ----
+  // ---- suscriptores con separador de miles + segmento automático ----
   var susc = document.getElementById('susc'), segOut = document.getElementById('segOut'),
       hint = document.getElementById('segHint');
+  function soloDigitos(v){ return (v || '').replace(/\D/g, ''); }
+  function miles(d){ return d.replace(/\B(?=(\d{3})+(?!\d))/g, '.'); }
+  function fmtSusc(){ var d = soloDigitos(susc.value); susc.value = d ? miles(d) : ''; }
   function seg() {
-    var n = parseInt(susc.value || '0', 10), f = null;
+    var n = parseInt(soloDigitos(susc.value) || '0', 10), f = null;
     if (n > 5000) { for (var i=0;i<SEG.length;i++){var s=SEG[i]; if (n>=s.min && (s.max===null||n<=s.max)){f=s.id;break;}} }
     if (f) { segOut.textContent = 'Segmento ' + f; hint.textContent = ''; }
-    else if (n>0 && n<=5000) { segOut.textContent = '—'; hint.textContent = '≤ 5.000 suscriptores: fuera del ámbito (verificar)'; }
+    else if (n > 5000) { segOut.textContent = '—'; hint.textContent = 'sin segmento aplicable (verificar)'; }
+    else if (n > 0) { segOut.textContent = '—'; hint.textContent = '≤ 5.000 suscriptores: fuera del ámbito (verificar)'; }
+    else { segOut.textContent = '—'; hint.textContent = ''; }
   }
-  susc.addEventListener('input', seg); if (susc.value) seg();
+  susc.addEventListener('input', function(){ fmtSusc(); seg(); });
+  fmtSusc(); if (soloDigitos(susc.value)) seg();
 
   // ---- aplicación tardía desde la fecha 1032 ----
   var f1032 = document.getElementById('f1032'), tHint = document.getElementById('tardiaHint');
@@ -111,7 +122,10 @@
     var d = fdepto.value, q = (fmun.value||'').toLowerCase().trim();
     for (var i=0;i<disp.options.length;i++){ var o=disp.options[i];
       if (o.dataset.added==='1'){ o.hidden=true; continue; }
-      o.hidden = !(d && o.getAttribute('data-dpto')===d && (!q || (o.getAttribute('data-txt')||'').indexOf(q)>=0));
+      var show;
+      if (q.length >= 2) show = ((o.getAttribute('data-txt')||'').indexOf(q) >= 0);   // búsqueda en todo el país
+      else show = (!!d && o.getAttribute('data-dpto') === d);                          // sin búsqueda: por departamento
+      o.hidden = !show;
     }
   }
   fdepto.addEventListener('change', filt); fmun.addEventListener('input', filt);
