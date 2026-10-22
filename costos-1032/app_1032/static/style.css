@@ -59,6 +59,15 @@ nav.rail{position:sticky;top:0;align-self:start;height:100vh;overflow-y:auto;
   padding:8px 10px;border-radius:9px;border:1px solid transparent;margin:3px 0}
 .rail a.rail-sec.link-sec:hover{background:rgba(255,255,255,.06);color:#fff;text-decoration:none}
 .rail a.rail-sec.link-sec.active{background:rgba(111,143,30,.18);border-color:rgba(143,185,60,.5);color:#fff}
+/* menús colapsables del riel */
+.rail details.rail-group{margin:4px 0}
+.rail details.rail-group>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;
+  font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#7ba79d;font-weight:700;
+  margin:10px 8px 4px;user-select:none}
+.rail details.rail-group>summary::-webkit-details-marker{display:none}
+.rail details.rail-group>summary::before{content:"▸";font-size:10px;color:#7ba79d;transition:transform .15s}
+.rail details.rail-group[open]>summary::before{transform:rotate(90deg)}
+.rail details.rail-group>summary:hover{color:#cfe6e0}
 .rail ol.rail-nav.nonum{counter-reset:none;margin-top:2px}
 .rail ol.rail-nav.nonum a.link::before{content:none;min-width:0}
 
@@ -71,6 +80,10 @@ main{min-width:0}
 .page-head.with-action{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap}
 .page-head.with-action .btn{white-space:nowrap}
 .btn-link.edit{color:var(--copper,#b5703a)}
+.paso-nav{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 18px}
+.paso{font-size:12.5px;padding:7px 12px;border-radius:9px;border:1px solid var(--line);background:var(--paper);color:var(--teal);font-weight:600}
+.paso:hover{background:var(--aqua);text-decoration:none}
+.paso.on{background:var(--teal);color:#fff;border-color:var(--teal)}
 .page-head h1{margin:.08em 0;font-size:clamp(24px,3vw,33px)}
 .page-head .sub{color:var(--muted);margin:.25em 0;max-width:80ch}
 .back{display:inline-block;color:var(--muted);font-size:13px;margin-bottom:6px}
