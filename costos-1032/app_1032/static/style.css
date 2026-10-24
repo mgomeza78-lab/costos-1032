@@ -234,3 +234,59 @@ ul.faltan li{background:#f3ded5;color:var(--danger);font-size:12px;padding:2px 9
 ul.ce li{background:var(--aqua);color:var(--teal-deep);font-size:12px;padding:2px 9px;border-radius:999px}
 .up-form{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:end;margin:10px 0}
 .up-form label{font-size:12.5px}
+
+/* ---- gestión de usuarios (asignación multiempresa + reset de clave) ---- */
+.u-card{border:1px solid var(--line);border-radius:10px;background:var(--surface);margin:8px 0;overflow:hidden}
+.u-card>summary{list-style:none;cursor:pointer;padding:11px 14px;display:flex;align-items:center;gap:9px;flex-wrap:wrap;font-size:13.5px;color:var(--ink)}
+.u-card>summary::-webkit-details-marker{display:none}
+.u-card>summary::before{content:"▸";font-size:10px;color:var(--muted);transition:transform .15s}
+.u-card[open]>summary::before{transform:rotate(90deg)}
+.u-card[open]>summary{border-bottom:1px solid var(--line);background:var(--mist)}
+.u-body{padding:14px;display:flex;gap:26px;flex-wrap:wrap}
+.u-mini{flex:1 1 280px;min-width:260px;display:flex;flex-direction:column;gap:7px}
+.u-mini h4{margin:0 0 2px;font-family:var(--head);font-size:13px;font-weight:600;color:var(--ink)}
+.chk-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:4px 14px;margin:2px 0}
+label.blk{display:block;font-weight:600;color:var(--ink);margin-bottom:4px}
+.mut{color:var(--muted)}
+
+/* ---- índices / indexación: tarjetas de último dato, variaciones y gráfica ---- */
+.pos{color:var(--ink);font-weight:600}
+.neg{color:var(--danger);font-weight:600}
+.ix-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px;margin:4px 0 8px}
+.ix-card{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:14px 16px;box-shadow:var(--shadow)}
+.ix-top{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.ix-name{font-family:var(--head);font-weight:700;font-size:13px;color:var(--teal-deep);letter-spacing:.02em}
+.ix-when{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+.ix-val{font-family:var(--head);font-size:26px;font-weight:600;color:var(--ink);margin:6px 0 1px;font-variant-numeric:tabular-nums}
+.ix-cap{font-size:11.5px;color:var(--muted);min-height:15px;line-height:1.25}
+.ix-var{display:flex;flex-wrap:wrap;gap:4px 16px;margin:10px 0 0;padding-top:9px;border-top:1px dashed var(--line)}
+.ix-var>div{display:flex;flex-direction:column}
+.ix-var dt{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.ix-var dd{margin:0;font-size:14px;font-variant-numeric:tabular-nums}
+.graf-ctrl{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px;margin:2px 0 12px}
+.graf-ctrl label{display:flex;flex-direction:column;gap:4px;font-size:12.5px;color:var(--muted);font-weight:600}
+.graf-ctrl select,.graf-ctrl input{min-width:150px}
+.graf-ctrl .btn{align-self:flex-end}
+.chart-card{padding:16px 18px}
+.chart-head{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px}
+.chart-head h3{margin:0;font-size:15px;color:var(--teal-deep)}
+.legend{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--muted);flex-wrap:wrap}
+.legend .sw{display:inline-block;border-radius:2px}
+.legend .sw-bar{width:12px;height:12px;background:#105060;opacity:.85}
+.legend .sw-line{width:16px;height:0;border-top:2.5px solid #8FB93C;position:relative;top:-3px}
+.chart-wrap{width:100%;overflow-x:auto}
+.tabla.compact td,.tabla.compact th{padding:6px 10px;font-size:13px}
+
+/* ---- vista CCP (consumo corregido por pérdidas) ---- */
+.ccp-h{font-family:var(--head);font-size:13.5px;font-weight:600;color:var(--teal-deep);margin:14px 0 5px}
+.tabla .form{font-family:ui-monospace,"SFMono-Regular",Menlo,monospace;font-size:12px;color:var(--muted)}
+.tabla tr.ccp-total td{background:var(--aqua);border-top:2px solid var(--line);font-size:14px}
+.ccp-bars{display:flex;flex-direction:column;gap:8px;max-width:620px;margin:8px 0 4px}
+.ccp-row{display:grid;grid-template-columns:110px 1fr 70px;align-items:center;gap:10px}
+.ccp-lab{font-size:12.5px;color:var(--ink);font-weight:600}
+.ccp-track{height:16px;background:var(--mist);border:1px solid var(--line);border-radius:5px;overflow:hidden}
+.ccp-fill{display:block;height:100%;border-radius:4px 0 0 4px}
+.ccp-fill.real{background:#105060}
+.ccp-fill.tope{background:#B4842B}
+.ccp-fill.apli{background:#8FB93C}
+.ccp-num{font-variant-numeric:tabular-nums;font-size:13px;text-align:right;color:var(--ink);font-weight:600}

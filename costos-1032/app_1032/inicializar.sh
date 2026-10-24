@@ -27,6 +27,8 @@ psql -h "$HOST" -p "$PORT" -U "$OWNER" -d estudios_1032 -v ON_ERROR_STOP=1 -q -f
 psql -h "$HOST" -p "$PORT" -U "$OWNER" -d estudios_1032 -v ON_ERROR_STOP=1 -q -f "$DIR/sql/015_poir_cmi.sql"
 psql -h "$HOST" -p "$PORT" -U "$OWNER" -d estudios_1032 -v ON_ERROR_STOP=1 -q -f "$DIR/sql/016_costos_particulares_coc.sql"
 psql -h "$HOST" -p "$PORT" -U "$OWNER" -d estudios_1032 -v ON_ERROR_STOP=1 -q -f "$DIR/sql/017_ccp_fap.sql"
+psql -h "$HOST" -p "$PORT" -U "$OWNER" -d estudios_1032 -v ON_ERROR_STOP=1 -q -f "$DIR/sql/018_bcr_serie_segmento.sql"
+psql -h "$HOST" -p "$PORT" -U "$OWNER" -d estudios_1032 -v ON_ERROR_STOP=1 -q -f "$DIR/sql/019_indices_macro.sql"
 
 echo "3/3  Semilla (catálogo + 3 empresas + usuarios + operación + recálculo + inversiones)…"
 python3 "$DIR/seed.py"

@@ -50,21 +50,27 @@ adm = cli("mgomeza78@gmail.com")
 tok = csrf(adm, "/empresa-nueva")
 r = adm.post("/empresa-nueva", data={
     "codigo": "REGIONAL_TEST", "nombre": "Regional de prueba", "suscriptores": "120000",
-    "n_aps": "3", "codigo_sui": "99999", "segmento_id": "",
-    "municipios": ["68001", "68276", "41001"], "presta_ac": "on", "csrf": tok},
+    "codigo_sui": "99999",
+    "aps": ["68001:ambos", "68276:ambos", "41001:ac"], "csrf": tok},
     follow_redirects=False)
 check("Empresa+creada" in r.headers.get("location", ""), f"empresa creada ({r.headers.get('location')})")
 with db.engine_owner.connect() as cn:
-    row = cn.execute(text("SELECT id, segmento_id, n_aps, codigo_sui, suscriptores_seg, municipio "
-                          "FROM empresa WHERE codigo='REGIONAL_TEST'")).mappings().first()
+    row = cn.execute(text("SELECT id, segmento_id, n_aps, codigo_sui, suscriptores_seg, municipio, "
+                          "presta_ac, presta_al FROM empresa WHERE codigo='REGIONAL_TEST'")).mappings().first()
     check(row is not None, "la empresa quedó registrada")
     if row:
-        check(row["segmento_id"] == 2, f"segmento asignado por suscriptores = 2 ({row['segmento_id']})")
+        check(row["segmento_id"] == 2, f"segmento automático por suscriptores = 2 ({row['segmento_id']})")
         check(row["n_aps"] == 3 and row["codigo_sui"] == "99999" and row["suscriptores_seg"] == 120000,
-              "n_aps, código SUI y suscriptores guardados")
+              "n_aps (= municipios), código SUI y suscriptores guardados")
+        check(row["presta_ac"] and row["presta_al"], "presta_ac/presta_al derivados de los servicios por APS")
         nmun = cn.execute(text("SELECT count(*) FROM empresa_municipio WHERE empresa_id=:e"),
                           {"e": row["id"]}).scalar_one()
         check(nmun == 3, f"3 municipios asignados ({nmun})")
+        naps = cn.execute(text("SELECT count(*) FROM aps WHERE empresa_id=:e"), {"e": row["id"]}).scalar_one()
+        check(naps == 3, f"3 APS creados con sus servicios ({naps})")
+        serv_neiva = cn.execute(text("SELECT servicios FROM aps WHERE empresa_id=:e AND cod_dane='41001'"),
+                                {"e": row["id"]}).scalar()
+        check(serv_neiva == "ac", f"el APS de Neiva quedó con servicio 'ac' ({serv_neiva})")
         check(row["municipio"] and "(" in row["municipio"], f"municipio principal fijado ({row['municipio']})")
 
 print("== DIVIPOLA cargada como tabla del sistema ==")

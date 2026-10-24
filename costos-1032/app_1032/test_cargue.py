@@ -40,7 +40,7 @@ def subir(c, eid, tipo, contenido):
     tok = csrf(c, f"/empresa/{eid}/mensual")
     return c.post(f"/empresa/{eid}/cargar-csv",
                   data={"tipo": tipo, "csrf": tok},
-                  files={"archivo": (f"{tipo}.csv", contenido, "text/csv")},
+                  files={"archivos": (f"{tipo}.csv", contenido, "text/csv")},
                   follow_redirects=False)
 
 
@@ -51,13 +51,13 @@ com = ("empresa,anio,mes,servicio,clase,suscriptores,m3,m3_subsidiable\n"
        "ESSMAR,2026,7,AC,1,20000,210000,180000\n"
        "ESSMAR,2026,7,AC,10,3000,70000,0\n")
 r = subir(essmar, ESSMAR, "comercial", com)
-check("comercial:+2+filas" in r.headers.get("location", ""), f"ESSMAR carga 2 filas comerciales ({r.headers.get('location')})")
+check("2+filas+cargadas" in r.headers.get("location", ""), f"ESSMAR carga 2 filas comerciales ({r.headers.get('location')})")
 
 fac = ("empresa,vigencia,servicio,clase,factor_cargofijo,factor_consumo\n"
        "ESSMAR,2026,AC,1,-0.70,-0.70\n"
        "ESSMAR,2026,AC,10,0.50,0.50\n")
 r = subir(essmar, ESSMAR, "factores", fac)
-check("factores:+2+filas" in r.headers.get("location", ""), "ESSMAR carga 2 filas de factores")
+check("2+filas+cargadas" in r.headers.get("location", ""), "ESSMAR carga 2 filas de factores")
 
 print("== CSV inválido (falta columna) ==")
 r = subir(essmar, ESSMAR, "comercial", "anio,mes,servicio\n2026,7,AC\n")

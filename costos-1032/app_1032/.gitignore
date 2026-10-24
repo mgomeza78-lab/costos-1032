@@ -1,0 +1,10 @@
+# No subir secretos ni archivos locales
+.env
+*.env
+!.env.supabase.ejemplo
+__pycache__/
+*.pyc
+pgdata/
+shots/
+*.log
+.DS_Store

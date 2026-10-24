@@ -84,6 +84,21 @@ CMI_BCR = CI / CCP. El VPR₀ usa el VP(CMI×Q) del paso 1.</p>
     <div class="muted2">art. 2.1.2.1.3.1.7</div></div>
 </div>
 
+{% if puede_cargar %}
+<h3 class="serv-h" style="margin-top:6px">Cargar el inventario de activos de la BCR₀ (inicio de la 688)</h3>
+<p class="muted2">Sube un archivo con <b>todos los activos</b> que entraron al inicio de la 688 — una fila por
+activo (VI287, VIdif287, POIR 688, VIDIF_688, ambientales VI_IAR, admin/operativos VI_AO, terrenos). El
+sistema calcula el VA₀, la BCR₀ y el CMI_BCR a partir de ellos.
+<a href="/empresa/{{ emp.id }}/bcr-activos-plantilla"><b>Descargar plantilla Excel</b></a>. Puedes subir varios archivos (Excel o CSV).</p>
+<form method="post" action="/empresa/{{ emp.id }}/bcr-activos-csv" enctype="multipart/form-data" class="up-form">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+  <label>Inventario de activos (Excel o CSV) <input type="file" name="archivos" accept=".xlsx,.xls,.csv" multiple required></label>
+  <button class="btn primary" type="submit">Cargar activos</button>
+</form>
+<p class="muted2" style="margin-top:4px">También puedes agregar o corregir un activo suelto en el paso
+<a href="/empresa/{{ emp.id }}/inversiones?sec=activos">4 · Activos administrativos y operativos</a>.</p>
+{% endif %}
+
 <p class="hint">Estos parámetros ya <b>no se digitan</b>: el <b>r688 lo da el segmento de la 688</b> (Seg 1 &gt;100.000 → 12,28 %; Seg 2
 5.001–100.000 → 12,76 %); los <b>IPC</b> dic-2014 y dic-2025 salen de la tabla de IPC; la <b>fecha de inicio 688</b>,
 de la empresa; y el <b>CCP</b> se calcula de los consumos del año base 2025 con IPUF* = 6 (art. 2.1.2.1.3.5.2, par. 1).

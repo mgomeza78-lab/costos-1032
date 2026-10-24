@@ -68,7 +68,8 @@ def guardar(conn, empresa_id, d, usuario_id):
               "ta": (d.get("tipo_activo") or "").strip() or None, "vu": d.get("vida_util"),
               "via": d.get("via688"), "vpcq": d.get("vp_cmi_q"), "vpr": vpr0, "va0": va0,
               "ap": d.get("anio_poir"), "er": d.get("ejecucion_real"),
-              "fo": (d.get("fecha_operacion") or None), "u": usuario_id}
+              "fo": (d.get("fecha_operacion") or None),
+              "codg": (d.get("codigo") or "").strip() or None, "u": usuario_id}
     aid = d.get("id")
     if aid:
         conn.execute(text(
@@ -76,16 +77,161 @@ def guardar(conn, empresa_id, d, usuario_id):
             " valor_bruto=:vb, plazo_remanente=:pr, cuota_anual=:ca, valor_pendiente=:vp, "
             " origen=:og, observacion=:ob, tipo_activo=:ta, vida_util=:vu, via688=:via, "
             " vp_cmi_q=:vpcq, vpr0=:vpr, va0=:va0, anio_poir=:ap, ejecucion_real=:er, "
-            " fecha_operacion=:fo, actualizado_en=now() WHERE empresa_id=:e AND id=:i"),
+            " fecha_operacion=:fo, codigo=:codg, actualizado_en=now() WHERE empresa_id=:e AND id=:i"),
             {**campos, "i": aid})
         return aid, None
     aid = conn.execute(text(
         "INSERT INTO bcr_activo(empresa_id,servicio,componente,nombre,cod_dane,valor_bruto,"
         " plazo_remanente,cuota_anual,valor_pendiente,origen,observacion,tipo_activo,vida_util,"
-        " via688,vp_cmi_q,vpr0,va0,anio_poir,ejecucion_real,fecha_operacion,cargado_por) "
-        "VALUES (:e,:s,:c,:n,:cd,:vb,:pr,:ca,:vp,:og,:ob,:ta,:vu,:via,:vpcq,:vpr,:va0,:ap,:er,:fo,:u) "
+        " via688,vp_cmi_q,vpr0,va0,anio_poir,ejecucion_real,fecha_operacion,codigo,cargado_por) "
+        "VALUES (:e,:s,:c,:n,:cd,:vb,:pr,:ca,:vp,:og,:ob,:ta,:vu,:via,:vpcq,:vpr,:va0,:ap,:er,:fo,:codg,:u) "
         "RETURNING id"), campos).scalar()
     return aid, None
+
+
+# ---------------- Carga masiva de activos de la BCR₀ (CSV / Excel) ----------------
+# Columnas del archivo (una fila por activo). Alias aceptados entre paréntesis.
+COLS_ACTIVO = ["codigo", "nombre", "servicio", "componente", "origen", "tipo_activo",
+               "via688", "vpr0", "va0", "prr", "cak", "anio_poir", "ejecucion_real",
+               "fecha_operacion", "observacion"]
+_ALIAS = {"prr": "plazo_remanente", "cak": "cuota_anual", "vida_util": "vida_util"}
+
+
+def _num_x(x):
+    if x is None:
+        return None
+    s = str(x).strip().replace("$", "").replace(" ", "")
+    if s == "":
+        return None
+    # admite 1.234.567,89 (es-CO), 1,234,567.89 (US), 1234567.89 y 30.000.000.000 (puntos de miles)
+    if "," in s and "." in s:
+        if s.rfind(",") > s.rfind("."):   # la coma es el último separador = decimal (es-CO)
+            s = s.replace(".", "").replace(",", ".")
+        else:                             # el punto es el último = decimal (US)
+            s = s.replace(",", "")
+    elif "," in s:
+        s = s.replace(",", ".")
+    elif s.count(".") > 1:               # varios puntos = separadores de miles
+        s = s.replace(".", "")
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def leer_archivo_activos(raw, filename=""):
+    """Devuelve (filas, error). Lee CSV o Excel con las columnas de COLS_ACTIVO."""
+    import io as _io
+    fn = (filename or "").lower()
+    rows = []
+    try:
+        if fn.endswith((".xlsx", ".xlsm", ".xls")):
+            import openpyxl
+            wb = openpyxl.load_workbook(_io.BytesIO(raw), data_only=True, read_only=True)
+            ws = wb.active
+            it = ws.iter_rows(values_only=True)
+            hdr = next(it, None)
+            if not hdr:
+                return [], "el archivo está vacío"
+            cols = [str(h).strip().lower() if h is not None else "" for h in hdr]
+            for vals in it:
+                if vals is None or all(v is None or str(v).strip() == "" for v in vals):
+                    continue
+                rows.append({cols[i]: vals[i] for i in range(min(len(cols), len(vals)))})
+            wb.close()
+        else:
+            import csv as _csv
+            txt = raw.decode("utf-8-sig", "ignore") if isinstance(raw, bytes) else raw
+            rows = list(_csv.DictReader(_io.StringIO(txt.replace("\r\n", "\n"))))
+            rows = [{(k or "").strip().lower(): v for k, v in r.items()} for r in rows]
+    except Exception as ex:
+        return [], f"no se pudo leer el archivo ({type(ex).__name__})"
+    if not rows:
+        return [], "el archivo no tiene filas de datos"
+    faltan = {"nombre", "servicio", "componente"} - set(rows[0].keys())
+    if faltan:
+        return [], f"faltan columnas obligatorias: {', '.join(sorted(faltan))}"
+    return rows, None
+
+
+def ingesta_activos(conn, empresa_id, filas, usuario_id):
+    """Upsert masivo por (empresa, servicio, codigo). Devuelve (ok, errores)."""
+    ok, err = 0, []
+    for i, r in enumerate(filas, start=2):
+        serv = _SERV_IN.get(str(r.get("servicio") or "").strip().lower())
+        d = {
+            "codigo": (str(r.get("codigo") or "").strip() or None),
+            "nombre": str(r.get("nombre") or "").strip(),
+            "servicio": serv or (r.get("servicio") or ""),
+            "componente": r.get("componente"),
+            "origen": (str(r.get("origen") or "").strip() or "BCR0"),
+            "tipo_activo": (str(r.get("tipo_activo") or "").strip() or None),
+            "via688": _num_x(r.get("via688")), "vpr0": _num_x(r.get("vpr0")),
+            "va0": _num_x(r.get("va0")), "vp_cmi_q": _num_x(r.get("vp_cmi_q")),
+            "plazo_remanente": _num_x(r.get("prr") if r.get("prr") is not None else r.get("plazo_remanente")),
+            "cuota_anual": _num_x(r.get("cak") if r.get("cak") is not None else r.get("cuota_anual")),
+            "vida_util": _num_x(r.get("vida_util")), "ejecucion_real": _num_x(r.get("ejecucion_real")),
+            "observacion": (str(r.get("observacion") or "").strip() or None),
+        }
+        ap = str(r.get("anio_poir") or "").strip()
+        d["anio_poir"] = int(float(ap)) if ap.replace(".", "").isdigit() else None
+        fo = str(r.get("fecha_operacion") or "").strip()
+        d["fecha_operacion"] = fo[:10] if fo and fo[:4].isdigit() else None
+        if d["codigo"] and serv:
+            ex = conn.execute(text("SELECT id FROM bcr_activo WHERE empresa_id=:e AND servicio=:s AND codigo=:c"),
+                              {"e": empresa_id, "s": serv, "c": d["codigo"]}).scalar()
+            if ex:
+                d["id"] = ex
+        _aid, e = guardar(conn, empresa_id, d, usuario_id)
+        if e:
+            err.append(f"fila {i}: {e}")
+        else:
+            ok += 1
+    return ok, err
+
+
+_SERV_IN = {"ac": "acueducto", "acueducto": "acueducto",
+            "al": "alcantarillado", "alcantarillado": "alcantarillado"}
+
+
+def plantilla_activos_bytes():
+    """Plantilla Excel para la carga masiva de los activos de la BCR₀ de inicio (688)."""
+    import io as _io
+    import openpyxl
+    from openpyxl.styles import Font
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Activos_BCR0"
+    ws.append(COLS_ACTIVO)
+    for c in ws[1]:
+        c.font = Font(bold=True)
+    ws.append(["AC-001", "Red matriz sector norte", "acueducto", 1, "VI287", "red",
+               41200000000, 9800000000, "", 22, "", "", "", "", "heredado 287"])
+    ws.append(["AC-POIR-012", "Ampliación conducción", "acueducto", 1, "POIR688", "conducción",
+               "", "", "", 40, "", 5, 300000000, "2021-03-01", "proyecto POIR"])
+    ws.append(["AL-AO-003", "Equipos administrativos", "alcantarillado", 3, "VI_AO", "admin",
+               800000000, 650000000, "", 10, "", "", "", "", "activo admin/operativo"])
+    nota = wb.create_sheet("INSTRUCCIONES")
+    txt = [
+        "Una fila por activo que entró al inicio de la 688. Columnas:",
+        "codigo: identificador del activo (para poder actualizarlo después). Opcional pero recomendado.",
+        "nombre: descripción del activo (OBLIGATORIO).",
+        "servicio: acueducto o alcantarillado (acepta AC / AL) (OBLIGATORIO).",
+        "componente: 1 infraestructura · 2 ambiental/riesgo · 3 admin/operativos (OBLIGATORIO).",
+        "origen: VI287 · VIdif287 · POIR688 · VIDIF_688 · VI_IAR · VI_AO · TERRENO.",
+        "via688: valor de inversión del activo en pesos de diciembre de 2014.",
+        "vpr0: valor pendiente por recuperar ($2014). Si lo cargas, el VA₀ se calcula solo (VPR₀·(1+r688)^t·fa0).",
+        "va0: valor actualizado ($dic-2025). Opcional; si no, se deriva del VPR₀.",
+        "prr: plazo de recuperación remanente (años).  cak: cuota anual de capital ($).",
+        "anio_poir / ejecucion_real / fecha_operacion: solo para activos del POIR (VIA=ejecucion/(1+r688)^anio).",
+        "El r688, los IPC (fa0), el CCP y la fecha de inicio 688 ya se derivan automáticamente en el sistema.",
+        "Puedes subir varios archivos a la vez. El sistema actualiza por (servicio + codigo) si el activo ya existe.",
+    ]
+    for i, t in enumerate(txt, 1):
+        nota[f"A{i}"] = t
+    buf = _io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
 
 
 # ---------------- Parámetros 688 y series (agua facturada / CMI cobrado) ----------------

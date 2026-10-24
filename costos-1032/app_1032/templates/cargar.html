@@ -14,8 +14,8 @@
       {% for p in periodos_carga %}<option value="{{ p.clave }}" data-anios="{{ p.anios_cargar|join(',') }}" data-base="{{ p.anios_base[0] }}–{{ p.anios_base[1] }}"{{ ' selected' if p.es_inicio else '' }}>{{ p.etiqueta }}</option>{% endfor %}
     </select>
   </label>
-  <label>Año de línea base <select name="anio" class="anioSel"></select>
-    <small class="muted2 baseHint" style="display:block;margin-top:2px"></small>
+  <label>Año de línea base <small class="muted2 baseHint"></small>
+    <select name="anio" class="anioSel"></select>
   </label>
 {% endmacro %}
 
@@ -88,10 +88,14 @@ de costos. Fuente esperada: balance de prueba a nivel de cuenta (Excel o CSV).</
 <form method="post" action="/empresa/{{ emp.id }}/cargar-balance" enctype="multipart/form-data" class="up-form">
   <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
   {{ periodo_anio() }}
-  <label>Mes <select name="mes">{% for m in range(1,13) %}<option value="{{ m }}">{{ meses.get(m,m) }}</option>{% endfor %}</select></label>
-  <label>Balance de prueba (Excel / CSV) <input type="file" name="archivo" required></label>
+  <label>Mes inicio <select name="mes_ini">{% for m in range(1,13) %}<option value="{{ m }}"{{ ' selected' if m==1 }}>{{ meses.get(m,m) }}</option>{% endfor %}</select></label>
+  <label>Mes fin <select name="mes_fin">{% for m in range(1,13) %}<option value="{{ m }}"{{ ' selected' if m==12 }}>{{ meses.get(m,m) }}</option>{% endfor %}</select></label>
+  <label class="wide">Balance de prueba (Excel / CSV) <input type="file" name="archivo" required></label>
   <button class="btn primary" type="submit">Cargar balance</button>
 </form>
+<p class="hint">El balance que subas se <b>distribuye en partes iguales</b> entre los meses del rango elegido
+(p. ej. <b>ene–dic = 12 meses</b>, así cargas todo el año de una vez). Para un solo mes, elige el mismo
+mes de inicio y fin.</p>
 {% endif %}
 <h3 class="serv-h">Cargado</h3>
 {% if bal %}

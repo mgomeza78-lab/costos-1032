@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block title %}CCP · {{ emp.nombre }}{% endblock %}
+{% block body %}
+{% macro n2(x) %}{% if x is none %}<span class="mut">—</span>{% else %}{{ ('%.2f'|format(x))|replace('.',',') }}{% endif %}{% endmacro %}
+
+<div class="page-head">
+  <a class="back" href="/empresa/{{ emp.id }}">← {{ emp.nombre }}</a>
+  <h1>CCP · Consumo Corregido por Pérdidas</h1>
+  <p class="sub">Todo lo que entra al cálculo del CCP (art. {{ ccp.art.ccp }} y ss., Res. CRA 1032):
+  datos base, los indicadores por unidad de facturación (ICUF, IPUF, ISUF), la comparación entre el
+  <b>IPUF real</b> y el <b>IPUF aplicado</b> (con el tope IPUF*), el ajuste <b>Fap</b> y el CCP resultante.
+  El CCP se mide sobre el <b>año base</b>; para el período de inicio es el año anterior (i−1).</p>
+</div>
+
+{% if not ccp.anio %}
+  <p class="empty">Aún no hay información comercial cargada para calcular el CCP. Cárguela en
+  <a href="/empresa/{{ emp.id }}/cargar?fuente=comercial">Cargar información</a>.</p>
+{% else %}
+
+<form method="get" action="/empresa/{{ emp.id }}/ccp" class="graf-ctrl">
+  <label>Año base
+    <select name="anio" onchange="this.form.submit()">
+      {% for a in ccp.anios %}<option value="{{ a }}" {{ 'selected' if a == ccp.anio }}>{{ a }}</option>{% endfor %}
+    </select>
+  </label>
+  <span class="hint" style="align-self:center">IPUF* del segmento (tope del período de inicio):
+    <b>{{ n2(ccp.ipuf_estrella) }}</b> m³/susc·mes · art. {{ ccp.art.ipuf_estrella }}</span>
+</form>
+
+{% for s, f in ccp.indicadores.items() %}
+<h2 class="serv-h">{{ s|capitalize }} · año base {{ f.anio }} ({{ f.meses }} meses)</h2>
+
+{% if f.falta %}
+<div class="flash warn" style="margin:6px 0 10px">Falta información para este servicio:
+  {{ f.falta|join('; ') }}. Debe solicitarse a la empresa / cargarse para completar el CCP.</div>
+{% endif %}
+
+<h3 class="ccp-h">Datos base</h3>
+<div class="ix-cards">
+  <div class="ix-card"><div class="ix-top"><span class="ix-name">N</span></div>
+    <div class="ix-val">{{ f.n|valor }}</div><div class="ix-cap">Σ suscriptores-mes del año base</div></div>
+  <div class="ix-card"><div class="ix-top"><span class="ix-name">AF</span></div>
+    <div class="ix-val">{{ f.af|valor }}</div><div class="ix-cap">m³ facturados (consumo)</div></div>
+  <div class="ix-card"><div class="ix-top"><span class="ix-name">AP</span></div>
+    <div class="ix-val">{% if f.ap > 0 %}{{ f.ap|valor }}{% else %}<span class="mut">—</span>{% endif %}</div>
+    <div class="ix-cap">m³ producidos (macromedición){% if f.ap <= 0 %} · sin dato{% endif %}</div></div>
+</div>
+
+<h3 class="ccp-h">Indicadores por unidad de facturación</h3>
+<table class="tabla compact">
+  <thead><tr><th>Indicador</th><th>Fórmula</th><th class="r">Valor</th><th>Unidad</th></tr></thead>
+  <tbody>
+    <tr><td><b>ICUF</b> · consumo por unidad</td><td class="form">AF / N</td>
+      <td class="num">{{ n2(f.icuf) }}</td><td>m³/susc·mes</td></tr>
+    <tr><td><b>IPUF real</b> · pérdidas por unidad</td><td class="form">(AP − AF) / N</td>
+      <td class="num">{{ n2(f.ipuf_real) }}</td><td>m³/susc·mes</td></tr>
+    <tr><td><b>ISUF</b> · suministro por unidad</td><td class="form">AP / N = ICUF + IPUF</td>
+      <td class="num">{{ n2(f.isuf) }}</td><td>m³/susc·mes</td></tr>
+    {% if f.fap is not none %}
+    <tr><td><b>Fap</b> · ajuste optativo del ISUF</td><td class="form">tabla (IPUFreal, IVH, metod., meta)</td>
+      <td class="num">{{ n2(f.fap) }}</td><td>m³/susc·mes</td></tr>
+    <tr><td><b>ISUF ajustado</b></td><td class="form">ISUF − Fap</td>
+      <td class="num">{{ n2(f.isuf_ajustado) }}</td><td>m³/susc·mes</td></tr>
+    {% endif %}
+  </tbody>
+</table>
+
+{% if f.usa_ap %}
+<h3 class="ccp-h">IPUF real vs. IPUF aplicado en el CCP</h3>
+<p class="hint">El CCP reconoce las pérdidas hasta el tope <b>IPUF*</b> (art. {{ ccp.art.ipuf_estrella }}):
+IPUF aplicado = mín(IPUF real, IPUF*). {% if f.ipuf_real > ccp.ipuf_estrella %}Aquí el IPUF real
+<b>supera</b> el tope, así que se aplica el tope.{% else %}Aquí el IPUF real está <b>por debajo</b>
+del tope, así que se reconoce el real.{% endif %}</p>
+{% set mx = [f.ipuf_real, ccp.ipuf_estrella]|max %}
+<div class="ccp-bars">
+  <div class="ccp-row"><span class="ccp-lab">IPUF real</span>
+    <span class="ccp-track"><span class="ccp-fill real" style="width:{{ (f.ipuf_real/mx*100)|round(1) }}%"></span></span>
+    <span class="ccp-num">{{ n2(f.ipuf_real) }}</span></div>
+  <div class="ccp-row"><span class="ccp-lab">IPUF* (tope)</span>
+    <span class="ccp-track"><span class="ccp-fill tope" style="width:{{ (ccp.ipuf_estrella/mx*100)|round(1) }}%"></span></span>
+    <span class="ccp-num">{{ n2(ccp.ipuf_estrella) }}</span></div>
+  <div class="ccp-row"><span class="ccp-lab">IPUF aplicado</span>
+    <span class="ccp-track"><span class="ccp-fill apli" style="width:{{ (f.ipuf_aplicado/mx*100)|round(1) }}%"></span></span>
+    <span class="ccp-num">{{ n2(f.ipuf_aplicado) }}</span></div>
+</div>
+
+<h3 class="ccp-h">CCP resultante</h3>
+<table class="tabla compact">
+  <tbody>
+    <tr><td>Pérdidas reales</td><td class="form">AP − AF</td><td class="num">{{ f.perdidas_reales|valor }} m³</td></tr>
+    <tr><td>Estándar (tope)</td><td class="form">IPUF* × N</td><td class="num">{{ f.estandar|valor }} m³</td></tr>
+    <tr><td>Pérdidas reconocidas</td><td class="form">mín(reales, tope)</td><td class="num">{{ f.reconocidas|valor }} m³</td></tr>
+    <tr class="ccp-total"><td><b>CCP</b></td><td class="form">AF + pérdidas reconocidas</td>
+      <td class="num"><b>{{ f.ccp|valor }}</b> m³</td></tr>
+  </tbody>
+</table>
+{% else %}
+<h3 class="ccp-h">CCP resultante</h3>
+<p class="hint">Sin macromedición de producción (AP), el CCP no corrige pérdidas. En
+{{ s }}, el denominador del cargo por consumo es el agua facturada (AF).</p>
+<table class="tabla compact"><tbody>
+  <tr class="ccp-total"><td><b>CCP = AF</b></td><td class="num"><b>{{ f.ccp|valor }}</b> m³</td></tr>
+</tbody></table>
+{% endif %}
+{% endfor %}
+
+<h2 class="serv-h">IPUF* por año tarifario · senda de gradualidad</h2>
+<p class="sub">El tope IPUF* desciende por año tarifario hasta el estándar de eficiencia de
+{{ n2(ccp.senda.estandar) }} m³/susc·mes (art. {{ ccp.art.senda }} y {{ ccp.art.estandar }}).
+<b>En este estudio solo se calcula el período de inicio</b>; los años tarifarios se enuncian como
+referencia y se formularán en el recálculo correspondiente.</p>
+{% if ccp.senda.conocida %}
+<table class="tabla compact">
+  <thead><tr><th>Período</th><th>Vigencia</th><th class="r">IPUF* (m³/susc·mes)</th><th>Estado</th></tr></thead>
+  <tbody>
+    {% for x in ccp.senda.filas %}
+    <tr {{ 'class=ccp-total' if x.calculado }}>
+      <td>{{ x.periodo }}</td><td>{{ x.anio }}</td><td class="num">{{ n2(x.ipuf) }}</td>
+      <td>{% if x.calculado %}<b>calculado en este estudio</b>{% else %}referencia (recálculo){% endif %}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="hint">Para el segmento {{ ccp.senda.segmento or '—' }} de esta empresa, la senda completa del
+IPUF* debe tomarse del art. {{ ccp.art.senda }}. En el período de inicio el tope es
+<b>{{ n2(ccp.senda.ipuf_inicio) }}</b> m³/susc·mes.</p>
+{% endif %}
+
+{% endif %}
+{% endblock %}

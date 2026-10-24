@@ -3,19 +3,27 @@
 {% block body %}
 <div class="page-head">
   <h1>Usuarios y credenciales</h1>
-  <p class="sub">Emite credenciales. Un usuario <b>Empresa</b> o <b>Auditor</b> queda
-  atado a una empresa y solo verá esa; <b>Analista</b> y <b>Administrador</b> ven todas.</p>
+  <p class="sub">Emite credenciales y administra accesos. Un usuario <b>Empresa</b> o
+  <b>Auditor</b> queda atado a una sola empresa; un <b>Analista</b> puede atenderse a
+  <b>varias empresas</b> (o todas); el <b>Administrador</b> ve todas.</p>
 </div>
 
 <table class="tabla">
-  <thead><tr><th>Nombre</th><th>Correo</th><th>Rol</th><th>Empresa</th><th>MFA</th><th>Estado</th></tr></thead>
+  <thead><tr><th>Nombre</th><th>Correo</th><th>Rol</th><th>Empresa(s)</th><th>MFA</th><th>Estado</th></tr></thead>
   <tbody>
     {% for u in usuarios %}
     <tr>
       <td>{{ u.nombre }}</td>
       <td class="mono">{{ u.email }}</td>
       <td><span class="role role-{{ u.rol }}">{{ rbac.rol_nombre(u.rol) }}</span></td>
-      <td>{{ u.empresa or '—' }}</td>
+      <td>
+        {% if u.rol == 'admin' %}todas
+        {% elif u.rol == 'analista' %}
+          {% set asig = asignaciones.get(u.id, []) %}
+          {% if asig %}{% for eid in asig %}{{ emp_nombre.get(eid, eid) }}{{ ", " if not loop.last }}{% endfor %}
+          {% else %}<span class="mut">todas</span>{% endif %}
+        {% else %}{{ u.empresa or '—' }}{% endif %}
+      </td>
       <td class="c">{{ '✓' if u.mfa_activo else '—' }}</td>
       <td>{{ 'activo' if u.activo else 'inactivo' }}</td>
     </tr>
@@ -23,18 +31,58 @@
   </tbody>
 </table>
 
+<h2 class="serv-h">Gestionar usuarios</h2>
+<p class="hint">Abra un usuario para restablecer su contraseña o, si es analista, ajustar las
+empresas que atiende. Los cambios de empresas de un analista toman efecto en su próximo ingreso.</p>
+
+{% for u in usuarios %}
+<details class="u-card">
+  <summary>
+    <b>{{ u.nombre }}</b> · <span class="mono">{{ u.email }}</span>
+    <span class="role role-{{ u.rol }}">{{ rbac.rol_nombre(u.rol) }}</span>
+  </summary>
+  <div class="u-body">
+    <form method="post" action="/usuarios/{{ u.id }}/password" class="u-mini">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <h4>Restablecer contraseña</h4>
+      <label>Nueva contraseña temporal
+        <input name="password" required autocomplete="off" placeholder="Mín. {{ min_len }}: letra, número y símbolo">
+      </label>
+      <p class="hint">El usuario deberá cambiarla en su próximo ingreso.</p>
+      <button class="btn" type="submit">Restablecer contraseña</button>
+    </form>
+
+    {% if u.rol == 'analista' %}
+    {% set asig = asignaciones.get(u.id, []) %}
+    <form method="post" action="/usuarios/{{ u.id }}/empresas" class="u-mini">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <h4>Empresas que atiende</h4>
+      <div class="chk-grid">
+        {% for e in empresas %}
+        <label class="chk"><input type="checkbox" name="empresas_analista" value="{{ e.id }}"
+          {{ 'checked' if e.id in asig }}> {{ e.nombre }}</label>
+        {% endfor %}
+      </div>
+      <p class="hint">Si no marca ninguna, el analista verá <b>todas</b> las empresas.</p>
+      <button class="btn primary" type="submit">Guardar empresas</button>
+    </form>
+    {% endif %}
+  </div>
+</details>
+{% endfor %}
+
 <h2 class="serv-h">Emitir credencial</h2>
-<form method="post" action="/usuarios" class="form wide">
+<form method="post" action="/usuarios" class="form wide" id="form-usuario">
   <input type="hidden" name="csrf" value="{{ csrf_token }}">
   <div class="grid2">
     <label>Nombre<input name="nombre" required></label>
     <label>Correo<input type="email" name="email" required></label>
     <label>Rol
-      <select name="rol" required>
+      <select name="rol" id="sel-rol" required>
         {% for r in roles %}<option value="{{ r.codigo }}">{{ r.nombre }}</option>{% endfor %}
       </select>
     </label>
-    <label>Empresa (solo rol Empresa / Auditor)
+    <label id="campo-empresa">Empresa (rol Empresa / Auditor)
       <select name="empresa_id">
         <option value="">— (no aplica)</option>
         {% for e in empresas %}<option value="{{ e.id }}">{{ e.nombre }}</option>{% endfor %}
@@ -42,8 +90,34 @@
     </label>
     <label>Contraseña temporal<input name="password" required></label>
   </div>
-  <p class="hint">Mínimo {{ min_len }} caracteres, con letra, número y símbolo. El usuario
-  deberá cambiarla en su primer ingreso.</p>
+
+  <div id="campo-analista" hidden>
+    <label class="blk">Empresas que atiende (rol Analista)</label>
+    <div class="chk-grid">
+      {% for e in empresas %}
+      <label class="chk"><input type="checkbox" name="empresas_analista" value="{{ e.id }}"> {{ e.nombre }}</label>
+      {% endfor %}
+    </div>
+    <p class="hint">Marque una o más. Si no marca ninguna, el analista verá <b>todas</b> las empresas.</p>
+  </div>
+
+  <p class="hint">Contraseña: mínimo {{ min_len }} caracteres, con letra, número y símbolo.
+  El usuario deberá cambiarla en su primer ingreso.</p>
   <button class="btn primary" type="submit">Emitir credencial</button>
 </form>
+
+<script>
+(function () {
+  var sel = document.getElementById('sel-rol');
+  var cEmp = document.getElementById('campo-empresa');
+  var cAna = document.getElementById('campo-analista');
+  function sync() {
+    var rol = sel.value;
+    cEmp.hidden = (rol !== 'empresa' && rol !== 'auditor');
+    cAna.hidden = (rol !== 'analista');
+  }
+  sel.addEventListener('change', sync);
+  sync();
+})();
+</script>
 {% endblock %}

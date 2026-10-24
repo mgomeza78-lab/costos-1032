@@ -1,50 +1,119 @@
 {% extends "base.html" %}
-{% block title %}Índice IPC · Costos 1032{% endblock %}
+{% block title %}Índices / Indexación · Costos 1032{% endblock %}
 {% block body %}
+{% macro pct(x) %}{% if x is none %}<span class="mut">—</span>{% else %}<span class="{{ 'neg' if x < 0 else 'pos' }}">{{ '%+.2f'|format(x) }}%</span>{% endif %}{% endmacro %}
+
 <div class="page-head">
-  <h1>Índice IPC mensual</h1>
-  <p class="sub">Referencia nacional (DANE) para la indexación por gatillo del 3%. Es un
-  dato cargado; no se calcula aquí. Al actualizarlo, reprocese la indexación de cada empresa.</p>
+  <h1>Índices de indexación</h1>
+  <p class="sub">Referencias nacionales (DANE / normativa) para la indexación tarifaria: IPC,
+  IPC sin alimentos ni regulados, ICTC (Costos de Transporte de Carga) y salario mínimo. Son
+  datos cargados, no se calculan aquí. Al actualizarlos, reprocese la indexación de cada empresa.</p>
 </div>
 
-<table class="tabla">
-  <thead><tr><th>Año</th><th>Mes</th><th class="r">Índice</th><th>Fuente</th><th>Procedencia</th></tr></thead>
+<h2 class="serv-h">Último dato cargado</h2>
+<div class="ix-cards">
+  {% for m in resumen.mensuales %}
+  <div class="ix-card">
+    <div class="ix-top"><span class="ix-name">{{ m.corto }}</span><span class="ix-when">{{ m.etq }}</span></div>
+    <div class="ix-val">{{ '%.2f'|format(m.valor) }}</div>
+    <div class="ix-cap">{{ m.largo }}</div>
+    <dl class="ix-var">
+      <div><dt>Mensual</dt><dd>{{ pct(m.var_mensual) }}</dd></div>
+      <div><dt>Año corrido</dt><dd>{{ pct(m.var_anio_corrido) }}</dd></div>
+      <div><dt>Anual (12m)</dt><dd>{{ pct(m.var_anual) }}</dd></div>
+    </dl>
+  </div>
+  {% endfor %}
+  {% if resumen.salario %}
+  <div class="ix-card ix-card-sm">
+    <div class="ix-top"><span class="ix-name">SMMLV</span><span class="ix-when">{{ resumen.salario.anio }}</span></div>
+    <div class="ix-val">$ {{ '{:,.0f}'.format(resumen.salario.valor)|replace(',', '.') }}</div>
+    <div class="ix-cap">Salario mínimo mensual</div>
+    <dl class="ix-var">
+      <div><dt>Var. anual</dt><dd>{{ pct(resumen.salario.var) }}</dd></div>
+    </dl>
+  </div>
+  {% endif %}
+  {% if not resumen.mensuales and not resumen.salario %}
+  <p class="mut">Aún no hay índices cargados. Use los formularios de más abajo para empezar.</p>
+  {% endif %}
+</div>
+
+<h2 class="serv-h">Evolución</h2>
+<form method="get" action="/ipc" class="graf-ctrl">
+  <label>Índice
+    <select name="indice">
+      {% for key in orden %}<option value="{{ key }}" {{ 'selected' if key == col }}>{{ mensuales[key][1] }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Desde <input type="month" name="desde" value="{{ des_def }}"></label>
+  <label>Hasta <input type="month" name="hasta" value="{{ has_def }}"></label>
+  <button class="btn" type="submit">Ver</button>
+</form>
+
+<div class="card chart-card">
+  <div class="chart-head">
+    <h3>{{ graf.largo }}</h3>
+    <div class="legend">
+      <span class="sw sw-bar"></span> Variación mensual
+      <span class="sw sw-line"></span> Variación acumulada
+    </div>
+  </div>
+  {% if svg %}
+    <div class="chart-wrap">{{ svg|safe }}</div>
+    <p class="hint">Barras: variación de cada mes respecto al anterior. Línea: variación acumulada
+    desde el inicio del rango seleccionado. Pase el cursor sobre cada punto para ver el valor.</p>
+  {% else %}
+    <p class="mut">No hay datos de este índice en el rango seleccionado.</p>
+  {% endif %}
+</div>
+
+{% if salario %}
+<h2 class="serv-h">Salario mínimo (SMMLV) — histórico</h2>
+<table class="tabla compact">
+  <thead><tr><th>Año</th><th class="r">Valor mensual</th><th class="r">Var. anual</th><th>Fuente</th></tr></thead>
   <tbody>
-    {% for f in filas %}
+    {% for s in salario|reverse %}
     <tr>
-      <td>{{ f.anio }}</td><td>{{ meses[f.mes] }}</td>
-      <td class="num">{{ '%.3f'|format(f.indice) }}</td>
-      <td>{{ f.fuente or '—' }}</td>
-      <td><span class="proc proc-{{ f.procedencia }}">{{ f.procedencia }}</span></td>
+      <td>{{ s.anio }}</td>
+      <td class="num">$ {{ '{:,.0f}'.format(s.valor)|replace(',', '.') }}</td>
+      <td class="num">{{ pct(s.var) }}</td>
+      <td>{{ s.fuente or '—' }}</td>
     </tr>
-    {% else %}
-    <tr><td colspan="5" class="c">Sin IPC cargado.</td></tr>
     {% endfor %}
   </tbody>
 </table>
+{% endif %}
 
-<h2 class="serv-h">Cargar IPC desde CSV</h2>
-<form method="post" action="/ipc/cargar" enctype="multipart/form-data" class="carga-form">
-  <input type="hidden" name="csrf" value="{{ csrf_token }}">
-  <label>Archivo <span class="muted2">· columnas: anio, mes, ipc, ipcs</span>
-    <input type="file" name="archivo" accept=".csv" required>
-  </label>
-  <button class="btn" type="submit">Cargar CSV</button>
-</form>
-
-<h2 class="serv-h">Cargar / actualizar IPC (manual)</h2>
+<h2 class="serv-h">Ingresar índice mensual</h2>
+<p class="hint">Por defecto aparece el <b>mes siguiente</b> al último cargado ({{ meses[prox_mes] }}-{{ prox_anio }}).
+El IPC es obligatorio; IPC-SAR e ICTC son opcionales (puede dejarlos en blanco y cargarlos después).</p>
 <form method="post" action="/ipc" class="form wide">
   <input type="hidden" name="csrf" value="{{ csrf_token }}">
   <div class="grid2">
-    <label>Año<input type="number" name="anio" value="2026" required></label>
+    <label>Año<input type="number" name="anio" value="{{ prox_anio }}" required></label>
     <label>Mes
       <select name="mes" required>
-        {% for m in range(1,13) %}<option value="{{ m }}">{{ meses[m] }}</option>{% endfor %}
+        {% for m in range(1,13) %}<option value="{{ m }}" {{ 'selected' if m == prox_mes }}>{{ meses[m] }}</option>{% endfor %}
       </select>
     </label>
-    <label>Índice (número índice DANE)<input name="indice" inputmode="decimal" required></label>
+    <label>IPC <span class="muted2">· número índice DANE</span><input name="indice" inputmode="decimal" required></label>
+    <label>IPC sin alimentos ni regulados <span class="muted2">· opcional</span><input name="ipcs" inputmode="decimal"></label>
+    <label>ICTC — Costos de Transporte de Carga <span class="muted2">· opcional</span><input name="ictc" inputmode="decimal"></label>
     <label>Fuente<input name="fuente" value="DANE"></label>
   </div>
-  <button class="btn primary" type="submit">Guardar IPC</button>
+  <button class="btn primary" type="submit">Guardar índice mensual</button>
+</form>
+
+<h2 class="serv-h">Salario mínimo (anual)</h2>
+<p class="hint">Se modifica una vez al año. Por defecto aparece el <b>año siguiente</b> al último cargado ({{ prox_sal }}).</p>
+<form method="post" action="/ipc/salario" class="form wide">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <div class="grid2">
+    <label>Año<input type="number" name="anio" value="{{ prox_sal }}" required></label>
+    <label>Valor mensual (SMMLV, $)<input name="valor" inputmode="numeric" placeholder="1.623.500" required></label>
+    <label>Fuente / decreto<input name="fuente" placeholder="Decreto ____ de ____"></label>
+  </div>
+  <button class="btn primary" type="submit">Guardar salario mínimo</button>
 </form>
 {% endblock %}

@@ -11,6 +11,7 @@ CSRF en todos los formularios, bloqueo por intentos fallidos, MFA (TOTP) opciona
 política de contraseñas y auto-servicio de contraseña/MFA.
 """
 import os
+import re
 from datetime import datetime, timezone
 from fastapi import FastAPI, Request, Form, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
@@ -22,6 +23,8 @@ from sqlalchemy import text
 
 import config, db, rbac, nucleo_service
 import operacion_service as ops
+import indices_service as ix
+import ccp_view as cv
 import recalculo_service as rc
 import inversiones_service as inv
 import subsidios_service as subs
@@ -361,6 +364,19 @@ def empresa_detail(request: Request, eid: int):
         tiene_perfil=nucleo_service.perfil_existe(emp["codigo"])))
 
 
+@app.get("/empresa/{eid}/ccp", response_class=HTMLResponse)
+def empresa_ccp(request: Request, eid: int, anio: int = None):
+    if (r := _need_login(request)):
+        return r
+    user = session_user(request)
+    with db.scope_conn(scope_of(user)) as conn:
+        emp = conn.execute(text("SELECT * FROM empresa WHERE id=:e"), {"e": eid}).mappings().first()
+        if not emp:
+            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        datos = cv.resumen(conn, eid, anio)
+    return tpl.TemplateResponse(request, "ccp.html", _ctx(request, emp=emp, ccp=datos, meses=ops.MESES))
+
+
 @app.post("/empresa/{eid}/recalcular")
 def recalcular(request: Request, eid: int, csrf: str = Form("")):
     if (r := _need_login(request)):
@@ -616,14 +632,22 @@ def usuarios(request: Request):
             "ORDER BY r.id, u.nombre")).mappings().all()
         empresas = conn.execute(text("SELECT id,nombre FROM empresa ORDER BY nombre")).mappings().all()
         roles = conn.execute(text("SELECT codigo,nombre FROM rol ORDER BY id")).mappings().all()
+        asig_rows = conn.execute(text(
+            "SELECT usuario_id, empresa_id FROM usuario_empresa")).mappings().all()
+    asignaciones = {}
+    for row in asig_rows:
+        asignaciones.setdefault(row["usuario_id"], []).append(row["empresa_id"])
+    emp_nombre = {e["id"]: e["nombre"] for e in empresas}
     return tpl.TemplateResponse(request, "usuarios.html",
                                 _ctx(request, usuarios=us, empresas=empresas, roles=roles,
+                                     asignaciones=asignaciones, emp_nombre=emp_nombre,
                                      min_len=config.PASSWORD_MIN_LEN))
 
 
 @app.post("/usuarios")
 def usuarios_post(request: Request, email: str = Form(...), nombre: str = Form(...),
-                  rol: str = Form(...), empresa_id: str = Form(""), password: str = Form(...),
+                  rol: str = Form(...), empresa_id: str = Form(""),
+                  empresas_analista: list[str] = Form([]), password: str = Form(...),
                   csrf: str = Form("")):
     if (r := _need_login(request)):
         return r
@@ -637,17 +661,88 @@ def usuarios_post(request: Request, email: str = Form(...), nombre: str = Form(.
         return RedirectResponse("/usuarios?err=Contraseña+débil:+" + ", ".join(problemas).replace(" ", "+"),
                                 status_code=303)
     eid = int(empresa_id) if (empresa_id and rol in ("empresa", "auditor")) else None
+    asignar = [int(x) for x in empresas_analista if x] if rol == "analista" else []
     try:
         with db.scope_conn(scope_of(user)) as conn:
-            conn.execute(text(
+            nuevo = conn.execute(text(
                 "INSERT INTO usuario (email,nombre,password_hash,rol_id,empresa_id,activo,debe_cambiar_pass) "
-                "VALUES (:em,:no,:ph,(SELECT id FROM rol WHERE codigo=:rc),:eid,true,true)"),
+                "VALUES (:em,:no,:ph,(SELECT id FROM rol WHERE codigo=:rc),:eid,true,true) RETURNING id"),
                 {"em": email.strip().lower(), "no": nombre.strip(),
-                 "ph": hash_password(password), "rc": rol, "eid": eid})
+                 "ph": hash_password(password), "rc": rol, "eid": eid}).scalar()
+            for e_id in asignar:
+                conn.execute(text(
+                    "INSERT INTO usuario_empresa(usuario_id,empresa_id) VALUES (:u,:e) "
+                    "ON CONFLICT DO NOTHING"), {"u": nuevo, "e": e_id})
     except Exception as e:
         return RedirectResponse(f"/usuarios?err=No+se+pudo+crear+({type(e).__name__})", status_code=303)
-    db.audit(scope_of(user), "crear_usuario", "usuario", eid, f"{email} ({rol})")
+    detalle = f"{email} ({rol})" + (f" · {len(asignar)} empresa(s)" if asignar else "")
+    db.audit(scope_of(user), "crear_usuario", "usuario", eid, detalle)
     return RedirectResponse("/usuarios?msg=Credencial+emitida+(cambio+obligatorio):+" + email, status_code=303)
+
+
+@app.post("/usuarios/{uid}/password")
+def usuarios_reset_password(request: Request, uid: int,
+                            password: str = Form(...), csrf: str = Form("")):
+    """El administrador restablece la contraseña de un usuario (cambio obligatorio)."""
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    if not rbac.can(user, "administrar_usuarios"):
+        return RedirectResponse("/panel?err=No+autorizado", status_code=303)
+    problemas = password_issues(password)
+    if problemas:
+        return RedirectResponse("/usuarios?err=Contraseña+débil:+" + ", ".join(problemas).replace(" ", "+"),
+                                status_code=303)
+    try:
+        with db.scope_conn(scope_of(user)) as conn:
+            correo = conn.execute(text(
+                "UPDATE usuario SET password_hash=:ph, debe_cambiar_pass=true "
+                "WHERE id=:u RETURNING email"),
+                {"ph": hash_password(password), "u": uid}).scalar()
+    except Exception as e:
+        return RedirectResponse(f"/usuarios?err=No+se+pudo+restablecer+({type(e).__name__})", status_code=303)
+    if not correo:
+        return RedirectResponse("/usuarios?err=Usuario+no+encontrado", status_code=303)
+    db.audit(scope_of(user), "reset_password", "usuario", None, correo)
+    return RedirectResponse("/usuarios?msg=Contraseña+restablecida+(cambio+obligatorio):+" + correo,
+                            status_code=303)
+
+
+@app.post("/usuarios/{uid}/empresas")
+def usuarios_asignar_empresas(request: Request, uid: int,
+                              empresas_analista: list[str] = Form([]), csrf: str = Form("")):
+    """Reemplaza el conjunto de empresas asignadas a un analista (vacío = todas)."""
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    if not rbac.can(user, "administrar_usuarios"):
+        return RedirectResponse("/panel?err=No+autorizado", status_code=303)
+    ids = [int(x) for x in empresas_analista if x]
+    try:
+        with db.scope_conn(scope_of(user)) as conn:
+            fila = conn.execute(text(
+                "SELECT u.email, r.codigo AS rol FROM usuario u JOIN rol r ON r.id=u.rol_id "
+                "WHERE u.id=:u"), {"u": uid}).mappings().first()
+            if not fila:
+                return RedirectResponse("/usuarios?err=Usuario+no+encontrado", status_code=303)
+            if fila["rol"] != "analista":
+                return RedirectResponse(
+                    "/usuarios?err=Solo+los+analistas+se+asignan+a+varias+empresas", status_code=303)
+            conn.execute(text("DELETE FROM usuario_empresa WHERE usuario_id=:u"), {"u": uid})
+            for e_id in ids:
+                conn.execute(text(
+                    "INSERT INTO usuario_empresa(usuario_id,empresa_id) VALUES (:u,:e) "
+                    "ON CONFLICT DO NOTHING"), {"u": uid, "e": e_id})
+    except Exception as e:
+        return RedirectResponse(f"/usuarios?err=No+se+pudo+asignar+({type(e).__name__})", status_code=303)
+    cuantas = "todas" if not ids else str(len(ids))
+    db.audit(scope_of(user), "asignar_empresas", "usuario", None, f'{fila["email"]} → {cuantas}')
+    return RedirectResponse(
+        f"/usuarios?msg=Empresas+asignadas+({cuantas})+a+{fila['email']}", status_code=303)
 
 
 # ------------------------------------------------------------------ operación mensual
@@ -935,7 +1030,8 @@ def _catalogo_path(codigo):
 
 
 @app.post("/empresa/{eid}/cargar-balance")
-def cargar_balance(request: Request, eid: int, anio: int = Form(...), mes: int = Form(...),
+def cargar_balance(request: Request, eid: int, anio: int = Form(...),
+                   mes_ini: int = Form(1), mes_fin: int = Form(12), mes: int = Form(None),
                    archivo: UploadFile = File(...), next: str = Form(""), csrf: str = Form("")):
     if (r := _need_login(request)):
         return r
@@ -945,6 +1041,14 @@ def cargar_balance(request: Request, eid: int, anio: int = Form(...), mes: int =
     dflt = f"/empresa/{eid}/recalculo"
     if not rbac.can(user, "cargar_mensual"):
         return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
+    # compatibilidad: si llega 'mes' suelto, es un solo mes
+    if mes is not None:
+        mes_ini = mes_fin = mes
+    mes_ini = max(1, min(12, int(mes_ini)))
+    mes_fin = max(1, min(12, int(mes_fin)))
+    if mes_ini > mes_fin:
+        mes_ini, mes_fin = mes_fin, mes_ini
+    n_meses = mes_fin - mes_ini + 1
     import os as _os, tempfile
     raw = archivo.file.read()
     nombre = (archivo.filename or "").lower()
@@ -977,11 +1081,19 @@ def cargar_balance(request: Request, eid: int, anio: int = Form(...), mes: int =
         sub, comp, sin = clf.clasificar(filas, catalogo)
         nums = clf.numeradores(sub)
         split = rc.split_servicio(conn, eid)
-        n = ingesta.persistir_numeradores_mensual(conn, eid, anio, mes, nums, split)
+        # El balance subido corresponde al rango elegido; se reparte por igual entre sus meses,
+        # de modo que la suma del período reproduce el balance cargado.
+        nums_mes = {k: (float(v or 0.0) / n_meses) for k, v in nums.items()}
+        n = 0
+        for m in range(mes_ini, mes_fin + 1):
+            n += ingesta.persistir_numeradores_mensual(conn, eid, anio, m, nums_mes, split)
         rc.recalcular(conn, eid)
+    rango = (ops.MESES.get(mes_ini, mes_ini) if n_meses == 1
+             else f"{ops.MESES.get(mes_ini, mes_ini)}–{ops.MESES.get(mes_fin, mes_fin)}")
     db.audit(scope_of(user), "cargar_balance", "empresa", eid,
-             f"{ops.MESES.get(mes,mes)}-{anio}: {n} numeradores, {len(sin)} cuentas sin clasificar")
-    aviso = f"msg=Balance+{ops.MESES.get(mes,mes)}-{anio}:+numeradores+clasificados+y+recálculo+hecho"
+             f"{rango}-{anio} ({n_meses} mes/es): {n} numeradores, {len(sin)} cuentas sin clasificar")
+    aviso = (f"msg=Balance+{rango}-{anio}:+distribuido+en+{n_meses}+mes(es),+"
+             f"numeradores+clasificados+y+recálculo+hecho")
     if sin:
         aviso += f";+{len(sin)}+cuentas+sin+clasificar"
     return RedirectResponse(_dest(next, dflt, aviso), status_code=303)
@@ -1736,41 +1848,91 @@ def bcr_poir_plantilla(request: Request, eid: int):
                     headers={"Content-Disposition": 'attachment; filename="plantilla_cmi_poir.xlsx"'})
 
 
-@app.post("/ipc/cargar")
-def ipc_cargar(request: Request, archivo: UploadFile = File(...), csrf: str = Form("")):
+@app.get("/empresa/{eid}/bcr-activos-plantilla")
+def bcr_activos_plantilla(request: Request, eid: int):
     if (r := _need_login(request)):
         return r
-    if (bad := _bad_csrf(request, csrf)):
+    return Response(content=bcr.plantilla_activos_bytes(),
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": 'attachment; filename="plantilla_activos_bcr0.xlsx"'})
+
+
+@app.post("/empresa/{eid}/bcr-activos-csv")
+async def bcr_activos_csv(request: Request, eid: int):
+    """Carga masiva de los activos de la BCR₀ de inicio (CSV o Excel; varios archivos)."""
+    if (r := _need_login(request)):
+        return r
+    form = await request.form()
+    if (bad := _bad_csrf(request, form.get("csrf"))):
         return bad
     user = session_user(request)
-    if not rbac.can(user, "administrar_ipc"):
-        return RedirectResponse("/panel?err=No+autorizado", status_code=303)
-    contenido = _leer_csv(archivo)
+    nxt = form.get("next") or f"/empresa/{eid}/inversiones?sec=bcr"
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(nxt, nxt, "err=No+autorizado"), status_code=303)
+    archivos = form.getlist("archivos")
+    tot_ok, errs, n = 0, [], 0
     with db.scope_conn(scope_of(user)) as conn:
-        ok, err = ingesta.cargar_indices(conn, contenido)
-    db.audit(scope_of(user), "cargar_ipc_csv", "ipc", None, f"{ok} filas, {len(err)} errores")
-    aviso = f"IPC:+{ok}+filas"
-    if err:
-        aviso += f";+errores:+" + ",+".join(err[:3]).replace(" ", "+")
-    return RedirectResponse(f"/ipc?msg={aviso}", status_code=303)
+        if not _emp_or_redirect(conn, eid):
+            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        for arch in archivos:
+            if not getattr(arch, "filename", ""):
+                continue
+            raw = await arch.read()
+            filas, e = bcr.leer_archivo_activos(raw, arch.filename)
+            if e:
+                errs.append(f"{arch.filename}: {e}"); continue
+            ok, err = bcr.ingesta_activos(conn, eid, filas, user["user_id"])
+            tot_ok += ok; errs += err; n += 1
+    db.audit(scope_of(user), "bcr_activos_csv", "empresa", eid, f"{n} archivos, {tot_ok} activos")
+    aviso = f"msg=BCR0:+{tot_ok}+activos+cargados+de+{n}+archivo(s)"
+    if errs:
+        aviso += ";+" + ",+".join(errs[:3]).replace(" ", "+") + ("+…" if len(errs) > 3 else "")
+    return RedirectResponse(_dest(nxt, nxt, aviso), status_code=303)
+
+
+def _ym(s):
+    """Parsea 'YYYY-MM' (del <input type=month>) a (anio, mes); None si no aplica."""
+    s = (s or "").strip()
+    if not s:
+        return None
+    try:
+        a, m = s.split("-")[:2]
+        a, m = int(a), int(m)
+        if 1 <= m <= 12:
+            return (a, m)
+    except Exception:
+        pass
+    return None
 
 
 @app.get("/ipc", response_class=HTMLResponse)
-def ipc_form(request: Request):
+def ipc_form(request: Request, indice: str = "indice", desde: str = "", hasta: str = ""):
     if (r := _need_login(request)):
         return r
     if not rbac.can(session_user(request), "administrar_ipc"):
         return RedirectResponse("/panel?err=No+autorizado", status_code=303)
+    col = indice if indice in ix.MENSUALES else "indice"
+    d, h = _ym(desde), _ym(hasta)
     with db.scope_conn(scope_of(session_user(request))) as conn:
-        filas = conn.execute(text(
-            "SELECT anio, mes, indice, fuente, procedencia FROM indice_ipc "
-            "ORDER BY anio, mes")).mappings().all()
-    return tpl.TemplateResponse(request, "ipc.html", _ctx(request, filas=filas, meses=ops.MESES))
+        resumen = ix.resumen(conn)
+        salario = ix.salario_serie(conn)
+        graf = ix.datos_grafica(conn, col, d, h)
+        prox_a, prox_m = ix.proximo_mes(conn)
+        prox_sal = ix.proximo_anio_salario(conn)
+    svg = ix.svg_grafica(graf)
+    des_def = f'{graf["desde"][0]:04d}-{graf["desde"][1]:02d}' if graf["desde"] else ""
+    has_def = f'{graf["hasta"][0]:04d}-{graf["hasta"][1]:02d}' if graf["hasta"] else ""
+    return tpl.TemplateResponse(request, "ipc.html", _ctx(
+        request, resumen=resumen, salario=salario, graf=graf, svg=svg, meses=ops.MESES,
+        col=col, mensuales=ix.MENSUALES, orden=ix.ORDEN_MENSUAL,
+        des_def=des_def, has_def=has_def, prox_anio=prox_a, prox_mes=prox_m, prox_sal=prox_sal))
 
 
 @app.post("/ipc")
 def ipc_post(request: Request, anio: int = Form(...), mes: int = Form(...),
-             indice: str = Form(...), fuente: str = Form("DANE"), csrf: str = Form("")):
+             indice: str = Form(""), ipcs: str = Form(""), ictc: str = Form(""),
+             fuente: str = Form("DANE"), csrf: str = Form("")):
+    """Ingreso/actualización del dato mensual: IPC (obligatorio), IPC-SAR e ICTC (opcionales)."""
     if (r := _need_login(request)):
         return r
     if (bad := _bad_csrf(request, csrf)):
@@ -1778,19 +1940,55 @@ def ipc_post(request: Request, anio: int = Form(...), mes: int = Form(...),
     user = session_user(request)
     if not rbac.can(user, "administrar_ipc"):
         return RedirectResponse("/panel?err=No+autorizado", status_code=303)
+    v_ipc = _fnum(indice)
+    if v_ipc is None:
+        return RedirectResponse("/ipc?err=El+IPC+es+obligatorio", status_code=303)
     try:
-        val = float(indice.strip().replace(",", "."))
         with db.scope_conn(scope_of(user)) as conn:
             conn.execute(text(
-                "INSERT INTO indice_ipc(anio,mes,indice,fuente,procedencia,cargado_por) "
-                "VALUES (:a,:m,:v,:f,'reportada',:u) "
+                "INSERT INTO indice_ipc(anio,mes,indice,ipcs,ictc,fuente,procedencia,cargado_por) "
+                "VALUES (:a,:m,:ipc,:ipcs,:ictc,:f,'reportada',:u) "
                 "ON CONFLICT (anio,mes) DO UPDATE SET indice=excluded.indice, "
+                " ipcs=COALESCE(excluded.ipcs, indice_ipc.ipcs), "
+                " ictc=COALESCE(excluded.ictc, indice_ipc.ictc), "
                 " fuente=excluded.fuente, procedencia=excluded.procedencia, cargado_por=excluded.cargado_por"),
-                {"a": anio, "m": mes, "v": val, "f": fuente.strip() or "DANE", "u": user["user_id"]})
+                {"a": anio, "m": mes, "ipc": v_ipc, "ipcs": _fnum(ipcs), "ictc": _fnum(ictc),
+                 "f": fuente.strip() or "DANE", "u": user["user_id"]})
     except Exception as e:
         return RedirectResponse(f"/ipc?err=No+se+pudo+guardar+({type(e).__name__})", status_code=303)
-    db.audit(scope_of(user), "cargar_ipc", "ipc", None, f"{ops.MESES.get(mes,mes)}-{anio}={indice}")
-    return RedirectResponse("/ipc?msg=IPC+guardado+(recuerde+reprocesar+la+indexación)", status_code=303)
+    db.audit(scope_of(user), "cargar_indice_mensual", "ipc", None,
+             f"{ops.MESES.get(mes, mes)}-{anio}: IPC={indice} IPC-SAR={ipcs or '—'} ICTC={ictc or '—'}")
+    return RedirectResponse("/ipc?msg=Índice+mensual+guardado+(recuerde+reprocesar+la+indexación)",
+                            status_code=303)
+
+
+@app.post("/ipc/salario")
+def ipc_salario(request: Request, anio: int = Form(...), valor: str = Form(""),
+                fuente: str = Form(""), csrf: str = Form("")):
+    """Salario mínimo (SMMLV): un valor por año."""
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    if not rbac.can(user, "administrar_ipc"):
+        return RedirectResponse("/panel?err=No+autorizado", status_code=303)
+    digitos = re.sub(r"[^\d]", "", valor or "")
+    if not digitos:
+        return RedirectResponse("/ipc?err=Valor+de+salario+inválido", status_code=303)
+    v = float(digitos)
+    try:
+        with db.scope_conn(scope_of(user)) as conn:
+            conn.execute(text(
+                "INSERT INTO salario_minimo(anio,valor,fuente,procedencia,cargado_por) "
+                "VALUES (:a,:v,:f,'normativa',:u) "
+                "ON CONFLICT (anio) DO UPDATE SET valor=excluded.valor, fuente=excluded.fuente, "
+                " procedencia=excluded.procedencia, cargado_por=excluded.cargado_por"),
+                {"a": anio, "v": v, "f": fuente.strip() or None, "u": user["user_id"]})
+    except Exception as e:
+        return RedirectResponse(f"/ipc?err=No+se+pudo+guardar+el+salario+({type(e).__name__})", status_code=303)
+    db.audit(scope_of(user), "cargar_smmlv", "ipc", None, f"{anio}={int(v)}")
+    return RedirectResponse("/ipc?msg=Salario+mínimo+guardado", status_code=303)
 
 
 # ------------------------------------------------------------------ permisos / auditoría
