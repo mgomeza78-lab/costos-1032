@@ -70,14 +70,33 @@ def _sep(linea):
     return max((",", ";", "\t"), key=linea.count)
 
 
-def _rows(contenido):
-    # Normaliza TODOS los saltos de línea (\r\n, \r solo de Excel/Mac, \n) para que csv no
-    # vea un '\r' dentro de un campo ("new-line character seen in unquoted field"), y quita
-    # el BOM inicial que suelen traer los CSV exportados por Excel/Windows.
+def _preparar(contenido):
+    """Normaliza saltos de línea (\\r\\n, \\r de Excel/Mac), quita el BOM inicial y detecta el
+    separador por la primera línea. Devuelve (texto, separador). No parte todo el texto."""
     texto = contenido.replace("\r\n", "\n").replace("\r", "\n").lstrip("﻿")
-    # Detecta el separador por la primera línea con contenido (por defecto, coma).
-    primera = next((l for l in texto.split("\n") if l.strip()), "")
-    return list(csv.DictReader(io.StringIO(texto), delimiter=_sep(primera)))
+    return texto, _sep(texto.split("\n", 1)[0])
+
+
+# Caracteres de control (salvo tab, salto de línea y retorno) que no aparecen en un CSV sano.
+_CTRL = {chr(c) for c in range(32)} - {"\t", "\n", "\r"}
+
+
+def _es_binario(texto):
+    """True si el contenido no parece texto CSV: archivo dañado, un .xlsx, o un comprimido
+    renombrado a .csv. Evita intentar parsear 20 MB de binario (y agotar la memoria)."""
+    m = texto[:8192]
+    if not m:
+        return False
+    if "\x00" in m:
+        return True
+    return sum(1 for c in m if c in _CTRL) / len(m) > 0.02
+
+
+def _rows(contenido):
+    # Normaliza saltos de línea y BOM, detecta el separador (coma/;/tab) y materializa las filas
+    # (para archivos pequeños: IPC, factores, macromedición, etc.).
+    texto, sep = _preparar(contenido)
+    return list(csv.DictReader(io.StringIO(texto), delimiter=sep))
 
 
 def _num(x):
@@ -234,10 +253,14 @@ def cargar_facturacion_sui(conn, empresa_id, servicio, anio, mes, contenido):
     serv = _norm_serv(servicio)
     if serv not in CAMPOS_SUI:
         return 0, ["servicio inválido"]
-    rows = _rows(contenido)
-    if not rows:
+    texto, sep = _preparar(contenido)
+    if _es_binario(texto):
+        return 0, ["el archivo no parece un CSV de texto (¿está dañado, o es un Excel .xlsx / "
+                   "comprimido renombrado a .csv?); vuelve a descargar el reporte del SUI"]
+    reader = csv.DictReader(io.StringIO(texto), delimiter=sep)
+    if not reader.fieldnames:
         return 0, ["el archivo está vacío"]
-    cols = _mapa_base(rows[0].keys())
+    cols = _mapa_base(reader.fieldnames)
     campos, faltan = _resolver_campos(cols, CAMPOS_SUI[serv], CAMPOS_SUI_REQ)
     if faltan:
         etq = {"clase": "clase de uso", "cons": "consumo/vertimiento (m³)",
@@ -246,8 +269,9 @@ def cargar_facturacion_sui(conn, empresa_id, servicio, anio, mes, contenido):
         det = ", ".join(etq.get(c, c) for c in faltan)
         return 0, [f"no se reconoció el reporte de {serv}: faltan columnas de {det}; "
                    f"verifica que sea el CSV original del SUI (no un Excel .xlsx)"]
+    # Agregación en streaming (no materializa toda la lista): clave para los archivos de ~30 MB.
     agg = defaultdict(lambda: {"n": 0, "m3": 0.0, "sub": 0.0, "fcf": Counter(), "fcc": Counter()})
-    for r in rows:
+    for r in reader:
         clv = _int(r.get(campos["clase"]))
         if clv is None:
             continue
