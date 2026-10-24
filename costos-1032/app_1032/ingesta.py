@@ -32,7 +32,10 @@ def _norm_serv(s):
 
 
 def _rows(contenido):
-    return list(csv.DictReader(io.StringIO(contenido.replace("\r\n", "\n"))))
+    # Normaliza TODOS los saltos de línea (\r\n, \r solo de Excel/Mac, \n) para que
+    # csv no vea un '\r' dentro de un campo ("new-line character seen in unquoted field").
+    texto = contenido.replace("\r\n", "\n").replace("\r", "\n")
+    return list(csv.DictReader(io.StringIO(texto)))
 
 
 def _num(x):
