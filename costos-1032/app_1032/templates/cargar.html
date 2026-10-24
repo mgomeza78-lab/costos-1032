@@ -18,6 +18,14 @@
     <select name="anio" class="anioSel"></select>
   </label>
 {% endmacro %}
+{# Botón para eliminar un cargue (un mes-servicio de un concepto) #}
+{% macro delcargue(concepto, x) %}
+{% if puede_cargar %}<form method="post" action="/empresa/{{ emp.id }}/cargue-eliminar" style="display:inline" onsubmit="return confirm('¿Eliminar el cargue de {{ concepto }} · {{ x.servicio }} · {{ meses.get(x.mes,x.mes) }}-{{ x.anio }}? No se puede deshacer.')">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+  <input type="hidden" name="concepto" value="{{ concepto }}"><input type="hidden" name="anio" value="{{ x.anio }}">
+  <input type="hidden" name="mes" value="{{ x.mes }}"><input type="hidden" name="servicio" value="{{ x.servicio }}">
+  <button class="btn-link" type="submit">eliminar</button></form>{% endif %}
+{% endmacro %}
 
 <div class="page-head">
   <a class="back" href="/empresa/{{ emp.id }}">← {{ emp.nombre }}</a>
@@ -60,11 +68,12 @@ el nombre de cada archivo y lo puedes corregir antes de cargar. Reconoce los <b>
 <h3 class="serv-h">Cargado</h3>
 {% if com %}
 <table class="tabla">
-  <thead><tr><th>Período</th><th>Año tarifario</th><th>Servicio</th><th class="r">Suscriptores</th><th class="r">m³ facturados</th><th>Origen</th></tr></thead>
+  <thead><tr><th>Período</th><th>Año tarifario</th><th>Servicio</th><th class="r">Suscriptores</th><th class="r">m³ facturados</th><th>Origen</th><th></th></tr></thead>
   <tbody>
     {% for x in com %}<tr><td class="comp">{{ meses.get(x.mes,x.mes) }}-{{ x.anio }}</td><td>{{ aniotar(x.anio) }}</td>
       <td>{{ x.servicio }}</td><td class="num">{{ x.suscriptores|valor if x.suscriptores is not none else '—' }}</td>
-      <td class="num">{{ x.m3_facturados|valor if x.m3_facturados is not none else '—' }}</td><td>{{ x.origen or '—' }}</td></tr>{% endfor %}
+      <td class="num">{{ x.m3_facturados|valor if x.m3_facturados is not none else '—' }}</td><td>{{ x.origen or '—' }}</td>
+      <td class="c">{{ delcargue('comercial', x) }}</td></tr>{% endfor %}
   </tbody>
 </table>
 {% else %}<p class="empty">Aún no hay información comercial cargada.</p>{% endif %}
@@ -91,10 +100,11 @@ mes de inicio y fin.</p>
 <h3 class="serv-h">Cargado</h3>
 {% if bal %}
 <table class="tabla">
-  <thead><tr><th>Período</th><th>Año tarifario</th><th>Servicio</th><th class="r">Numeradores</th><th class="r">Valor total</th></tr></thead>
+  <thead><tr><th>Período</th><th>Año tarifario</th><th>Servicio</th><th class="r">Numeradores</th><th class="r">Valor total</th><th></th></tr></thead>
   <tbody>
     {% for x in bal %}<tr><td class="comp">{{ meses.get(x.mes,x.mes) }}-{{ x.anio }}</td><td>{{ aniotar(x.anio) }}</td>
-      <td>{{ x.servicio }}</td><td class="num">{{ x.n }}</td><td class="num">{{ x.total|valor('$') if x.total is not none else '—' }}</td></tr>{% endfor %}
+      <td>{{ x.servicio }}</td><td class="num">{{ x.n }}</td><td class="num">{{ x.total|valor('$') if x.total is not none else '—' }}</td>
+      <td class="c">{{ delcargue('balance', x) }}</td></tr>{% endfor %}
   </tbody>
 </table>
 {% else %}<p class="empty">Aún no hay balance de prueba cargado.</p>{% endif %}
@@ -128,10 +138,11 @@ de macromedición (CSV) o el reporte del SUI.</p>
 <h3 class="serv-h">Cargado</h3>
 {% if agua %}
 <table class="tabla">
-  <thead><tr><th>Período</th><th>Año tarifario</th><th>Servicio</th><th class="r">Puntos</th><th class="r">m³ producidos</th></tr></thead>
+  <thead><tr><th>Período</th><th>Año tarifario</th><th>Servicio</th><th class="r">Puntos</th><th class="r">m³ producidos</th><th></th></tr></thead>
   <tbody>
     {% for x in agua %}<tr><td class="comp">{{ meses.get(x.mes,x.mes) }}-{{ x.anio }}</td><td>{{ aniotar(x.anio) }}</td>
-      <td>{{ x.servicio }}</td><td class="num">{{ x.puntos }}</td><td class="num">{{ x.m3|valor if x.m3 is not none else '—' }}</td></tr>{% endfor %}
+      <td>{{ x.servicio }}</td><td class="num">{{ x.puntos }}</td><td class="num">{{ x.m3|valor if x.m3 is not none else '—' }}</td>
+      <td class="c">{{ delcargue('agua', x) }}</td></tr>{% endfor %}
   </tbody>
 </table>
 {% else %}<p class="empty">Aún no hay agua producida cargada.</p>{% endif %}

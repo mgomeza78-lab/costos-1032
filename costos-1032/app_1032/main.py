@@ -356,11 +356,16 @@ def empresa_detail(request: Request, eid: int):
             "ORDER BY servicio, "
             " array_position(ARRAY['CMA','CMO','CMI','CMICT','CARGO_FIJO','CARGO_CONSUMO','BCR0'], componente)"),
             {"e": eid}).mappings().all()
+        cargado = conn.execute(text(
+            "SELECT anio, servicio, count(DISTINCT mes) AS meses, "
+            "round(avg(suscriptores))::int AS susc_prom, sum(m3_facturados) AS m3_total "
+            "FROM carga_mensual WHERE empresa_id=:e GROUP BY anio, servicio "
+            "ORDER BY anio DESC, servicio"), {"e": eid}).mappings().all()
     por_servicio = {}
     for row in res:
         por_servicio.setdefault(row["servicio"], []).append(row)
     return tpl.TemplateResponse(request, "empresa.html", _ctx(
-        request, emp=emp, por_servicio=por_servicio,
+        request, emp=emp, por_servicio=por_servicio, cargado=cargado, meses=ops.MESES,
         tiene_perfil=nucleo_service.perfil_existe(emp["codigo"])))
 
 
@@ -929,7 +934,7 @@ async def cargar_sui_lote(request: Request, eid: int):
         return RedirectResponse(_dest(nxt, nxt, "err=Año+inválido"), status_code=303)
     archivos = form.getlist("archivos")
     meses = form.getlist("mes")
-    n_ok, clases, errores = 0, 0, []
+    n_ok, clases, errores, meses_ok = 0, 0, [], []
     with db.scope_conn(scope_of(user)) as conn:
         emp = conn.execute(text("SELECT id FROM empresa WHERE id=:e"), {"e": eid}).mappings().first()
         if not emp:
@@ -949,16 +954,17 @@ async def cargar_sui_lote(request: Request, eid: int):
                 continue
             ok, err = ingesta.cargar_facturacion_sui(conn, eid, servicio, anio, mes, _leer_csv(arch))
             if ok:
-                n_ok += 1; clases += ok
+                n_ok += 1; clases += ok; meses_ok.append(mes)
             else:
                 errores.append(f"{ops.MESES.get(mes,mes)}:+" + (err[0] if err else "sin+datos"))
         if n_ok:
             ops.derivar_factura(conn, eid)
     db.audit(scope_of(user), "cargar_sui_lote", "empresa", eid,
              f"{servicio} {anio}: {n_ok} meses, {clases} clases, {len(errores)} errores")
-    aviso = f"msg=SUI+{servicio}+{anio}:+{n_ok}+mes(es)+cargados+({clases}+clases)"
+    lista = "+(" + ",+".join(ops.MESES.get(m, str(m)) for m in sorted(set(meses_ok))) + ")" if meses_ok else ""
+    aviso = f"msg=SUI+{servicio}+{anio}:+{n_ok}+mes(es)+cargados{lista}+·+{clases}+clases"
     if errores:
-        aviso += ";+" + ",+".join(errores[:3]).replace(" ", "+")
+        aviso += ";+fallaron:+" + ",+".join(errores[:4]).replace(" ", "+")
     return RedirectResponse(_dest(nxt, nxt, aviso), status_code=303)
 
 
@@ -986,6 +992,41 @@ def cargar_sui(request: Request, eid: int, servicio: str = Form(...), anio: int 
     if err:
         aviso += f";+" + ",+".join(err[:2]).replace(" ", "+")
     return RedirectResponse(f"/empresa/{eid}/mensual?msg={aviso}", status_code=303)
+
+
+@app.post("/empresa/{eid}/cargue-eliminar")
+def cargue_eliminar(request: Request, eid: int, concepto: str = Form(...), anio: int = Form(...),
+                    mes: int = Form(...), servicio: str = Form(...), next: str = Form(""), csrf: str = Form("")):
+    """Elimina un cargue (un mes-servicio de un concepto). Comercial borra el detalle por clase y el
+    agregado y re-deriva la factura; balance borra los numeradores; agua, la macromedición."""
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    fuente = concepto if concepto in ("comercial", "balance", "agua") else "comercial"
+    dflt = f"/empresa/{eid}/cargar?fuente={fuente}"
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
+    tablas = {"comercial": ["carga_mensual_detalle", "carga_mensual"],
+              "balance": ["numerador_mensual"], "agua": ["macromedicion"]}
+    if concepto not in tablas:
+        return RedirectResponse(_dest(next, dflt, "err=Concepto+inválido"), status_code=303)
+    with db.scope_conn(scope_of(user)) as conn:
+        if not conn.execute(text("SELECT 1 FROM empresa WHERE id=:e"), {"e": eid}).first():
+            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        n = 0
+        for t in tablas[concepto]:
+            res = conn.execute(text(
+                f"DELETE FROM {t} WHERE empresa_id=:e AND anio=:a AND mes=:m AND servicio=:s"),
+                {"e": eid, "a": anio, "m": mes, "s": servicio})
+            n += res.rowcount or 0
+        if concepto == "comercial":
+            ops.derivar_factura(conn, eid)
+    db.audit(scope_of(user), "cargue_eliminar", "empresa", eid,
+             f"{concepto} {servicio} {ops.MESES.get(mes, mes)}-{anio}: {n} filas")
+    aviso = f"msg=Eliminado:+{concepto}+{servicio}+{ops.MESES.get(mes, mes)}-{anio}+({n}+filas)"
+    return RedirectResponse(_dest(next, dflt, aviso), status_code=303)
 
 
 @app.get("/empresa/{eid}/recalculo", response_class=HTMLResponse)
@@ -1440,30 +1481,35 @@ def validacion(request: Request, eid: int):
             return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
         apsres = aps.resumen(conn, eid)
 
-        def _por_anio(sql):
-            return dict(conn.execute(text(sql), {"e": eid}).all())
-        com = _por_anio("SELECT anio, count(DISTINCT (mes,servicio)) FROM carga_mensual WHERE empresa_id=:e GROUP BY anio")
-        bal = _por_anio("SELECT anio, count(DISTINCT (mes,servicio)) FROM numerador_mensual WHERE empresa_id=:e GROUP BY anio")
-        agua = _por_anio("SELECT anio, count(DISTINCT (mes,servicio)) FROM macromedicion WHERE empresa_id=:e GROUP BY anio")
-        fsub = _por_anio("SELECT vigencia AS anio, count(*) FROM factor_subsidio WHERE empresa_id=:e GROUP BY vigencia")
-    n_serv = (1 if emp["presta_ac"] else 0) + (1 if emp["presta_al"] else 0) or 1
+        def _celdas(sql):
+            # {anio: {servicio: set(meses cargados)}}
+            d = {}
+            for a, m, s in conn.execute(text(sql), {"e": eid}).all():
+                d.setdefault(a, {}).setdefault(s, set()).add(m)
+            return d
+        com_m = _celdas("SELECT DISTINCT anio, mes, servicio FROM carga_mensual WHERE empresa_id=:e")
+        bal_m = _celdas("SELECT DISTINCT anio, mes, servicio FROM numerador_mensual WHERE empresa_id=:e")
+        agua_m = _celdas("SELECT DISTINCT anio, mes, servicio FROM macromedicion WHERE empresa_id=:e")
+        fsub = dict(conn.execute(text(
+            "SELECT vigencia, count(*) FROM factor_subsidio WHERE empresa_id=:e GROUP BY vigencia"),
+            {"e": eid}).all())
+    servicios = [s for s, on in (("acueducto", emp["presta_ac"]), ("alcantarillado", emp["presta_al"])) if on] or ["acueducto"]
     # El período de inicio se calcula con la línea base 2024–2025 (dos años completos).
     anios = per.PERIODOS[0]["anios_base"]              # [2024, 2025]
-    esperado = {a: 12 * n_serv for a in anios}          # 12 meses × servicios por año base
-    anios_tar = {a: str(a) for a in anios}
-    fuentes = [
-        {"clave": "aps", "nombre": "Configuración del APS", "general": True,
-         "valor": f"{apsres['n_completos']}/{apsres['n_municipios']} completos",
+    matriz = [
+        {"clave": "comercial", "nombre": "Comercial (suscriptores y consumos)", "cel": com_m},
+        {"clave": "balance", "nombre": "Balance de prueba (numeradores CMO/CMI/CMICT)", "cel": bal_m},
+        {"clave": "agua", "nombre": "Agua producida / macromedición", "cel": agua_m},
+    ]
+    resumen = [
+        {"nombre": "Configuración del APS", "valor": f"{apsres['n_completos']}/{apsres['n_municipios']} completos",
          "ok": apsres["n_municipios"] > 0 and apsres["n_completos"] == apsres["n_municipios"]},
-        {"clave": "comercial", "nombre": "Comercial (suscriptores y consumos)", "datos": com},
-        {"clave": "balance", "nombre": "Balance de prueba (numeradores CMO/CMI/CMICT)", "datos": bal},
-        {"clave": "agua", "nombre": "Agua producida / macromedición", "datos": agua},
-        {"clave": "subsidios", "nombre": "Factores de subsidio y contribución", "datos": fsub, "por_registro": True},
-        {"clave": "costos_part", "nombre": "Costos particulares (art. Res. 1032)", "pendiente": True},
+        {"nombre": "Factores de subsidio y contribución", "datos": fsub},
+        {"nombre": "Costos particulares (art. Res. 1032)", "pendiente": True},
     ]
     return tpl.TemplateResponse(request, "validacion.html", _ctx(
-        request, emp=emp, fuentes=fuentes, anios=anios, esperado=esperado,
-        anios_tar=anios_tar, n_serv=n_serv))
+        request, emp=emp, matriz=matriz, resumen=resumen, servicios=servicios,
+        anios=anios, meses_num=list(range(1, 13)), meses=ops.MESES))
 
 
 # ------------------------------------------------------------------ Resultados · Evolución de costos y tarifa

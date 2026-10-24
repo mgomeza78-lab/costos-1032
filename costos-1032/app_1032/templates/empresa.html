@@ -34,6 +34,25 @@
   {% endif %}
 </div>
 
+{% if cargado %}
+<h2 class="serv-h">Suscriptores y consumos cargados (línea base)</h2>
+<table class="tabla">
+  <thead><tr><th>Año</th><th>Servicio</th><th class="r">Meses</th>
+    <th class="r">Suscriptores (prom. mes)</th><th class="r">m³ facturados (total año)</th></tr></thead>
+  <tbody>
+    {% for c in cargado %}
+    <tr><td class="comp">{{ c.anio }}</td><td>{{ c.servicio }}</td>
+      <td class="num">{{ c.meses }}/12</td>
+      <td class="num">{{ c.susc_prom|valor if c.susc_prom is not none else '—' }}</td>
+      <td class="num">{{ c.m3_total|valor if c.m3_total is not none else '—' }}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="hint">Resumen de la información comercial cargada por año y servicio. El detalle por mes y el
+borrado de cargues erróneos están en <a href="/empresa/{{ emp.id }}/cargar?fuente=comercial">Cargar
+información</a>; la cobertura mes a mes, en <a href="/empresa/{{ emp.id }}/validacion">Validación</a>.</p>
+{% endif %}
+
 {% if por_servicio %}
   {% for servicio, filas in por_servicio.items() %}
   <h2 class="serv-h">{{ servicio if servicio != '—' else 'Conjunto / otros' }}</h2>
