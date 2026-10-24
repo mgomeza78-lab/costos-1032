@@ -91,9 +91,15 @@ def sugerir(codigo_norm, catalogo):
 
 
 def numeradores(por_subcomponente):
-    """CACe, COCe comparables, CE/CIQ/COIR contables, a partir de la agregación."""
+    """CACe, COCe comparables, CE/CIQ/COIR contables, a partir de la agregación.
+
+    CACe = suma de los CAC reconocidos (CAC-1..6 y CAC-2.COM), es decir los de componente CMA;
+    se EXCLUYE CAC-X ('Costos administrativos NO reconocidos', componente Excluido), igual que
+    COCe excluye COC-X. Coincide con la definición validada de `nucleo.numerador_cac_coc.cace`
+    (suma de subcomponentes con componente == 'CMA'); art. 2.1.2.1.3.2.4.
+    """
     s = por_subcomponente
-    cace = sum(v for k, v in s.items() if k.startswith("CAC-"))
+    cace = sum(v for k, v in s.items() if k.startswith("CAC-") and not k.endswith("-X"))
     coce = sum(s.get(k, 0.0) for k in COMPARABLES_COC)
     return {
         "CACe": cace,
