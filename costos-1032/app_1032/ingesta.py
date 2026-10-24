@@ -13,14 +13,29 @@ import re
 from collections import defaultdict, Counter
 from sqlalchemy import text
 
-# Nombres base de columna del reporte de Facturación del SUI (sin el sufijo _NN),
-# confirmados contra los archivos reales (Facturación AC 6080 / ALC 6081).
+# Columnas del reporte de Facturación del SUI por servicio, mapeadas al concepto del estudio.
+# El SUI tiene DOS esquemas vigentes: el "clásico" (CLASEUSO, LECT_CONSUMO, …, con sufijo _NN)
+# y uno nuevo en camelCase (codigoClaseUso, consumoM3, …). Cada concepto lista sus alias EN
+# MAYÚSCULAS y sin el sufijo _NN (como los deja _mapa_base); se toma el primer alias presente.
+# Confirmados contra archivos reales de Las Ceibas (AC y ALC, años 2024–2026).
 CAMPOS_SUI = {
-    "acueducto": {"clase": "CLASEUSO", "cons": "LECT_CONSUMO", "sub": "CONS_SUB",
-                  "fcf": "FACTORSUBSIDIOCARGOFIJO", "fcc": "FACTORSUBSIDIOCONSUMO"},
-    "alcantarillado": {"clase": "CLASEUSO", "cons": "VERTIMIENTO", "sub": "VERTIMIENTOSUB",
-                       "fcf": "FACTORSUBCONTCFIJO", "fcc": "FACTORSUBSIDIOVERTIMIENTO"},
+    "acueducto": {
+        "clase": ["CLASEUSO", "CODIGOCLASEUSO"],
+        "cons":  ["LECT_CONSUMO", "CONSUMOM3"],
+        "sub":   ["CONS_SUB", "CONSUMOSUBSIDIADOM3"],
+        "fcf":   ["FACTORSUBSIDIOCARGOFIJO", "FACTORSUBSIDIOCONTRIBUCIONCARGOFIJO"],
+        "fcc":   ["FACTORSUBSIDIOCONSUMO", "FACTORSUBSIDIOCONTRIBUCIONCONSUMO"],
+    },
+    "alcantarillado": {
+        "clase": ["CLASEUSO", "CODIGOCLASEUSO"],
+        "cons":  ["VERTIMIENTO", "VERTIMIENTOM3"],
+        "sub":   ["VERTIMIENTOSUB", "VERTIMIENTOSUBSIDIADOM3"],
+        "fcf":   ["FACTORSUBCONTCFIJO", "FACTORSUBSIDIOCONTRIBUCIONCARGOFIJO"],
+        "fcc":   ["FACTORSUBSIDIOVERTIMIENTO", "FACTORSUBSIDIOCONTRIBUCIONCONSUMO"],
+    },
 }
+# Conceptos imprescindibles para agregar por clase; los factores de subsidio son opcionales.
+CAMPOS_SUI_REQ = {"clase", "cons", "sub"}
 _SUFIJO = re.compile(r"_\d+$")
 
 _SERV = {"AC": "acueducto", "AL": "alcantarillado",
@@ -31,11 +46,38 @@ def _norm_serv(s):
     return _SERV.get((s or "").strip().upper())
 
 
+_MESES_NOMBRE = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
+                 "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+
+
+def mes_de_nombre(nombre):
+    """Deduce el mes (1..12) del nombre de un archivo del SUI; None si no se reconoce.
+    Acepta 'JUNIO', 'jun', '2026-06', o un '06' suelto en el nombre."""
+    n = (nombre or "").lower()
+    m = re.search(r"20\d\d[-_. ]?(0[1-9]|1[0-2])(?:\D|$)", n)      # AAAA-MM
+    if m:
+        return int(m.group(1))
+    for i, nm in enumerate(_MESES_NOMBRE, 1):
+        if nm in n or nm[:3] in n:                                 # nombre completo o 3 letras
+            return i
+    m = re.search(r"(?:^|\D)(0[1-9]|1[0-2])(?:\D|$)", n)           # MM suelto
+    return int(m.group(1)) if m else None
+
+
+def _sep(linea):
+    """Separador más probable de una línea de encabezado: coma, punto y coma o tabulador.
+    Los reportes reexportados en Excel con configuración regional colombiana salen con ';'."""
+    return max((",", ";", "\t"), key=linea.count)
+
+
 def _rows(contenido):
-    # Normaliza TODOS los saltos de línea (\r\n, \r solo de Excel/Mac, \n) para que
-    # csv no vea un '\r' dentro de un campo ("new-line character seen in unquoted field").
-    texto = contenido.replace("\r\n", "\n").replace("\r", "\n")
-    return list(csv.DictReader(io.StringIO(texto)))
+    # Normaliza TODOS los saltos de línea (\r\n, \r solo de Excel/Mac, \n) para que csv no
+    # vea un '\r' dentro de un campo ("new-line character seen in unquoted field"), y quita
+    # el BOM inicial que suelen traer los CSV exportados por Excel/Windows.
+    texto = contenido.replace("\r\n", "\n").replace("\r", "\n").lstrip("﻿")
+    # Detecta el separador por la primera línea con contenido (por defecto, coma).
+    primera = next((l for l in texto.split("\n") if l.strip()), "")
+    return list(csv.DictReader(io.StringIO(texto), delimiter=_sep(primera)))
 
 
 def _num(x):
@@ -173,6 +215,18 @@ def _mapa_base(fieldnames):
     return m
 
 
+def _resolver_campos(cols, cfg, requeridos):
+    """Resuelve cada concepto del reporte del SUI al encabezado real presente, probando sus
+    alias (esquema clásico y esquema nuevo). Devuelve ({concepto: encabezado|None}, faltan),
+    donde `faltan` son los conceptos requeridos que ningún alias logró cubrir."""
+    campos, faltan = {}, []
+    for concepto, aliases in cfg.items():
+        campos[concepto] = next((cols[a] for a in aliases if a in cols), None)
+        if campos[concepto] is None and concepto in requeridos:
+            faltan.append(concepto)
+    return campos, faltan
+
+
 def cargar_facturacion_sui(conn, empresa_id, servicio, anio, mes, contenido):
     """Importa el archivo ORIGINAL del SUI (Facturación por suscriptor) y lo agrega por
     clase de uso → carga_mensual_detalle + factor_subsidio. El servicio, año y mes los fija
@@ -184,21 +238,25 @@ def cargar_facturacion_sui(conn, empresa_id, servicio, anio, mes, contenido):
     if not rows:
         return 0, ["el archivo está vacío"]
     cols = _mapa_base(rows[0].keys())
-    cfg = CAMPOS_SUI[serv]
-    falt = [v for v in cfg.values() if v not in cols]
-    if falt:
-        return 0, [f"no se hallaron columnas {falt}; ¿es el reporte de {serv}?"]
+    campos, faltan = _resolver_campos(cols, CAMPOS_SUI[serv], CAMPOS_SUI_REQ)
+    if faltan:
+        etq = {"clase": "clase de uso", "cons": "consumo/vertimiento (m³)",
+               "sub": "consumo subsidiable (m³)", "fcf": "factor subsidio cargo fijo",
+               "fcc": "factor subsidio consumo"}
+        det = ", ".join(etq.get(c, c) for c in faltan)
+        return 0, [f"no se reconoció el reporte de {serv}: faltan columnas de {det}; "
+                   f"verifica que sea el CSV original del SUI (no un Excel .xlsx)"]
     agg = defaultdict(lambda: {"n": 0, "m3": 0.0, "sub": 0.0, "fcf": Counter(), "fcc": Counter()})
     for r in rows:
-        clv = _int(r.get(cols[cfg["clase"]]))
+        clv = _int(r.get(campos["clase"]))
         if clv is None:
             continue
         a = agg[clv]
         a["n"] += 1
-        a["m3"] += _num(r.get(cols[cfg["cons"]])) or 0.0
-        a["sub"] += _num(r.get(cols[cfg["sub"]])) or 0.0
-        fcf = _num(r.get(cols[cfg["fcf"]]))
-        fcc = _num(r.get(cols[cfg["fcc"]]))
+        a["m3"] += _num(r.get(campos["cons"])) or 0.0
+        a["sub"] += _num(r.get(campos["sub"])) or 0.0
+        fcf = _num(r.get(campos["fcf"])) if campos["fcf"] else None
+        fcc = _num(r.get(campos["fcc"])) if campos["fcc"] else None
         if fcf is not None:
             a["fcf"][fcf] += 1
         if fcc is not None:

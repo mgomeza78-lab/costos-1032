@@ -935,14 +935,17 @@ async def cargar_sui_lote(request: Request, eid: int):
         if not emp:
             return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
         for i, arch in enumerate(archivos):
-            if not getattr(arch, "filename", ""):
+            fn = getattr(arch, "filename", "")
+            if not fn:
                 continue
             mes_raw = meses[i] if i < len(meses) else ""
             try:
                 mes = int(mes_raw)
                 assert 1 <= mes <= 12
             except (TypeError, ValueError, AssertionError):
-                errores.append(f"{getattr(arch,'filename','archivo')}:+sin+mes")
+                mes = ingesta.mes_de_nombre(fn)          # respaldo: deducir el mes del nombre
+            if not mes:
+                errores.append(f"{fn}:+sin+mes")
                 continue
             ok, err = ingesta.cargar_facturacion_sui(conn, eid, servicio, anio, mes, _leer_csv(arch))
             if ok:
