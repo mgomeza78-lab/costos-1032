@@ -12,21 +12,24 @@ el analista las agregue (no se pierden ni se cuentan mal).
 """
 import csv
 import io
+import re
 from collections import defaultdict
 
 COMPARABLES_COC = ("COC-1", "COC-2", "COC-3", "COC-4", "COC-5")
 
 
 def cargar_catalogo(contenido):
-    """CSV del catálogo -> dict codigo_norm -> (subcomponente, componente, traslado)."""
+    """CSV del catálogo -> dict codigo_norm -> (subcomponente, componente, traslado).
+    Tolera BOM y encabezados en mayúsculas/espacios; si falta 'codigo_norm' lo deriva de 'codigo'."""
     cat = {}
-    for r in csv.DictReader(io.StringIO(contenido)):
-        cn = (r.get("codigo_norm") or "").strip()
+    for raw in csv.DictReader(io.StringIO((contenido or "").lstrip("﻿"))):
+        r = {(k or "").strip().lstrip("﻿").lower(): (v or "") for k, v in raw.items()}
+        cn = r.get("codigo_norm", "").strip() or re.sub(r"\D", "", r.get("codigo", ""))
         if not cn:
             continue
         cat[cn] = (r.get("subcomponente", "").strip(),
                    r.get("componente", "").strip(),
-                   (r.get("traslado") or "").strip())
+                   r.get("traslado", "").strip())
     return cat
 
 

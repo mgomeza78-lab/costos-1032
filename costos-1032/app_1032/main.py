@@ -1078,6 +1078,100 @@ def _catalogo_path(codigo):
     return d if _os.path.exists(d) else None
 
 
+def _catalogo_default_texto():
+    import os as _os
+    p = _os.path.join(config.BASE_DIR, "catalogos", "catalogo_clasificacion_default.csv")
+    return open(p, encoding="utf-8").read() if _os.path.exists(p) else None
+
+
+def _catalogo_para(conn, eid, codigo):
+    """Catálogo de clasificación a usar: el que subió la empresa (BD) y, si no hay, el de archivo
+    (el específico de la empresa o el por defecto de Las Ceibas). Devuelve el dict de clf o None."""
+    row = conn.execute(text("SELECT csv_texto FROM catalogo_empresa WHERE empresa_id=:e"), {"e": eid}).first()
+    if row and row[0]:
+        return clf.cargar_catalogo(row[0])
+    p = _catalogo_path(codigo)
+    return clf.cargar_catalogo(open(p, encoding="utf-8").read()) if p else None
+
+
+@app.get("/empresa/{eid}/catalogo-plantilla")
+def catalogo_plantilla(request: Request, eid: int):
+    if (r := _need_login(request)):
+        return r
+    txt = _catalogo_default_texto() or "codigo,codigo_norm,nombre,clase,subcomponente,componente,traslado\n"
+    return Response(txt, media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": "attachment; filename=plantilla_catalogo_cuentas.csv"})
+
+
+@app.post("/empresa/{eid}/catalogo-cuentas")
+def catalogo_subir(request: Request, eid: int, archivo: UploadFile = File(...),
+                   next: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    dflt = f"/empresa/{eid}/cargar?fuente=balance"
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
+    raw = archivo.file.read()
+    nom = archivo.filename or "catalogo.csv"
+    try:
+        if nom.lower().endswith((".xlsx", ".xlsm")):
+            import openpyxl, tempfile, csv as _csv, io as _io, os as _os
+            with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tf:
+                tf.write(raw); tmp = tf.name
+            wb = openpyxl.load_workbook(tmp, read_only=True, data_only=True)
+            buf = _io.StringIO(); w = _csv.writer(buf)
+            for row in wb.worksheets[0].iter_rows(values_only=True):
+                w.writerow(["" if c is None else c for c in row])
+            wb.close(); _os.unlink(tmp)
+            texto = buf.getvalue()
+        else:
+            texto = None
+            for enc in ("utf-8-sig", "cp1252", "latin-1"):
+                try:
+                    texto = raw.decode(enc); break
+                except UnicodeDecodeError:
+                    pass
+            texto = texto or raw.decode("latin-1", "replace")
+    except Exception as e:
+        return RedirectResponse(_dest(next, dflt, f"err=No+se+pudo+leer+el+catálogo+({type(e).__name__})"), status_code=303)
+    cat = clf.cargar_catalogo(texto)
+    n = sum(1 for v in cat.values() if v[1])      # cuentas con componente
+    if n < 5:
+        return RedirectResponse(_dest(next, dflt,
+            "err=El+archivo+no+parece+un+catálogo+de+cuentas+(revisa+las+columnas+codigo/componente;+usa+la+plantilla)"),
+            status_code=303)
+    with db.scope_conn(scope_of(user)) as conn:
+        if not conn.execute(text("SELECT 1 FROM empresa WHERE id=:e"), {"e": eid}).first():
+            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        conn.execute(text(
+            "INSERT INTO catalogo_empresa(empresa_id,csv_texto,n_cuentas,nombre_archivo,cargado_por) "
+            "VALUES (:e,:t,:n,:f,:u) ON CONFLICT (empresa_id) DO UPDATE SET "
+            "csv_texto=excluded.csv_texto, n_cuentas=excluded.n_cuentas, "
+            "nombre_archivo=excluded.nombre_archivo, cargado_por=excluded.cargado_por, cargado_en=now()"),
+            {"e": eid, "t": texto, "n": n, "f": nom[:200], "u": user.get("id")})
+    db.audit(scope_of(user), "catalogo_subir", "empresa", eid, f"{nom}: {n} cuentas")
+    return RedirectResponse(_dest(next, dflt, f"msg=Catálogo+cargado+({n}+cuentas)"), status_code=303)
+
+
+@app.post("/empresa/{eid}/catalogo-cuentas/reset")
+def catalogo_reset(request: Request, eid: int, next: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    dflt = f"/empresa/{eid}/cargar?fuente=balance"
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
+    with db.scope_conn(scope_of(user)) as conn:
+        conn.execute(text("DELETE FROM catalogo_empresa WHERE empresa_id=:e"), {"e": eid})
+    db.audit(scope_of(user), "catalogo_reset", "empresa", eid, "vuelve al catálogo por defecto")
+    return RedirectResponse(_dest(next, dflt, "msg=Catálogo+restablecido+al+de+Las+Ceibas+(por+defecto)"), status_code=303)
+
+
 @app.post("/empresa/{eid}/cargar-balance")
 def cargar_balance(request: Request, eid: int, anio: int = Form(...),
                    mes_ini: int = Form(1), mes_fin: int = Form(12), mes: int = Form(None),
@@ -1121,12 +1215,11 @@ def cargar_balance(request: Request, eid: int, anio: int = Form(...),
         emp = conn.execute(text("SELECT codigo FROM empresa WHERE id=:e"), {"e": eid}).mappings().first()
         if not emp:
             return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
-        cat_path = _catalogo_path(emp["codigo"])
-        if not cat_path:
+        catalogo = _catalogo_para(conn, eid, emp["codigo"])
+        if not catalogo:
             return RedirectResponse(
                 _dest(next, dflt, "err=Falta+el+catálogo+de+clasificación+de+esta+empresa"),
                 status_code=303)
-        catalogo = clf.cargar_catalogo(open(cat_path, encoding="utf-8").read())
         sub, comp, sin = clf.clasificar(filas, catalogo)
         nums = clf.numeradores(sub)
         split = rc.split_servicio(conn, eid)
@@ -1644,9 +1737,16 @@ def cargar_info(request: Request, eid: int):
         ajuste_coc = cpart.ajuste_coc(conn, eid)
         servicios_emp = [s for s, on in (("acueducto", emp["presta_ac"]), ("alcantarillado", emp["presta_al"])) if on] or ["acueducto"]
         ccp_fap = {s: ccp.get(conn, eid, s) for s in servicios_emp}
+        cat_row = conn.execute(text(
+            "SELECT n_cuentas, nombre_archivo FROM catalogo_empresa WHERE empresa_id=:e"),
+            {"e": eid}).mappings().first()
+    cat_estado = {"propio": bool(cat_row),
+                  "n": cat_row["n_cuentas"] if cat_row else None,
+                  "nombre": cat_row["nombre_archivo"] if cat_row else None,
+                  "n_default": len(clf.cargar_catalogo(_catalogo_default_texto() or ""))}
     return tpl.TemplateResponse(request, "cargar.html", _ctx(
         request, emp=emp, fuente=fuente, com=com, bal=bal, agua=agua, costos=costos,
-        ajuste_coc=ajuste_coc, ccp_fap=ccp_fap, servicios_emp=servicios_emp,
+        ajuste_coc=ajuste_coc, ccp_fap=ccp_fap, servicios_emp=servicios_emp, cat_estado=cat_estado,
         ivh_opc=ccp.IVH_OPC, met_opc=ccp.MET_OPC,
         meses=ops.MESES, anios_tar=ANIOS_TAR, cat_cp=cpart.CATEGORIAS,
         serv_cp=cpart.SERVICIOS, periodos_carga=per.periodos_cargables(),

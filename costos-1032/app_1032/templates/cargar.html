@@ -96,6 +96,28 @@ de costos. Fuente esperada: balance de prueba a nivel de cuenta (Excel o CSV).</
 <p class="hint">El balance que subas se <b>distribuye en partes iguales</b> entre los meses del rango elegido
 (p. ej. <b>ene–dic = 12 meses</b>, así cargas todo el año de una vez). Para un solo mes, elige el mismo
 mes de inicio y fin.</p>
+
+<h3 class="serv-h">Catálogo de clasificación de cuentas</h3>
+<p class="muted2">El balance se clasifica en CMA/CMO/CMI/CMICT con un <b>catálogo</b> que asigna cada cuenta
+del PUC a su componente.
+{% if cat_estado and cat_estado.propio %}Esta empresa usa un <b>catálogo propio</b>
+({{ cat_estado.n }} cuentas{% if cat_estado.nombre %} · «{{ cat_estado.nombre }}»{% endif %}).{% else %}
+Esta empresa usa el <b>catálogo por defecto</b> (el de Las Ceibas · {{ cat_estado.n_default if cat_estado else '—' }} cuentas).{% endif %}
+Puedes subir el tuyo (tiene prioridad); las cuentas que no figuren quedan «sin clasificar».</p>
+<form method="post" action="/empresa/{{ emp.id }}/catalogo-cuentas" enctype="multipart/form-data" class="up-form">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+  <label>Catálogo de cuentas (CSV o Excel) <input type="file" name="archivo" accept=".csv,.xlsx,.xlsm" required></label>
+  <button class="btn" type="submit">Subir catálogo</button>
+</form>
+<div class="hint" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+  <a href="/empresa/{{ emp.id }}/catalogo-plantilla">Descargar plantilla</a>
+  <span>(el catálogo por defecto, para editarlo y volver a subirlo)</span>
+  {% if cat_estado and cat_estado.propio %}
+  <form method="post" action="/empresa/{{ emp.id }}/catalogo-cuentas/reset" style="display:inline" onsubmit="return confirm('¿Volver al catálogo por defecto (Las Ceibas)?')">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+    <button class="btn-link" type="submit">Volver al catálogo por defecto</button></form>
+  {% endif %}
+</div>
 {% endif %}
 <h3 class="serv-h">Cargado</h3>
 {% if bal %}
