@@ -1068,9 +1068,14 @@ def recalcular_mes(request: Request, eid: int, csrf: str = Form("")):
 
 def _catalogo_path(codigo):
     import os as _os
-    nombre = f"catalogo_clasificacion_{codigo.lower().replace('_','')}.csv"
-    p = _os.path.join(config.BASE_DIR, "catalogos", nombre)
-    return p if _os.path.exists(p) else None
+    base = _os.path.join(config.BASE_DIR, "catalogos")
+    p = _os.path.join(base, f"catalogo_clasificacion_{codigo.lower().replace('_','')}.csv")
+    if _os.path.exists(p):
+        return p
+    # Respaldo: catálogo de clasificación por defecto (PUC estándar de acueducto/alcantarillado)
+    # cuando la empresa aún no tiene el suyo; las cuentas no mapeadas quedan como «sin clasificar».
+    d = _os.path.join(base, "catalogo_clasificacion_default.csv")
+    return d if _os.path.exists(d) else None
 
 
 @app.post("/empresa/{eid}/cargar-balance")
