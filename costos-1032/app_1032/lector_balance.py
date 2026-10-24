@@ -58,12 +58,17 @@ def _num(v):
 def _detectar(rows, perfil=None):
     """Devuelve (fila_encabezado, {campo: idx_columna})."""
     perfil = perfil or {}
-    # 1) fila de encabezado: la primera con 'nombre' y algún 'saldo'
+    # 1) fila de encabezado: la primera con 'nombre'/'descripcion' y alguna columna de
+    #    valor — 'saldo', o movimientos 'debito'/'credito', o saldo partido 'debe'/'haber'
+    #    (p. ej. AMB exporta CODIGO | NOMBRE | DEBITO | CREDITO | DEBE | HABER, sin 'saldo').
     hr = None
     for i, r in enumerate(rows[:25]):
         etiquetas = [_sinacentos(c) for c in r]
         txt = " | ".join(etiquetas)
-        if any(a in txt for a in ["nombre", "descripcion"]) and "saldo" in txt:
+        tiene_nombre = any(a in txt for a in ["nombre", "descripcion"])
+        tiene_valor = ("saldo" in txt or "debito" in txt or "credito" in txt
+                       or ("debe" in txt and "haber" in txt))
+        if tiene_nombre and tiene_valor:
             hr = i
             break
     if hr is None:
