@@ -304,6 +304,18 @@ def cargar_facturacion_sui(conn, empresa_id, servicio, anio, mes, contenido):
         fcc = a["fcc"].most_common(1)[0][0] if a["fcc"] else None
         _ins(conn, sql_f, {"e": empresa_id, "v": anio, "s": serv, "c": clase, "fcf": fcf, "fc": fcc})
         ok += 1
+    # Resumen del mes en carga_mensual (lo que leen Validación, Resultados y el listado de
+    # cargados): total de suscriptores y m³ facturados agregando todas las clases de uso.
+    if ok:
+        tot_susc = sum(a["n"] for a in agg.values())
+        tot_m3 = sum(a["m3"] for a in agg.values())
+        _ins(conn,
+             "INSERT INTO carga_mensual(empresa_id,anio,mes,servicio,suscriptores,m3_facturados,origen) "
+             "VALUES (:e,:a,:m,:s,:su,:m3,'SUI') "
+             "ON CONFLICT (empresa_id,anio,mes,servicio) DO UPDATE SET "
+             "suscriptores=excluded.suscriptores, m3_facturados=excluded.m3_facturados, "
+             "origen=excluded.origen, cargado_en=now()",
+             {"e": empresa_id, "a": anio, "m": mes, "s": serv, "su": tot_susc, "m3": tot_m3})
     return ok, err
 
 

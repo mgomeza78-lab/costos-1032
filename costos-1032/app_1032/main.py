@@ -939,6 +939,13 @@ async def cargar_sui_lote(request: Request, eid: int):
         emp = conn.execute(text("SELECT id FROM empresa WHERE id=:e"), {"e": eid}).mappings().first()
         if not emp:
             return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        # Meses que YA estaban cargados para este año y servicio (para avisar sobreescritura).
+        _sv = {"AC": "acueducto", "AL": "alcantarillado", "ACUEDUCTO": "acueducto",
+               "ALCANTARILLADO": "alcantarillado"}.get((servicio or "").strip().upper(), servicio)
+        ya_cargados = {m for (m,) in conn.execute(text(
+            "SELECT DISTINCT mes FROM carga_mensual_detalle "
+            "WHERE empresa_id=:e AND anio=:a AND servicio=:s"),
+            {"e": eid, "a": anio, "s": _sv}).all()}
         for i, arch in enumerate(archivos):
             fn = getattr(arch, "filename", "")
             if not fn:
@@ -963,6 +970,10 @@ async def cargar_sui_lote(request: Request, eid: int):
              f"{servicio} {anio}: {n_ok} meses, {clases} clases, {len(errores)} errores")
     lista = "+(" + ",+".join(ops.MESES.get(m, str(m)) for m in sorted(set(meses_ok))) + ")" if meses_ok else ""
     aviso = f"msg=SUI+{servicio}+{anio}:+{n_ok}+mes(es)+cargados{lista}+·+{clases}+clases"
+    rec = sorted(set(meses_ok) & ya_cargados)
+    if rec:
+        aviso += (";+⚠+ya+estaban+cargados+y+se+ACTUALIZARON:+"
+                  + ",+".join(ops.MESES.get(m, str(m)) for m in rec))
     if errores:
         aviso += ";+fallaron:+" + ",+".join(errores[:4]).replace(" ", "+")
     return RedirectResponse(_dest(nxt, nxt, aviso), status_code=303)
