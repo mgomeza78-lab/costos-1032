@@ -48,18 +48,31 @@
         </ol>
       </details>
 
-      <a class="rail-sec link-sec {{ 'active' if '/actualizacion' in p }}" href="/empresa/{{ emp.id }}/actualizacion">Actualización de costos</a>
-
-      {% set en_res = p == '/empresa/' ~ emp.id|string or '/ccp' in p or '/evolucion' in p or '/simulador' in p or '/suficiencia' in p or '/subsidios' in p %}
+      {% set en_res = p == '/empresa/' ~ emp.id|string or '/resultados' in p or '/ccp' in p or '/evolucion' in p or '/simulador' in p or '/suficiencia' in p or '/subsidios' in p %}
       <details class="rail-group" {{ 'open' if en_res }}>
         <summary>Resultados</summary>
         <ol class="rail-nav nonum">
-          <li><a class="link {{ 'active' if '/ccp' in p }}" href="/empresa/{{ emp.id }}/ccp">CCP y pérdidas</a></li>
           <li><a class="link {{ 'active' if p == '/empresa/' ~ emp.id|string }}" href="/empresa/{{ emp.id }}">Costos de referencia actuales</a></li>
+          <li><a class="link {{ 'active' if '/resultados' in p }}" href="/empresa/{{ emp.id }}/resultados">Resultados por año tarifario</a></li>
+          <li><a class="link {{ 'active' if '/ccp' in p }}" href="/empresa/{{ emp.id }}/ccp">CCP y pérdidas</a></li>
           <li><a class="link {{ 'active' if '/evolucion' in p }}" href="/empresa/{{ emp.id }}/evolucion">Evolución</a></li>
           <li><a class="link {{ 'active' if '/simulador' in p }}" href="/empresa/{{ emp.id }}/simulador">Simuladores tarifarios</a></li>
           <li><a class="link {{ 'active' if '/suficiencia' in p }}" href="/empresa/{{ emp.id }}/suficiencia">Suficiencia financiera</a></li>
           <li><a class="link {{ 'active' if '/subsidios' in p }}" href="/empresa/{{ emp.id }}/subsidios">Subsidios y contribuciones</a></li>
+        </ol>
+      </details>
+
+      <details class="rail-group" {{ 'open' if '/actualizacion' in p }}>
+        <summary>Actualización</summary>
+        <ol class="rail-nav nonum">
+          <li><a class="link {{ 'active' if '/actualizacion' in p }}" href="/empresa/{{ emp.id }}/actualizacion">Actualización por índices</a></li>
+        </ol>
+      </details>
+
+      <details class="rail-group" {{ 'open' if '/aprobaciones' in p }}>
+        <summary>Aprobaciones</summary>
+        <ol class="rail-nav nonum">
+          <li><a class="link {{ 'active' if '/aprobaciones' in p }}" href="/empresa/{{ emp.id }}/aprobaciones">Aprobaciones de costos</a></li>
         </ol>
       </details>
     {% else %}

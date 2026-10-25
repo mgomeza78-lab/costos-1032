@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Aprobaciones · {{ emp.nombre }}{% endblock %}
+{% block body %}
+<div class="page-head">
+  <a class="back" href="/empresa/{{ emp.id }}">← {{ emp.nombre }}</a>
+  <h1>Aprobaciones de costos de referencia</h1>
+  <p class="sub">Registra, por <b>año tarifario</b>, el acto administrativo con que se aprobaron los
+  costos económicos de referencia y adjunta su soporte documental (resolución, oficio, acta, etc.).</p>
+</div>
+
+{% if puede %}
+<h2 class="serv-h">Registrar una aprobación</h2>
+<form method="post" action="/empresa/{{ emp.id }}/aprobaciones/nueva" class="form-grid">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <label>Año tarifario <input type="number" name="anio_tarifario" min="2024" max="2100" value="2026" required style="width:100px"></label>
+  <label>Acto administrativo / resolución <input name="acto_administrativo" placeholder="p. ej. Resolución 123 de 2026" style="width:260px"></label>
+  <label>Fecha de aprobación <input type="date" name="fecha_aprobacion"></label>
+  <label class="wide">Observación <input name="observacion" placeholder="opcional"></label>
+  <button class="btn primary" type="submit">Registrar</button>
+</form>
+{% endif %}
+
+<h2 class="serv-h">Aprobaciones registradas</h2>
+{% if actos %}
+{% for a in actos %}
+<div class="card-aprob">
+  <div class="aprob-head">
+    <b>{{ anios_tar.get(a.anio_tarifario, 'Año tarifario ' ~ a.anio_tarifario) }}</b>
+    · {{ a.acto_administrativo or 'sin acto registrado' }}
+    {% if a.fecha_aprobacion %} · {{ a.fecha_aprobacion }}{% endif %}
+    {% if puede %}
+    <form method="post" action="/empresa/{{ emp.id }}/aprobaciones/{{ a.id }}/eliminar" style="display:inline;float:right"
+          onsubmit="return confirm('¿Eliminar esta aprobación y sus soportes? No se puede deshacer.')">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <button class="btn-link" type="submit">eliminar</button></form>
+    {% endif %}
+  </div>
+  {% if a.observacion %}<p class="muted2">{{ a.observacion }}</p>{% endif %}
+  <table class="tabla compact">
+    <tbody>
+      {% for f in archivos.get(a.id, []) %}
+      <tr>
+        <td><a href="/empresa/{{ emp.id }}/aprobaciones/archivo/{{ f.id }}">{{ f.nombre }}</a></td>
+        <td class="num">{{ (f.tamano/1024)|round|int if f.tamano else 0 }} KB</td>
+        <td class="c">
+          {% if puede %}<form method="post" action="/empresa/{{ emp.id }}/aprobaciones/archivo/{{ f.id }}/eliminar" style="display:inline"
+                onsubmit="return confirm('¿Eliminar este soporte?')">
+            <input type="hidden" name="csrf" value="{{ csrf_token }}">
+            <button class="btn-link" type="submit">eliminar</button></form>{% endif %}
+        </td></tr>
+      {% else %}
+      <tr><td class="muted2" colspan="3">Sin soportes adjuntos todavía.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if puede %}
+  <form method="post" action="/empresa/{{ emp.id }}/aprobaciones/{{ a.id }}/archivo" enctype="multipart/form-data" class="up-form">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <label>Adjuntar soporte (PDF, Excel, imagen…) <input type="file" name="archivo" required></label>
+    <button class="btn" type="submit">Subir soporte</button>
+  </form>
+  {% endif %}
+</div>
+{% endfor %}
+{% else %}
+<p class="empty">Aún no hay aprobaciones registradas.</p>
+{% endif %}
+
+<style>
+.card-aprob{border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;margin:10px 0;background:var(--paper)}
+.aprob-head{font-size:14px;margin-bottom:6px}
+</style>
+{% endblock %}

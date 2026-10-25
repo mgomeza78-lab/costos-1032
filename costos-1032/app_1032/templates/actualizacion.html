@@ -10,9 +10,21 @@
   cada una con su propio gatillo. La tarifa vigente = cargo fijo (CMA) + cargo por consumo (CMO+CMI+CMICT).</p>
 </div>
 
+{% if puede_procesar %}
+<div class="actions">
+  <form method="post" action="/empresa/{{ emp.id }}/procesar">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <input type="hidden" name="next" value="/empresa/{{ emp.id }}/actualizacion">
+    <button class="btn primary" type="submit">Procesar actualización por índices</button>
+  </form>
+  <p class="hint" style="margin-top:6px">Aplica la indexación con los IPC/IPCs cargados: actualiza la tarifa
+  de cada mes cuyo gatillo del 3 % se haya alcanzado y recalcula la factura por estrato.</p>
+</div>
+{% endif %}
+
 {% if not resumen %}
-<p class="empty">Aún no hay tarifa vigente calculada. Cargue el IPC y procese la indexación en
-<a href="/empresa/{{ emp.id }}/mensual">Cargar información</a>.</p>
+<p class="empty">Aún no hay tarifa vigente calculada. Carga el IPC (menú <b>IPC / indexación</b>) y usa
+<b>«Procesar actualización por índices»</b> arriba{% if not puede_procesar %} (requiere permiso de indexación){% endif %}.</p>
 {% else %}
 
 {% macro alerta(var, gatillo) %}

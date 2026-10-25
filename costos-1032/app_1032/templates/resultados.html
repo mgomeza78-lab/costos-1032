@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Resultados por año · {{ emp.nombre }}{% endblock %}
+{% block body %}
+<div class="page-head">
+  <a class="back" href="/empresa/{{ emp.id }}">← {{ emp.nombre }}</a>
+  <h1>Costos de referencia por año tarifario</h1>
+  <p class="sub">Variables por componente —<b>CMA, CMO, CMI, CMICT</b>— y el precio resultante
+  (<b>cargo fijo</b> y <b>cargo por consumo</b>) <b>a diciembre</b> de cada año tarifario. La foto de
+  los componentes se guarda en cada <b>recálculo</b>; el precio a diciembre refleja la indexación del año.</p>
+</div>
+
+{% for d in datos %}
+<h2 class="serv-h">{{ d.label }}</h2>
+{% if d.componentes or d.precio %}
+<table class="tabla">
+  <thead><tr><th>Componente</th>
+    {% for s in servicios %}<th class="r">{{ s|capitalize }}</th>{% endfor %}
+    <th>Unidad</th><th>Artículo Res. 1032</th></tr></thead>
+  <tbody>
+    {% for c in d.componentes %}
+    <tr><td class="comp">{{ c }}</td>
+      {% for s in servicios %}
+        {% set cell = d.valores.get(s, {}).get(c) %}
+        <td class="r num">{{ cell.valor|valor(cell.unidad) if cell and cell.valor is not none else '—' }}</td>
+      {% endfor %}
+      <td>{{ d.meta.get(c, {}).get('unidad') or '' }}</td>
+      <td class="art">{{ d.meta.get(c, {}).get('articulo') or '' }}</td>
+    </tr>
+    {% endfor %}
+    {% if d.precio %}
+    <tr class="fila-precio"><td class="comp"><b>Cargo fijo · diciembre</b></td>
+      {% for s in servicios %}
+        {% set pr = d.precio.get(s, {}) %}
+        <td class="r num">{{ pr.get('cf')|valor('$/susc·mes') if pr.get('cf') is not none else '—' }}</td>
+      {% endfor %}
+      <td>$/susc·mes</td><td class="art">Precio a diciembre</td></tr>
+    <tr class="fila-precio"><td class="comp"><b>Cargo por consumo · diciembre</b></td>
+      {% for s in servicios %}
+        {% set pr = d.precio.get(s, {}) %}
+        <td class="r num">{{ pr.get('cc')|valor('$/m³') if pr.get('cc') is not none else '—' }}</td>
+      {% endfor %}
+      <td>$/m³</td><td class="art">Precio a diciembre</td></tr>
+    {% endif %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">Aún no hay costos calculados para este año.
+{% if rbac.can(user,'recalcular') %}Use «Recalcular» en la ficha de la empresa.{% endif %}</p>
+{% endif %}
+{% endfor %}
+
+{% if not datos %}
+<p class="empty">Aún no hay resultados. Cargue la información y use «Recalcular».</p>
+{% endif %}
+
+<p class="hint">Cada <b>recálculo</b> guarda la foto de los componentes del año tarifario correspondiente.
+El período de inicio (jul–dic 2026) se calcula con la línea base 2024–2025; los años tarifarios
+siguientes se agregan a medida que se realizan los recálculos. El detalle cuenta por cuenta está en
+los costos de referencia actuales y en el modelo de memorias de cálculo.</p>
+{% endblock %}
