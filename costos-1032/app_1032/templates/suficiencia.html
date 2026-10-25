@@ -68,5 +68,104 @@ recálculo (a más tardar 31-may-2027). <b>CCP</b> = consumo corregido por pérd
 numeradores contables base (dic-2025) clasificados a CMO y CMICT, respectivamente (arts. 2.1.2.1.3.4.1 y
 2.1.2.1.3.6.1). «Pendiente» indica que la cuenta aún no está clasificada a ese subcomponente en el
 catálogo de la empresa.</p>
-{% endif %}
+
+{% if sim %}
+<h2 class="serv-h">Simulador de mejoras · efecto en costos de referencia e ingresos</h2>
+<p class="sub">Mueve los deslizadores para ver, por servicio, el efecto de mejorar la eficiencia sobre los
+costos económicos de referencia (cargo por consumo) y los ingresos estimados. Modelo: al bajar el IPUF baja
+la producción (AP) y con ella la energía y los insumos; el CCP de tarifa usa mín(pérdidas, IPUF*·N); el CMA
+(cargo fijo) y el CMI se mantienen salvo la palanca propia. Es una herramienta de análisis: no modifica los
+resultados del estudio.</p>
+
+<div id="sim-root"></div>
+<script id="sim-data" type="application/json">{{ sim_json|safe }}</script>
+<script>
+(function(){
+  const DATA = JSON.parse(document.getElementById('sim-data').textContent);
+  const root = document.getElementById('sim-root');
+  const fmt = (x,d)=>{ d=(d==null?2:d); return (x==null||isNaN(x))?'—':Number(x).toLocaleString('es-CO',{minimumFractionDigits:d,maximumFractionDigits:d}); };
+  const pct = x=> (x>=0?'+':'')+(x*100).toFixed(1)+' %';
+  DATA.forEach(function(b){
+    const es_ac = b.es_ac;
+    const af_mes = b.meses? b.af/b.meses : 0;
+    const ipuf_real = (es_ac && b.n && b.meses)? (b.ap-b.af)/(b.n*b.meses) : null;
+    const card = document.createElement('div');
+    card.className='sim-serv';
+    card.innerHTML =
+      '<h3>'+b.servicio+'</h3><div class="sim-ctrls">'+
+      (es_ac? '<label>IPUF — pérdidas (m³/susc·mes): <b class="v-ipuf"></b><input type="range" class="s-ipuf" min="2" max="'+(ipuf_real+0.5).toFixed(1)+'" step="0.1" value="'+ipuf_real.toFixed(2)+'"></label>':'')+
+      '<label>Eficiencia energética (−% CE): <b class="v-ene"></b><input type="range" class="s-ene" min="0" max="30" step="1" value="0"></label>'+
+      '<label>Eficiencia insumos químicos (−% CIQ): <b class="v-ciq"></b><input type="range" class="s-ciq" min="0" max="30" step="1" value="0"></label>'+
+      '<label>Inversiones / CMI (Δ%): <b class="v-cmi"></b><input type="range" class="s-cmi" min="-30" max="10" step="1" value="0"></label>'+
+      '</div><table class="tabla"><thead><tr><th>Variable</th><th class="r">Base</th><th class="r">Simulado</th><th class="r">Δ</th></tr></thead><tbody class="sim-out"></tbody></table>';
+    root.appendChild(card);
+    const q = c=>card.querySelector(c);
+    const sIpuf=q('.s-ipuf'), sEne=q('.s-ene'), sCiq=q('.s-ciq'), sCmi=q('.s-cmi'), out=q('.sim-out');
+    function rowDelta(lbl,base,sim,unit,d,good_down){
+      d=(d==null?2:d);
+      const delta=sim-base;
+      const cls = Math.abs(delta)<1e-9?'' : ((delta<0)===good_down?'pos':'neg');
+      return '<tr><td class="comp">'+lbl+'</td><td class="num">'+fmt(base,d)+unit+'</td><td class="num">'+fmt(sim,d)+unit+'</td><td class="num '+cls+'">'+(delta>=0?'+':'')+fmt(delta,d)+'</td></tr>';
+    }
+    function subRow(lbl,base,sim){
+      return '<tr class="sub-row"><td class="comp">'+lbl+'</td><td class="num">'+fmt(base,2)+'</td><td class="num">'+fmt(sim,2)+'</td><td class="num">'+((sim-base)>=0?'+':'')+fmt(sim-base,2)+'</td></tr>';
+    }
+    function recompute(){
+      const e=(+sEne.value)/100, qy=(+sCiq.value)/100, dcmi=(+sCmi.value)/100;
+      let ipuf_new=ipuf_real, ccp_new=b.ccp_base, rho=1;
+      if(es_ac){
+        ipuf_new=+sIpuf.value;
+        const perd_new=ipuf_new*b.n*b.meses;
+        const cap=b.ipuf_est*b.n*b.meses;
+        ccp_new=b.af+Math.min(perd_new,cap);
+        rho = b.ap>0? (b.af+perd_new)/b.ap : 1;
+      }
+      const ce_new=b.ce*rho*(1-e), ciq_new=b.ciq*rho*(1-qy);
+      const S_new=b.coce+ce_new+ciq_new+b.coir;
+      const cmo_new = (b.s>0 && ccp_new>0)? b.cmo*(S_new/b.s)*(b.ccp_base/ccp_new) : b.cmo;
+      const cmict_new = (es_ac && ccp_new>0)? b.cmict*(b.ccp_base/ccp_new) : b.cmict;
+      const cmi_new=b.cmi*(1+dcmi);
+      const cc_new=cmo_new+cmi_new+cmict_new;
+      const ing_base=b.cargo_fijo*b.n+b.cargo_consumo*af_mes;
+      const ing_new =b.cargo_fijo*b.n+cc_new*af_mes;
+      const ahorro=(b.ce-ce_new)+(b.ciq-ciq_new);
+      q('.v-ene').textContent=(+sEne.value)+' %';
+      q('.v-ciq').textContent=(+sCiq.value)+' %';
+      q('.v-cmi').textContent=((+sCmi.value)>=0?'+':'')+(+sCmi.value)+' %';
+      if(es_ac) q('.v-ipuf').textContent=ipuf_new.toFixed(2);
+      out.innerHTML =
+        rowDelta('Cargo fijo (CMA)', b.cargo_fijo, b.cargo_fijo, ' $/susc·mes', 2, true) +
+        rowDelta('Cargo por consumo', b.cargo_consumo, cc_new, ' $/m³', 2, true) +
+        subRow('· CMO', b.cmo, cmo_new) + subRow('· CMI', b.cmi, cmi_new) + subRow('· CMICT', b.cmict, cmict_new) +
+        rowDelta('Ingreso mensual (a costo de referencia)', ing_base, ing_new, ' $', 0, false) +
+        (es_ac? rowDelta('CCP del período (m³)', b.ccp_base, ccp_new, '', 0, false):'') +
+        '<tr><td class="comp">Ahorro reconocido (energía+insumos)</td><td class="num">—</td><td class="num pos">'+fmt(ahorro,0)+' $</td><td class="num pos">'+((b.ce+b.ciq)>0? pct(-ahorro/(b.ce+b.ciq)) : '—')+'</td></tr>';
+    }
+    [sIpuf,sEne,sCiq,sCmi].forEach(function(el){ if(el) el.addEventListener('input', recompute); });
+    recompute();
+  });
+})();
+</script>
+<p class="hint">El simulador aplica las fórmulas del estudio por razones sobre el resultado base, de modo que
+en la posición inicial reproduce exactamente los costos de referencia vigentes. «Ingreso mensual» = cargo
+fijo × suscriptores + cargo por consumo × m³ facturados del mes. «Ahorro reconocido» = reducción del costo
+base reconocido de energía e insumos (pesos base del estudio). Verde indica baja de costo; en ingresos el
+color solo señala la dirección del cambio.</p>
+<p class="hint"><b>Lectura clave.</b> Bajar el IPUF por debajo del IPUF* reduce el CCP (base de liquidación,
+que reconoce pérdidas solo hasta el estándar), lo que puede <b>subir el cargo unitario</b> aunque bajen la
+producción y los costos totales de energía e insumos. El beneficio del prestador se aprecia comparando el
+<b>ingreso</b> (sube si el cargo unitario sube con m³ facturados constantes) frente al <b>ahorro reconocido</b>
+en costos; mejorar la eficiencia energética o de insumos, en cambio, baja el costo sin contraer el CCP.</p>
+
+<style>
+.sim-serv{border:1px solid var(--line);border-radius:var(--r);padding:10px 14px;margin:12px 0;background:var(--paper)}
+.sim-serv > h3{font-family:var(--head);font-size:15px;color:var(--teal-deep);margin:2px 0 8px}
+.sim-ctrls{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px 18px;margin-bottom:10px}
+.sim-ctrls label{font-size:13px;color:var(--ink)}
+.sim-ctrls input[type=range]{width:100%;margin-top:4px}
+.sim-out .sub-row td{color:var(--muted);font-size:12px;padding-top:0;padding-bottom:0}
+.num.pos{color:#1f8a70}.num.neg{color:#b03a2e}
+</style>
+{% endif %}{# sim #}
+{% endif %}{# not serv / else #}
 {% endblock %}

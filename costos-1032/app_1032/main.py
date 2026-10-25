@@ -12,6 +12,7 @@ política de contraseñas y auto-servicio de contraseña/MFA.
 """
 import os
 import re
+import json
 from datetime import datetime, timezone
 from fastapi import FastAPI, Request, Form, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
@@ -2171,6 +2172,27 @@ def suficiencia(request: Request, eid: int):
         comp = {}
         for r in comp_rows:
             comp.setdefault(r["servicio"], {})[r["concepto"]] = r
+        # (4) Insumos del simulador de oferta: numeradores del CMO, resultados base y drivers
+        num_all = {}
+        for r in conn.execute(text(
+                "SELECT servicio, concepto, SUM(valor) AS v FROM numerador_mensual "
+                "WHERE empresa_id=:e AND concepto IN ('COCe','CE','CIQ','COIR') GROUP BY servicio, concepto"),
+                {"e": eid}).mappings().all():
+            num_all.setdefault(r["servicio"], {})[r["concepto"]] = float(r["v"] or 0.0)
+        rc_comp = {}
+        for r in conn.execute(text(
+                "SELECT servicio, componente, valor FROM resultado_componente WHERE empresa_id=:e "
+                "AND componente IN ('CMA','CMO','CMI','CMICT','CARGO_FIJO','CARGO_CONSUMO')"),
+                {"e": eid}).mappings().all():
+            rc_comp.setdefault(r["servicio"], {})[r["componente"]] = (
+                float(r["valor"]) if r["valor"] is not None else None)
+        drv = {}
+        for r in conn.execute(text(
+                "SELECT servicio, AVG(n_mes) AS n, SUM(af_mes) AS af, SUM(ap_mes) AS ap, "
+                "SUM(ccp_mes) AS ccp, COUNT(*) AS meses FROM costo_referencia_mensual "
+                "WHERE empresa_id=:e GROUP BY servicio"), {"e": eid}).mappings().all():
+            drv[r["servicio"]] = r
+        ipuf_est = rc.ipuf_estrella(conn, eid)
         servicios_emp = [s for s, on in (("acueducto", emp["presta_ac"]),
                                          ("alcantarillado", emp["presta_al"])) if on] or ["acueducto"]
     serv = []
@@ -2204,8 +2226,29 @@ def suficiencia(request: Request, eid: int):
             "tasa_retributiva": _num(ta["v"]) if ta else None,
             "ta_anio": ta["anio"] if ta else None,
         })
+    # Simulador de oferta: baseline por servicio para recálculo en vivo (JS)
+    sim = []
+    for s in servicios_emp:
+        rcx = rc_comp.get(s, {}); d = drv.get(s); nums = num_all.get(s, {})
+        if not d or rcx.get("CMO") is None or rcx.get("CARGO_CONSUMO") is None:
+            continue
+        ap_v = float(d["ap"] or 0.0)
+        coce = nums.get("COCe", 0.0); ce_v = nums.get("CE", 0.0)
+        ciq = nums.get("CIQ", 0.0); coir = nums.get("COIR", 0.0)
+        sim.append({
+            "servicio": s, "es_ac": ap_v > 0,
+            "n": float(d["n"] or 0.0), "af": float(d["af"] or 0.0), "ap": ap_v,
+            "meses": int(d["meses"] or 0), "ipuf_est": float(ipuf_est or 0.0),
+            "ccp_base": float(d["ccp"] or 0.0),
+            "cma": rcx.get("CMA"), "cmo": rcx.get("CMO"), "cmi": rcx.get("CMI") or 0.0,
+            "cmict": rcx.get("CMICT") or 0.0,
+            "cargo_fijo": rcx.get("CARGO_FIJO") if rcx.get("CARGO_FIJO") is not None else rcx.get("CMA"),
+            "cargo_consumo": rcx.get("CARGO_CONSUMO"),
+            "coce": coce, "ce": ce_v, "ciq": ciq, "coir": coir, "s": coce + ce_v + ciq + coir,
+        })
     return tpl.TemplateResponse(request, "suficiencia.html", _ctx(
-        request, emp=emp, serv=serv, tot_ing=tot_ing, meses=ops.MESES))
+        request, emp=emp, serv=serv, tot_ing=tot_ing, meses=ops.MESES,
+        sim=sim, sim_json=json.dumps(sim)))
 
 
 # ------------------------------------------------------------------ Menú único «Cargar información»
