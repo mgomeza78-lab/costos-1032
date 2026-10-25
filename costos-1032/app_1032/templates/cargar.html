@@ -64,6 +64,24 @@ el nombre de cada archivo y lo puedes corregir antes de cargar. Reconoce los <b>
   <div class="wide" id="suiRows" style="margin:4px 0"></div>
   <button class="btn primary" type="submit">Cargar los meses seleccionados</button>
 </form>
+
+<details style="margin-top:10px">
+  <summary class="muted2" style="cursor:pointer">… o ingresar los totales manualmente (contingencia, sin archivo)</summary>
+  <p class="muted2" style="margin-top:8px">Úsalo solo si no tienes el reporte del SUI de ese mes (p. ej. un archivo
+  dañado). Guarda los <b>totales del mes</b> —suscriptores y m³ facturados— en el resumen; esto alimenta
+  Validación y Resultados, pero <b>no genera el detalle por estrato</b> (sin desagregación por clase ni
+  subsidios). Cuando consigas el archivo del SUI, cárgalo y reemplazará al manual con el detalle completo.</p>
+  <form method="post" action="/empresa/{{ emp.id }}/carga" class="form-grid">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+    <input type="hidden" name="origen" value="manual">
+    {{ periodo_anio() }}
+    <label>Mes <select name="mes">{% for m in range(1,13) %}<option value="{{ m }}">{{ meses.get(m,m) }}</option>{% endfor %}</select></label>
+    <label>Servicio <select name="servicio">{{ servopts() }}</select></label>
+    <label>Suscriptores <input type="number" name="suscriptores" min="0" step="1" required style="width:130px"></label>
+    <label>m³ facturados <input type="number" name="m3" min="0" step="any" required style="width:140px"></label>
+    <button class="btn" type="submit">Guardar manual</button>
+  </form>
+</details>
 {% endif %}
 <h3 class="serv-h">Cargado</h3>
 {% if com %}

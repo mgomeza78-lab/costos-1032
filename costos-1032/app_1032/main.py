@@ -433,7 +433,8 @@ def empresa_nueva_form(request: Request):
 def empresa_nueva_post(request: Request, codigo: str = Form(...), nombre: str = Form(""),
                        suscriptores: str = Form(""), codigo_sui: str = Form(""),
                        fecha_688: str = Form(""), fecha_1032: str = Form(""),
-                       aps_items: list[str] = Form([], alias="aps"), csrf: str = Form("")):
+                       aps_items: list[str] = Form([], alias="aps"), csrf: str = Form(""),
+                       catalogo: UploadFile | None = File(None)):
     if (r := _need_login(request)):
         return r
     if (bad := _bad_csrf(request, csrf)):
@@ -441,6 +442,20 @@ def empresa_nueva_post(request: Request, codigo: str = Form(...), nombre: str = 
     user = session_user(request)
     if not rbac.can(user, "crear_empresa"):
         return RedirectResponse("/panel?err=No+autorizado", status_code=303)
+
+    # Catálogo de cuentas opcional al crear. Si no se sube uno válido, la empresa usa el
+    # catálogo consolidado por defecto (y se puede subir/editar luego en la pestaña Balance).
+    cat_texto, cat_n, cat_nom = None, 0, ""
+    if catalogo is not None and (getattr(catalogo, "filename", "") or "").strip():
+        try:
+            _raw = catalogo.file.read()
+            if _raw:
+                _txt = _catalogo_texto_desde_archivo(_raw, catalogo.filename)
+                _n = sum(1 for v in clf.cargar_catalogo(_txt).values() if v[1])
+                if _n >= 5:
+                    cat_texto, cat_n, cat_nom = _txt, _n, (catalogo.filename or "catalogo")[:200]
+        except Exception:
+            cat_texto = None
 
     def _i(x):
         d = "".join(ch for ch in (x or "") if ch.isdigit())
@@ -495,10 +510,18 @@ def empresa_nueva_post(request: Request, codigo: str = Form(...), nombre: str = 
                     {"c": pares[0][0]}).scalar()
                 if prim:
                     conn.execute(text("UPDATE empresa SET municipio=:m WHERE id=:e"), {"m": prim, "e": eid})
+            if cat_texto:
+                conn.execute(text(
+                    "INSERT INTO catalogo_empresa(empresa_id,csv_texto,n_cuentas,nombre_archivo,cargado_por) "
+                    "VALUES (:e,:t,:n,:f,:u) ON CONFLICT (empresa_id) DO UPDATE SET "
+                    "csv_texto=excluded.csv_texto, n_cuentas=excluded.n_cuentas, "
+                    "nombre_archivo=excluded.nombre_archivo, cargado_por=excluded.cargado_por, cargado_en=now()"),
+                    {"e": eid, "t": cat_texto, "n": cat_n, "f": cat_nom, "u": user.get("user_id")})
     except Exception as e:
         return RedirectResponse(f"/empresa-nueva?err=No+se+pudo+crear+({type(e).__name__})", status_code=303)
     db.audit(scope_of(user), "crear_empresa", "empresa", None, codigo)
-    return RedirectResponse("/panel?msg=Empresa+creada:+" + codigo, status_code=303)
+    cat_msg = f"+·+catálogo+propio+({cat_n}+cuentas)" if cat_texto else "+·+catálogo+por+defecto"
+    return RedirectResponse("/panel?msg=Empresa+creada:+" + codigo + cat_msg, status_code=303)
 
 
 # ------------------------------------------------------------------ editar empresa (admin + analista)
@@ -1089,6 +1112,30 @@ def _catalogo_path(codigo):
     return d if _os.path.exists(d) else None
 
 
+def _catalogo_texto_desde_archivo(raw, nombre):
+    """Bytes de un catálogo (CSV o Excel) -> texto CSV. Convierte .xlsx/.xlsm con openpyxl y
+    decodifica el CSV probando varias codificaciones. Lanza excepción solo si no se puede leer."""
+    if (nombre or "").lower().endswith((".xlsx", ".xlsm")):
+        import openpyxl, tempfile, csv as _csv, io as _io, os as _os
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tf:
+            tf.write(raw); tmp = tf.name
+        try:
+            wb = openpyxl.load_workbook(tmp, read_only=True, data_only=True)
+            buf = _io.StringIO(); w = _csv.writer(buf)
+            for row in wb.worksheets[0].iter_rows(values_only=True):
+                w.writerow(["" if c is None else c for c in row])
+            wb.close()
+        finally:
+            _os.unlink(tmp)
+        return buf.getvalue()
+    for enc in ("utf-8-sig", "cp1252", "latin-1"):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            pass
+    return raw.decode("latin-1", "replace")
+
+
 def _catalogo_default_texto():
     import os as _os
     p = _os.path.join(config.BASE_DIR, "catalogos", "catalogo_clasificacion_default.csv")
@@ -1128,24 +1175,7 @@ def catalogo_subir(request: Request, eid: int, archivo: UploadFile = File(...),
     raw = archivo.file.read()
     nom = archivo.filename or "catalogo.csv"
     try:
-        if nom.lower().endswith((".xlsx", ".xlsm")):
-            import openpyxl, tempfile, csv as _csv, io as _io, os as _os
-            with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tf:
-                tf.write(raw); tmp = tf.name
-            wb = openpyxl.load_workbook(tmp, read_only=True, data_only=True)
-            buf = _io.StringIO(); w = _csv.writer(buf)
-            for row in wb.worksheets[0].iter_rows(values_only=True):
-                w.writerow(["" if c is None else c for c in row])
-            wb.close(); _os.unlink(tmp)
-            texto = buf.getvalue()
-        else:
-            texto = None
-            for enc in ("utf-8-sig", "cp1252", "latin-1"):
-                try:
-                    texto = raw.decode(enc); break
-                except UnicodeDecodeError:
-                    pass
-            texto = texto or raw.decode("latin-1", "replace")
+        texto = _catalogo_texto_desde_archivo(raw, nom)
     except Exception as e:
         return RedirectResponse(_dest(next, dflt, f"err=No+se+pudo+leer+el+catálogo+({type(e).__name__})"), status_code=303)
     cat = clf.cargar_catalogo(texto)

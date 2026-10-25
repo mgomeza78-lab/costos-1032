@@ -10,7 +10,7 @@
   se deduce de la fecha de inicio del 1032.</p>
 </div>
 
-<form method="post" action="/empresa-nueva" class="form wide" id="altaForm">
+<form method="post" action="/empresa-nueva" class="form wide" id="altaForm" enctype="multipart/form-data">
   <input type="hidden" name="csrf" value="{{ csrf_token }}">
   <div class="grid2">
     <label>Código
@@ -59,6 +59,14 @@
       <div id="seleccionados" class="sel-box"><p class="muted2" id="selEmpty">Aún no has agregado municipios.</p></div>
     </div>
   </div>
+
+  <h2 class="serv-h">Plan de cuentas (catálogo de clasificación) · opcional</h2>
+  <p class="hint">Es el catálogo que traduce cada cuenta del balance de prueba a CMA/CMO/CMI/CMICT.
+  Si no subes uno, la empresa usa el <b>catálogo consolidado por defecto</b> (cubre las cuentas del
+  PUC estándar del sector). Siempre lo puedes subir o cambiar después en <b>Cargar → Balance</b>.</p>
+  <label>Catálogo de cuentas (CSV o Excel, opcional)
+    <input type="file" name="catalogo" accept=".csv,.xlsx,.xlsm">
+  </label>
 
   <button class="btn primary" type="submit" style="margin-top:14px">Crear empresa</button>
 </form>
