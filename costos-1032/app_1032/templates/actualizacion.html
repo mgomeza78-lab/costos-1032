@@ -18,7 +18,9 @@
     <button class="btn primary" type="submit">Procesar actualización por índices</button>
   </form>
   <p class="hint" style="margin-top:6px">Aplica la indexación con los IPC/IPCs cargados: actualiza la tarifa
-  de cada mes cuyo gatillo del 3 % se haya alcanzado y recalcula la factura por estrato.</p>
+  de cada mes cuyo gatillo del 3 % se haya alcanzado y recalcula la factura por estrato. Tras actualizar,
+  registra el acto de aprobación en <a href="/empresa/{{ emp.id }}/aprobaciones">Aprobaciones</a> con el
+  índice y la fecha usados —esa fecha es el ancla del próximo gatillo del 3 %— hasta el recálculo anual.</p>
 </div>
 {% endif %}
 

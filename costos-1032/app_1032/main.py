@@ -1696,11 +1696,11 @@ def resultados_anio(request: Request, eid: int):
                 "SELECT servicio, componente, valor, unidad, procedencia, articulo "
                 "FROM resultado_componente WHERE empresa_id=:e"), {"e": eid}).all():
             cur.setdefault(s, {})[c] = {"valor": v, "unidad": u, "procedencia": pr, "articulo": ar}
-        precio = {}       # {anio: {servicio: {cf, cc, mes}}} — precio al último mes (diciembre)
-        for s, a, m, cf, cc in conn.execute(text(
-                "SELECT DISTINCT ON (servicio, anio) servicio, anio, mes, cargo_fijo, cargo_consumo "
+        precio = {}       # {anio: {servicio: {cf, cc, mes, fa}}} — tarifa al último mes (actualización vigente)
+        for s, a, m, cf, cc, fa in conn.execute(text(
+                "SELECT DISTINCT ON (servicio, anio) servicio, anio, mes, cargo_fijo, cargo_consumo, factor_acumulado "
                 "FROM tarifa_vigente WHERE empresa_id=:e ORDER BY servicio, anio, mes DESC"), {"e": eid}).all():
-            precio.setdefault(a, {})[s] = {"cf": cf, "cc": cc, "mes": m}
+            precio.setdefault(a, {})[s] = {"cf": cf, "cc": cc, "mes": m, "fa": fa}
     if anio_inicio not in snaps and cur:
         snaps[anio_inicio] = cur
     anios = sorted(set([anio_inicio]) | set(snaps) | set(precio))
@@ -1718,10 +1718,20 @@ def resultados_anio(request: Request, eid: int):
             for c, cell in comps.get(s, {}).items():
                 if c not in meta:
                     meta[c] = {"unidad": cell.get("unidad"), "articulo": cell.get("articulo")}
-        datos.append({"anio": a, "label": ANIOS_TAR.get(a, f"Año tarifario {a}"),
+        # Precio por servicio: base a dic I-1 (foto CARGO_*) vs. última actualización (tarifa_vigente).
+        precio_serv = {}
+        for s in servicios:
+            base = comps.get(s, {})
+            act = precio.get(a, {}).get(s, {})
+            precio_serv[s] = {
+                "cf_base": (base.get("CARGO_FIJO") or {}).get("valor"),
+                "cc_base": (base.get("CARGO_CONSUMO") or {}).get("valor"),
+                "cf_act": act.get("cf"), "cc_act": act.get("cc"),
+                "mes": act.get("mes"), "fa": act.get("fa")}
+        datos.append({"anio": a, "label": ANIOS_TAR.get(a, f"Año tarifario {a}"), "anio_prev": a - 1,
                       "componentes": comp_orden, "meta": meta,
                       "valores": {s: comps.get(s, {}) for s in servicios},
-                      "precio": precio.get(a, {})})
+                      "precio_serv": precio_serv})
     return tpl.TemplateResponse(request, "resultados.html", _ctx(
         request, emp=emp, servicios=servicios, datos=datos, meses=ops.MESES))
 
@@ -1737,7 +1747,8 @@ def aprobaciones(request: Request, eid: int):
         if not emp:
             return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
         actos = [dict(r) for r in conn.execute(text(
-            "SELECT id, anio_tarifario, acto_administrativo, fecha_aprobacion, observacion, creado_en "
+            "SELECT id, anio_tarifario, acto_administrativo, fecha_aprobacion, indice_referencia, "
+            "fecha_indice, observacion, creado_en "
             "FROM aprobacion_costos WHERE empresa_id=:e ORDER BY anio_tarifario DESC, creado_en DESC"),
             {"e": eid}).mappings().all()]
         archivos = {}
@@ -1753,6 +1764,7 @@ def aprobaciones(request: Request, eid: int):
 @app.post("/empresa/{eid}/aprobaciones/nueva")
 def aprobacion_nueva(request: Request, eid: int, anio_tarifario: int = Form(...),
                      acto_administrativo: str = Form(""), fecha_aprobacion: str = Form(""),
+                     indice_referencia: str = Form(""), fecha_indice: str = Form(""),
                      observacion: str = Form(""), csrf: str = Form("")):
     if (r := _need_login(request)):
         return r
@@ -1768,9 +1780,11 @@ def aprobacion_nueva(request: Request, eid: int, anio_tarifario: int = Form(...)
                 return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
             conn.execute(text(
                 "INSERT INTO aprobacion_costos(empresa_id,anio_tarifario,acto_administrativo,"
-                "fecha_aprobacion,observacion,creado_por) VALUES (:e,:y,:a,:f,:o,:u)"),
+                "fecha_aprobacion,indice_referencia,fecha_indice,observacion,creado_por) "
+                "VALUES (:e,:y,:a,:f,:ir,:fi,:o,:u)"),
                 {"e": eid, "y": anio_tarifario, "a": acto_administrativo.strip() or None,
-                 "f": (fecha_aprobacion.strip() or None), "o": observacion.strip() or None,
+                 "f": (fecha_aprobacion.strip() or None), "ir": indice_referencia.strip() or None,
+                 "fi": (fecha_indice.strip() or None), "o": observacion.strip() or None,
                  "u": user.get("user_id")})
     except Exception as e:
         return RedirectResponse(dflt + f"?err=No+se+pudo+registrar+({type(e).__name__})", status_code=303)

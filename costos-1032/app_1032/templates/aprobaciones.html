@@ -15,6 +15,8 @@
   <label>Año tarifario <input type="number" name="anio_tarifario" min="2024" max="2100" value="2026" required style="width:100px"></label>
   <label>Acto administrativo / resolución <input name="acto_administrativo" placeholder="p. ej. Resolución 123 de 2026" style="width:260px"></label>
   <label>Fecha de aprobación <input type="date" name="fecha_aprobacion"></label>
+  <label>Índice de referencia usado <input name="indice_referencia" placeholder="p. ej. IPCs dic-2026 = 112,34" style="width:230px"></label>
+  <label>Fecha del índice <input type="date" name="fecha_indice"></label>
   <label class="wide">Observación <input name="observacion" placeholder="opcional"></label>
   <button class="btn primary" type="submit">Registrar</button>
 </form>
@@ -28,6 +30,7 @@
     <b>{{ anios_tar.get(a.anio_tarifario, 'Año tarifario ' ~ a.anio_tarifario) }}</b>
     · {{ a.acto_administrativo or 'sin acto registrado' }}
     {% if a.fecha_aprobacion %} · {{ a.fecha_aprobacion }}{% endif %}
+    {% if a.indice_referencia %}<br><span class="muted2">Índice de referencia: {{ a.indice_referencia }}{% if a.fecha_indice %} · fecha {{ a.fecha_indice }} (ancla del gatillo 3 %){% endif %}</span>{% endif %}
     {% if puede %}
     <form method="post" action="/empresa/{{ emp.id }}/aprobaciones/{{ a.id }}/eliminar" style="display:inline;float:right"
           onsubmit="return confirm('¿Eliminar esta aprobación y sus soportes? No se puede deshacer.')">
