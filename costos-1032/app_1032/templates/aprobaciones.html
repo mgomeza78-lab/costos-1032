@@ -30,6 +30,8 @@
     <b>{{ anios_tar.get(a.anio_tarifario, 'Año tarifario ' ~ a.anio_tarifario) }}</b>
     · {{ a.acto_administrativo or 'sin acto registrado' }}
     {% if a.fecha_aprobacion %} · {{ a.fecha_aprobacion }}{% endif %}
+    {% if a.origen == 'automatica' %}<span class="tag" style="background:#eef3ea;color:#1f8a70;margin-left:6px">borrador automático</span>{% endif %}
+    {% if a.origen == 'automatica' and not a.acto_administrativo %}<span class="tag" style="background:#f0ead7;color:#8a6d1f;margin-left:4px">pendiente de acto administrativo</span>{% endif %}
     {% if a.indice_referencia %}<br><span class="muted2">Índice de referencia: {{ a.indice_referencia }}{% if a.fecha_indice %} · fecha {{ a.fecha_indice }} (ancla del gatillo 3 %){% endif %}</span>{% endif %}
     {% if puede %}
     <form method="post" action="/empresa/{{ emp.id }}/aprobaciones/{{ a.id }}/eliminar" style="display:inline;float:right"
@@ -39,6 +41,14 @@
     {% endif %}
   </div>
   {% if a.observacion %}<p class="muted2">{{ a.observacion }}</p>{% endif %}
+  {% if puede %}
+  <form method="post" action="/empresa/{{ emp.id }}/aprobaciones/{{ a.id }}/editar" class="form-grid" style="margin:4px 0 8px">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <label>Acto administrativo / resolución <input name="acto_administrativo" value="{{ a.acto_administrativo or '' }}" placeholder="p. ej. Resolución 123 de {{ a.anio_tarifario }}" style="width:260px"></label>
+    <label>Fecha de aprobación <input type="date" name="fecha_aprobacion" value="{{ a.fecha_aprobacion or '' }}"></label>
+    <button class="btn" type="submit">Guardar acto</button>
+  </form>
+  {% endif %}
   <table class="tabla compact">
     <tbody>
       {% for f in archivos.get(a.id, []) %}

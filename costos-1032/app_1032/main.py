@@ -915,9 +915,35 @@ def procesar(request: Request, eid: int, csrf: str = Form(""), next: str = Form(
             return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
         filas, ix = ops.procesar_empresa(conn, eid)
         fac = ops.derivar_factura(conn, eid)
-    db.audit(scope_of(user), "procesar_indexacion", "empresa", eid, f"{filas} meses, {ix} indexaciones, {fac} factura")
+        # Borradores de aprobación por cada evento de indexación (índice + fecha usados).
+        # El usuario luego adjunta el acto administrativo; el monitoreo del 3 % se ancla en esta fecha.
+        eventos = {}      # (anio, mes) -> {ipcs, ipc}
+        for rows in ops.tablero(conn, eid).values():
+            for x in rows:
+                if x.get("indexado") or x.get("indexado_ipc"):
+                    eventos[(x["anio"], x["mes"])] = {"ipcs": x.get("ipcs"), "ipc": x.get("ipc")}
+        gen = 0
+        for (anio, mes), idx in sorted(eventos.items()):
+            fecha = f"{anio}-{int(mes):02d}-01"
+            if conn.execute(text("SELECT 1 FROM aprobacion_costos WHERE empresa_id=:e AND fecha_indice=:f"),
+                            {"e": eid, "f": fecha}).first():
+                continue
+            def _f(v):
+                return f"{float(v):.2f}" if v is not None else "—"
+            mnom = ops.MESES.get(mes, mes)
+            ir = f"IPCs {_f(idx['ipcs'])} · IPC {_f(idx['ipc'])} ({mnom}-{anio})"
+            conn.execute(text(
+                "INSERT INTO aprobacion_costos(empresa_id,anio_tarifario,fecha_indice,indice_referencia,"
+                "origen,observacion,creado_por) VALUES (:e,:y,:f,:ir,'automatica',:o,:u)"),
+                {"e": eid, "y": anio, "f": fecha, "ir": ir,
+                 "o": f"Borrador generado al procesar la actualización de {mnom}-{anio}. Adjuntar el acto administrativo.",
+                 "u": user.get("user_id")})
+            gen += 1
+    db.audit(scope_of(user), "procesar_indexacion", "empresa", eid,
+             f"{filas} meses, {ix} indexaciones, {fac} factura, {gen} borradores aprobación")
+    extra = f";+{gen}+borrador(es)+de+aprobación+generados" if gen else ""
     return RedirectResponse(
-        _dest(next, dflt, f"msg=Indexación+procesada+({filas}+meses,+{ix}+indexaciones);+factura+por+estrato:+{fac}+filas"),
+        _dest(next, dflt, f"msg=Indexación+procesada+({filas}+meses,+{ix}+indexaciones);+factura:+{fac}+filas{extra}"),
         status_code=303)
 
 
@@ -1748,8 +1774,8 @@ def aprobaciones(request: Request, eid: int):
             return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
         actos = [dict(r) for r in conn.execute(text(
             "SELECT id, anio_tarifario, acto_administrativo, fecha_aprobacion, indice_referencia, "
-            "fecha_indice, observacion, creado_en "
-            "FROM aprobacion_costos WHERE empresa_id=:e ORDER BY anio_tarifario DESC, creado_en DESC"),
+            "fecha_indice, origen, observacion, creado_en "
+            "FROM aprobacion_costos WHERE empresa_id=:e ORDER BY anio_tarifario DESC, fecha_indice DESC NULLS LAST, creado_en DESC"),
             {"e": eid}).mappings().all()]
         archivos = {}
         for f in conn.execute(text(
@@ -1790,6 +1816,27 @@ def aprobacion_nueva(request: Request, eid: int, anio_tarifario: int = Form(...)
         return RedirectResponse(dflt + f"?err=No+se+pudo+registrar+({type(e).__name__})", status_code=303)
     db.audit(scope_of(user), "aprobacion_nueva", "empresa", eid, f"{anio_tarifario}:{acto_administrativo}")
     return RedirectResponse(dflt + "?msg=Aprobación+registrada", status_code=303)
+
+
+@app.post("/empresa/{eid}/aprobaciones/{apid}/editar")
+def aprobacion_editar(request: Request, eid: int, apid: int, acto_administrativo: str = Form(""),
+                      fecha_aprobacion: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    dflt = f"/empresa/{eid}/aprobaciones"
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(dflt + "?err=No+autorizado", status_code=303)
+    with db.scope_conn(scope_of(user)) as conn:
+        conn.execute(text(
+            "UPDATE aprobacion_costos SET acto_administrativo=:a, fecha_aprobacion=:f "
+            "WHERE id=:i AND empresa_id=:e"),
+            {"a": acto_administrativo.strip() or None, "f": (fecha_aprobacion.strip() or None),
+             "i": apid, "e": eid})
+    db.audit(scope_of(user), "aprobacion_editar", "empresa", eid, f"{apid}:{acto_administrativo}")
+    return RedirectResponse(dflt + "?msg=Aprobación+actualizada", status_code=303)
 
 
 @app.post("/empresa/{eid}/aprobaciones/{apid}/archivo")
