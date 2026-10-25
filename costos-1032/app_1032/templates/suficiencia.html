@@ -4,21 +4,28 @@
 <div class="page-head">
   <a class="back" href="/empresa/{{ emp.id }}">← {{ emp.nombre }}</a>
   <h1>Suficiencia financiera</h1>
-  <p class="sub">Indicador de suficiencia a partir de la facturación teórica (tarifa vigente × cantidades
-  del último mes cargado). En el <b>período de inicio</b> la tarifa se fija igual al costo económico de
-  referencia, de modo que la suficiencia teórica es del 100 % por construcción; la verificación de
-  suficiencia real requiere el <b>recaudo efectivo</b> y los <b>costos del período</b>, que se
-  incorporarán en la fase de resultados del primer recálculo.</p>
+  <p class="sub">Panel de referencia de los principales determinantes de la suficiencia financiera
+  (art. 87 de la Ley 142 de 1994): <b>ingresos estimados</b>, <b>castigos tarifarios</b>, <b>CCP</b>,
+  <b>energía</b> y <b>tasa retributiva</b>. En el <b>período de inicio</b> (1-jul a 31-dic-2026) la tarifa
+  se fija igual al costo económico de referencia, por lo que la suficiencia teórica es del 100 % por
+  construcción; la verificación de suficiencia <b>real</b> (recaudo efectivo frente a costos del período)
+  se incorpora en el primer recálculo, con información al cierre de 2026.</p>
 </div>
 
 {% if not serv %}
-<p class="empty">Aún no hay tarifa vigente ni cantidades cargadas para estimar la facturación.</p>
+<p class="empty">Aún no hay servicios configurados para esta empresa.</p>
 {% else %}
+
 <div class="cards">
-  <div class="card"><div class="k">Facturación teórica mensual</div><div class="v">{{ tot_ing|valor('$') }}</div>
+  <div class="card"><div class="k">Ingresos estimados (facturación teórica mensual)</div>
+    <div class="v">{{ tot_ing|valor('$') }}</div>
     <div class="muted2">último mes con tarifa y cantidades</div></div>
+  <div class="card"><div class="k">Castigos tarifarios</div>
+    <div class="v">$0</div>
+    <div class="muted2">descuentos por calidad: aplican desde 2027</div></div>
 </div>
 
+<h2 class="serv-h">Ingresos estimados por servicio</h2>
 <table class="tabla">
   <thead><tr><th>Servicio</th><th>Mes</th><th class="r">Cargo fijo</th><th class="r">Cargo consumo</th>
     <th class="r">Suscriptores</th><th class="r">m³ facturados</th><th class="r">Facturación mensual</th></tr></thead>
@@ -26,18 +33,40 @@
     {% for s in serv %}
     <tr>
       <td class="comp">{{ s.servicio }}</td>
-      <td class="c">{{ meses.get(s.mes, s.mes) }}-{{ s.anio }}</td>
-      <td class="num">{{ s.cf|valor('$') }}</td>
-      <td class="num">{{ s.cc|valor('$') }}</td>
+      <td class="c">{% if s.mes %}{{ meses.get(s.mes, s.mes) }}-{{ s.anio }}{% else %}<span class="muted2">sin tarifa</span>{% endif %}</td>
+      <td class="num">{{ s.cf|valor('$') if s.cf is not none else '—' }}</td>
+      <td class="num">{{ s.cc|valor('$') if s.cc is not none else '—' }}</td>
       <td class="num">{{ s.susc|valor if s.susc else '—' }}</td>
       <td class="num">{{ s.m3|valor if s.m3 else '—' }}</td>
-      <td class="num">{% if s.tiene_cantidades %}<b>{{ s.ingreso|valor('$') }}</b>{% else %}<span class="muted2">faltan cantidades</span>{% endif %}</td>
+      <td class="num">{% if s.ingreso and s.tiene_cantidades %}<b>{{ s.ingreso|valor('$') }}</b>{% else %}<span class="muted2">faltan cantidades</span>{% endif %}</td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
-<p class="hint">Facturación mensual = cargo fijo × suscriptores + cargo por consumo × m³ facturados. Para
-completar el indicador de suficiencia se requiere cargar el recaudo real y los costos del período en la
-fase de carga de información.</p>
+
+<h2 class="serv-h">Castigos, CCP, energía y tasa retributiva por servicio</h2>
+<table class="tabla">
+  <thead><tr><th>Servicio</th><th class="r">Castigos tarifarios</th>
+    <th class="r">CCP (m³)</th><th class="r">Energía — CE</th><th class="r">Tasa retributiva — TA</th></tr></thead>
+  <tbody>
+    {% for s in serv %}
+    <tr>
+      <td class="comp">{{ s.servicio }}</td>
+      <td class="num">$0 <span class="muted2">(inicio)</span></td>
+      <td class="num">{% if s.ccp is not none %}{{ s.ccp|valor }}<br><span class="muted2">acum. a {{ s.ccp_ref }}</span>{% else %}<span class="muted2">pendiente</span>{% endif %}</td>
+      <td class="num">{% if s.energia is not none %}{{ s.energia|valor('$') }}<br><span class="muted2">base {{ s.energia_anio }}</span>{% else %}<span class="muted2">pendiente</span>{% endif %}</td>
+      <td class="num">{% if s.tasa_retributiva is not none %}{{ s.tasa_retributiva|valor('$') }}<br><span class="muted2">base {{ s.ta_anio }}</span>{% else %}<span class="muted2">pendiente</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="hint"><b>Fuentes.</b> Ingresos = cargo fijo × suscriptores + cargo por consumo × m³ facturados
+(tarifa vigente). <b>Castigos tarifarios</b> = descuentos por incumplimiento de metas de calidad (régimen
+de calidad, art. 2.1.2.1.7.1.1.); en el período de inicio son $0 porque las metas se definen en el primer
+recálculo (a más tardar 31-may-2027). <b>CCP</b> = consumo corregido por pérdidas acumulado del período
+(denominador del cargo por consumo, art. 2.1.2.1.3.5). <b>Energía (CE)</b> y <b>tasa retributiva (TA)</b> =
+numeradores contables base (dic-2025) clasificados a CMO y CMICT, respectivamente (arts. 2.1.2.1.3.4.1 y
+2.1.2.1.3.6.1). «Pendiente» indica que la cuenta aún no está clasificada a ese subcomponente en el
+catálogo de la empresa.</p>
 {% endif %}
 {% endblock %}

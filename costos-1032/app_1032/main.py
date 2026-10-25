@@ -1925,6 +1925,150 @@ def aprobacion_archivo_eliminar(request: Request, eid: int, fid: int, csrf: str 
     return RedirectResponse(dflt + "?msg=Soporte+eliminado", status_code=303)
 
 
+# ------------------------------------------------------------------ Seguimiento a las metas (Res. CRA 1032, Cap. 2)
+ESTADOS_META = {"pendiente": "Pendiente", "en_proceso": "En proceso",
+                "cumplido": "Cumplido", "no_aplica": "No aplica"}
+
+
+@app.get("/empresa/{eid}/metas", response_class=HTMLResponse)
+def metas(request: Request, eid: int):
+    if (r := _need_login(request)):
+        return r
+    user = session_user(request)
+    with db.scope_conn(scope_of(user)) as conn:
+        emp = _emp_or_redirect(conn, eid)
+        if not emp:
+            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        servicios_emp = [s for s, on in (("acueducto", emp["presta_ac"]),
+                                         ("alcantarillado", emp["presta_al"])) if on] or ["acueducto"]
+        cat = conn.execute(text(
+            "SELECT c.id, c.codigo, c.servicio, c.objetivo, c.factor, c.nombre, c.tipo, "
+            "       c.valor_estandar, c.articulo, "
+            "       me.linea_base, me.meta_valor, me.anio_meta, me.estado, me.observacion "
+            "FROM meta_catalogo c "
+            "LEFT JOIN meta_empresa me ON me.meta_id=c.id AND me.empresa_id=:e "
+            "WHERE c.servicio = ANY(:ss) ORDER BY c.orden"),
+            {"e": eid, "ss": servicios_emp}).mappings().all()
+        arch = {}
+        for a in conn.execute(text(
+                "SELECT id, meta_id, nombre, tamano FROM meta_archivo WHERE empresa_id=:e ORDER BY subido_en"),
+                {"e": eid}).mappings().all():
+            arch.setdefault(a["meta_id"], []).append(dict(a))
+    grupos = {}   # servicio -> objetivo -> [metas]
+    n_est = n_bp = 0
+    for m in cat:
+        grupos.setdefault(m["servicio"], {}).setdefault(m["objetivo"], []).append(dict(m))
+        if m["tipo"] == "estandar":
+            n_est += 1
+        else:
+            n_bp += 1
+    return tpl.TemplateResponse(request, "metas.html", _ctx(
+        request, emp=emp, grupos=grupos, archivos=arch, estados=ESTADOS_META,
+        n_est=n_est, n_bp=n_bp, puede=rbac.can(user, "cargar_mensual")))
+
+
+@app.post("/empresa/{eid}/metas/{mid}/editar")
+def meta_editar(request: Request, eid: int, mid: int, linea_base: str = Form(""),
+                meta_valor: str = Form(""), anio_meta: str = Form(""),
+                estado: str = Form("pendiente"), observacion: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    dflt = f"/empresa/{eid}/metas"
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(dflt + "?err=No+autorizado", status_code=303)
+    est = estado if estado in ESTADOS_META else "pendiente"
+    try:
+        anio = int(anio_meta) if anio_meta.strip() else None
+    except ValueError:
+        anio = None
+    try:
+        with db.scope_conn(scope_of(user)) as conn:
+            if not conn.execute(text("SELECT 1 FROM meta_catalogo WHERE id=:m"), {"m": mid}).first():
+                return RedirectResponse(dflt + "?err=Meta+no+disponible", status_code=303)
+            conn.execute(text(
+                "INSERT INTO meta_empresa(empresa_id,meta_id,linea_base,meta_valor,anio_meta,estado,"
+                "observacion,actualizado_por) VALUES (:e,:m,:lb,:mv,:a,:es,:o,:u) "
+                "ON CONFLICT (empresa_id,meta_id) DO UPDATE SET linea_base=excluded.linea_base, "
+                " meta_valor=excluded.meta_valor, anio_meta=excluded.anio_meta, estado=excluded.estado, "
+                " observacion=excluded.observacion, actualizado_por=excluded.actualizado_por, actualizado_en=now()"),
+                {"e": eid, "m": mid, "lb": linea_base.strip() or None, "mv": meta_valor.strip() or None,
+                 "a": anio, "es": est, "o": observacion.strip() or None, "u": user.get("user_id")})
+    except Exception as e:
+        return RedirectResponse(dflt + f"?err=No+se+pudo+guardar+({type(e).__name__})", status_code=303)
+    db.audit(scope_of(user), "meta_editar", "empresa", eid, f"{mid}:{est}")
+    return RedirectResponse(dflt + f"?msg=Meta+actualizada#m{mid}", status_code=303)
+
+
+@app.post("/empresa/{eid}/metas/{mid}/archivo")
+def meta_archivo_subir(request: Request, eid: int, mid: int,
+                       archivo: UploadFile = File(...), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    dflt = f"/empresa/{eid}/metas"
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(dflt + "?err=No+autorizado", status_code=303)
+    raw = archivo.file.read()
+    nombre = (archivo.filename or "soporte").strip()
+    ext = nombre.rsplit(".", 1)[-1].lower() if "." in nombre else ""
+    if ext not in aps.EXT_PERMITIDAS:
+        return RedirectResponse(dflt + f"?err=Formato+no+admitido+({ext})", status_code=303)
+    if len(raw) > aps.MAX_BYTES:
+        return RedirectResponse(dflt + "?err=Archivo+supera+25+MB", status_code=303)
+    try:
+        with db.scope_conn(scope_of(user)) as conn:
+            if not conn.execute(text("SELECT 1 FROM meta_catalogo WHERE id=:m"), {"m": mid}).first():
+                return RedirectResponse(dflt + "?err=Meta+no+disponible", status_code=303)
+            conn.execute(text(
+                "INSERT INTO meta_archivo(empresa_id,meta_id,nombre,tipo,tamano,contenido,subido_por) "
+                "VALUES (:e,:m,:n,:t,:z,:c,:u)"),
+                {"e": eid, "m": mid, "n": nombre, "t": ext, "z": len(raw), "c": raw, "u": user.get("user_id")})
+    except Exception as e:
+        return RedirectResponse(dflt + f"?err=No+se+pudo+subir+({type(e).__name__})", status_code=303)
+    db.audit(scope_of(user), "meta_archivo", "empresa", eid, f"{mid}:{nombre}")
+    return RedirectResponse(dflt + f"?msg=Soporte+cargado#m{mid}", status_code=303)
+
+
+@app.get("/empresa/{eid}/metas/archivo/{fid}")
+def meta_archivo_bajar(request: Request, eid: int, fid: int):
+    if (r := _need_login(request)):
+        return r
+    user = session_user(request)
+    with db.scope_conn(scope_of(user)) as conn:
+        f = conn.execute(text(
+            "SELECT nombre, contenido FROM meta_archivo WHERE id=:f AND empresa_id=:e"),
+            {"f": fid, "e": eid}).mappings().first()
+    if not f:
+        return RedirectResponse(f"/empresa/{eid}/metas?err=Archivo+no+disponible", status_code=303)
+    import mimetypes
+    media = mimetypes.guess_type(f["nombre"] or "")[0] or "application/octet-stream"
+    seguro = (f["nombre"] or "soporte").replace('"', "")
+    return Response(content=bytes(f["contenido"]), media_type=media,
+                    headers={"Content-Disposition": f'attachment; filename="{seguro}"'})
+
+
+@app.post("/empresa/{eid}/metas/archivo/{fid}/eliminar")
+def meta_archivo_eliminar(request: Request, eid: int, fid: int, csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    dflt = f"/empresa/{eid}/metas"
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(dflt + "?err=No+autorizado", status_code=303)
+    with db.scope_conn(scope_of(user)) as conn:
+        conn.execute(text("DELETE FROM meta_archivo WHERE id=:f AND empresa_id=:e"),
+                     {"f": fid, "e": eid})
+    db.audit(scope_of(user), "meta_archivo_eliminar", "empresa", eid, str(fid))
+    return RedirectResponse(dflt + "?msg=Soporte+eliminado", status_code=303)
+
+
 # ------------------------------------------------------------------ Resultados · Evolución de costos y tarifa
 @app.get("/empresa/{eid}/evolucion", response_class=HTMLResponse)
 def evolucion(request: Request, eid: int):
@@ -2002,7 +2146,7 @@ def suficiencia(request: Request, eid: int):
         emp = _emp_or_redirect(conn, eid)
         if not emp:
             return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
-        # Facturación teórica del último mes con tarifa, por servicio
+        # (1) Ingresos estimados: facturación teórica del último mes con tarifa, por servicio
         filas = conn.execute(text(
             "SELECT tv.servicio, tv.anio, tv.mes, tv.cargo_fijo, tv.cargo_consumo, "
             "       cm.suscriptores, cm.m3_facturados "
@@ -2012,16 +2156,54 @@ def suficiencia(request: Request, eid: int):
             "WHERE tv.empresa_id=:e AND (tv.anio,tv.mes) = ("
             "   SELECT anio,mes FROM tarifa_vigente WHERE empresa_id=:e ORDER BY anio DESC, mes DESC LIMIT 1) "
             "ORDER BY tv.servicio"), {"e": eid}).mappings().all()
+        fact = {r["servicio"]: r for r in filas}
+        # (2) CCP del período (m³) por servicio — último acumulado disponible
+        ccp_rows = conn.execute(text(
+            "SELECT DISTINCT ON (servicio) servicio, anio, mes, ccp_acum, ccp_mes "
+            "FROM costo_referencia_mensual WHERE empresa_id=:e "
+            "ORDER BY servicio, anio DESC, mes DESC"), {"e": eid}).mappings().all()
+        ccp_por_serv = {r["servicio"]: r for r in ccp_rows}
+        # (3) Energía (CE) y tasa retributiva (TA): numeradores base (dic-2025) por servicio
+        comp_rows = conn.execute(text(
+            "SELECT servicio, concepto, SUM(valor) AS v, MAX(anio) AS anio "
+            "FROM numerador_mensual WHERE empresa_id=:e AND concepto IN ('CE','TA') "
+            "GROUP BY servicio, concepto"), {"e": eid}).mappings().all()
+        comp = {}
+        for r in comp_rows:
+            comp.setdefault(r["servicio"], {})[r["concepto"]] = r
+        servicios_emp = [s for s, on in (("acueducto", emp["presta_ac"]),
+                                         ("alcantarillado", emp["presta_al"])) if on] or ["acueducto"]
     serv = []
     tot_ing = 0.0
-    for r0 in filas:
-        CF = float(r0["cargo_fijo"] or 0.0); CC = float(r0["cargo_consumo"] or 0.0)
-        susc = r0["suscriptores"] or 0; m3 = float(r0["m3_facturados"] or 0.0)
-        ingreso = CF * susc + CC * m3
-        tot_ing += ingreso
-        serv.append({"servicio": r0["servicio"], "anio": r0["anio"], "mes": r0["mes"],
-                     "cf": CF, "cc": CC, "susc": susc, "m3": m3, "ingreso": ingreso,
-                     "tiene_cantidades": susc or m3})
+
+    def _num(x):
+        return float(x) if x is not None else None
+
+    for s in servicios_emp:
+        r0 = fact.get(s)
+        CF = _num(r0["cargo_fijo"]) if r0 else None
+        CC = _num(r0["cargo_consumo"]) if r0 else None
+        susc = (r0["suscriptores"] or 0) if r0 else 0
+        m3 = _num(r0["m3_facturados"]) or 0.0 if r0 else 0.0
+        ingreso = (CF or 0.0) * susc + (CC or 0.0) * m3 if r0 else None
+        if ingreso and (susc or m3):
+            tot_ing += ingreso
+        cc_ccp = ccp_por_serv.get(s)
+        ce = comp.get(s, {}).get("CE")
+        ta = comp.get(s, {}).get("TA")
+        serv.append({
+            "servicio": s,
+            "anio": r0["anio"] if r0 else None, "mes": r0["mes"] if r0 else None,
+            "cf": CF, "cc": CC, "susc": susc, "m3": m3,
+            "ingreso": ingreso, "tiene_cantidades": bool(susc or m3),
+            "castigos": 0.0,                       # período de inicio: sin descuentos por calidad aún
+            "ccp": _num(cc_ccp["ccp_acum"]) if cc_ccp else None,
+            "ccp_ref": (f"{ops.MESES.get(cc_ccp['mes'], cc_ccp['mes'])}-{cc_ccp['anio']}" if cc_ccp else None),
+            "energia": _num(ce["v"]) if ce else None,
+            "energia_anio": ce["anio"] if ce else None,
+            "tasa_retributiva": _num(ta["v"]) if ta else None,
+            "ta_anio": ta["anio"] if ta else None,
+        })
     return tpl.TemplateResponse(request, "suficiencia.html", _ctx(
         request, emp=emp, serv=serv, tot_ing=tot_ing, meses=ops.MESES))
 

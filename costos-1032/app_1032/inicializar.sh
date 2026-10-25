@@ -33,6 +33,7 @@ psql -h "$HOST" -p "$PORT" -U "$OWNER" -d estudios_1032 -v ON_ERROR_STOP=1 -q -f
 psql -h "$HOST" -p "$PORT" -U "$OWNER" -d estudios_1032 -v ON_ERROR_STOP=1 -q -f "$DIR/sql/021_resultados_aprobaciones.sql"
 psql -h "$HOST" -p "$PORT" -U "$OWNER" -d estudios_1032 -v ON_ERROR_STOP=1 -q -f "$DIR/sql/022_aprobacion_indice.sql"
 psql -h "$HOST" -p "$PORT" -U "$OWNER" -d estudios_1032 -v ON_ERROR_STOP=1 -q -f "$DIR/sql/023_aprobacion_origen.sql"
+psql -h "$HOST" -p "$PORT" -U "$OWNER" -d estudios_1032 -v ON_ERROR_STOP=1 -q -f "$DIR/sql/024_metas.sql"
 
 echo "3/3  Semilla (catálogo + 3 empresas + usuarios + operación + recálculo + inversiones)…"
 python3 "$DIR/seed.py"

@@ -48,7 +48,7 @@
         </ol>
       </details>
 
-      {% set en_res = p == '/empresa/' ~ emp.id|string or '/resultados' in p or '/ccp' in p or '/evolucion' in p or '/simulador' in p or '/suficiencia' in p or '/subsidios' in p %}
+      {% set en_res = p == '/empresa/' ~ emp.id|string or '/resultados' in p or '/ccp' in p or '/evolucion' in p or '/simulador' in p %}
       <details class="rail-group" {{ 'open' if en_res }}>
         <summary>Resultados</summary>
         <ol class="rail-nav nonum">
@@ -57,8 +57,6 @@
           <li><a class="link {{ 'active' if '/ccp' in p }}" href="/empresa/{{ emp.id }}/ccp">CCP y pérdidas</a></li>
           <li><a class="link {{ 'active' if '/evolucion' in p }}" href="/empresa/{{ emp.id }}/evolucion">Evolución</a></li>
           <li><a class="link {{ 'active' if '/simulador' in p }}" href="/empresa/{{ emp.id }}/simulador">Simuladores tarifarios</a></li>
-          <li><a class="link {{ 'active' if '/suficiencia' in p }}" href="/empresa/{{ emp.id }}/suficiencia">Suficiencia financiera</a></li>
-          <li><a class="link {{ 'active' if '/subsidios' in p }}" href="/empresa/{{ emp.id }}/subsidios">Subsidios y contribuciones</a></li>
         </ol>
       </details>
 
@@ -73,6 +71,22 @@
         <summary>Aprobaciones</summary>
         <ol class="rail-nav nonum">
           <li><a class="link {{ 'active' if '/aprobaciones' in p }}" href="/empresa/{{ emp.id }}/aprobaciones">Aprobaciones de costos</a></li>
+        </ol>
+      </details>
+
+      {% set en_sufsub = '/suficiencia' in p or '/subsidios' in p %}
+      <details class="rail-group" {{ 'open' if en_sufsub }}>
+        <summary>Suficiencia y subsidios</summary>
+        <ol class="rail-nav nonum">
+          <li><a class="link {{ 'active' if '/suficiencia' in p }}" href="/empresa/{{ emp.id }}/suficiencia">Suficiencia financiera</a></li>
+          <li><a class="link {{ 'active' if '/subsidios' in p }}" href="/empresa/{{ emp.id }}/subsidios">Subsidios y contribuciones</a></li>
+        </ol>
+      </details>
+
+      <details class="rail-group" {{ 'open' if '/metas' in p }}>
+        <summary>Seguimiento de metas</summary>
+        <ol class="rail-nav nonum">
+          <li><a class="link {{ 'active' if '/metas' in p }}" href="/empresa/{{ emp.id }}/metas">Metas y estándares 1032</a></li>
         </ol>
       </details>
     {% else %}
