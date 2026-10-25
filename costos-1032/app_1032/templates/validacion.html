@@ -17,7 +17,7 @@
     {% for m in meses_num %}<th class="c">{{ MM[m-1] }}</th>{% endfor %}
     <th class="c">Cargado</th></tr></thead>
   <tbody>
-    {% for an in anios %}{% for s in servicios %}
+    {% for an in anios %}{% for s in c.serv %}
     {% set cargados = c.cel.get(an, {}).get(s, []) %}
     <tr><td class="comp">{{ an }} · {{ s }}</td>
       {% for m in meses_num %}<td class="c">{% if m in cargados %}<b style="color:#1f8a70" title="{{ meses.get(m,m) }} cargado">✓</b>{% else %}<span style="color:#cfc9ba">·</span>{% endif %}</td>{% endfor %}

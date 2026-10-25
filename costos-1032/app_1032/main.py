@@ -1603,12 +1603,14 @@ def validacion(request: Request, eid: int):
             "SELECT vigencia, count(*) FROM factor_subsidio WHERE empresa_id=:e GROUP BY vigencia"),
             {"e": eid}).all())
     servicios = [s for s, on in (("acueducto", emp["presta_ac"]), ("alcantarillado", emp["presta_al"])) if on] or ["acueducto"]
+    # El agua producida (macromedición) solo aplica a acueducto; el alcantarillado no la carga.
+    serv_agua = [s for s in servicios if s == "acueducto"]
     # El período de inicio se calcula con la línea base 2024–2025 (dos años completos).
     anios = per.PERIODOS[0]["anios_base"]              # [2024, 2025]
     matriz = [
-        {"clave": "comercial", "nombre": "Comercial (suscriptores y consumos)", "cel": com_m},
-        {"clave": "balance", "nombre": "Balance de prueba (numeradores CMO/CMI/CMICT)", "cel": bal_m},
-        {"clave": "agua", "nombre": "Agua producida / macromedición", "cel": agua_m},
+        {"clave": "comercial", "nombre": "Comercial (suscriptores y consumos)", "cel": com_m, "serv": servicios},
+        {"clave": "balance", "nombre": "Balance de prueba (numeradores CMO/CMI/CMICT)", "cel": bal_m, "serv": servicios},
+        {"clave": "agua", "nombre": "Agua producida / macromedición (solo acueducto)", "cel": agua_m, "serv": serv_agua},
     ]
     resumen = [
         {"nombre": "Configuración del APS", "valor": f"{apsres['n_completos']}/{apsres['n_municipios']} completos",
