@@ -53,43 +53,51 @@
 original del SUI</b> (una fila por suscriptor); el sistema lo agrega por clase de uso. Es una sola
 fuente y un solo formato: no se resume ni se digita nada, <b>todo sale del archivo</b>.</p>
 {% if puede_cargar %}
-<p class="muted2">Sube el reporte del SUI <b>tal como lo descargas</b>, <b>uno por mes</b>, y varios meses
-a la vez: elige el <b>período</b>, el <b>año</b> y el <b>servicio</b>; el sistema detecta el <b>mes</b> por
-el nombre de cada archivo y lo puedes corregir antes de cargar. Reconoce los <b>dos formatos del SUI</b>
-(el clásico y el nuevo) y archivos separados por coma o punto y coma.</p>
-<form method="post" action="/empresa/{{ emp.id }}/cargar-sui-lote" enctype="multipart/form-data" class="form-grid" id="suiLote">
-  <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
-  {{ periodo_anio() }}
-  <label>Servicio <select name="servicio">{{ servopts() }}</select></label>
-  <label class="wide">Reportes del SUI (uno por mes, .csv) <input type="file" name="archivos" accept=".csv,.txt" multiple id="suiFiles"></label>
-  <div class="wide" id="suiRows" style="margin:4px 0"></div>
-  <button class="btn primary" type="submit">Cargar los meses seleccionados</button>
-</form>
+<div class="carga-metodo">
+  <div class="metodo-tabs">
+    <button type="button" class="metodo-tab active" data-m="masivo">Cargue masivo (reporte SUI)</button>
+    <button type="button" class="metodo-tab" data-m="manual">Cargue manual (sin archivo)</button>
+  </div>
 
-<details style="margin-top:10px">
-  <summary class="muted2" style="cursor:pointer">… o ingresar los totales manualmente (contingencia, sin archivo)</summary>
-  <p class="muted2" style="margin-top:8px">Úsalo solo si no tienes el reporte del SUI de ese mes (p. ej. un archivo
-  dañado). Guarda los <b>totales del mes</b> —suscriptores y m³ facturados— en el resumen; esto alimenta
-  Validación y Resultados, pero <b>no genera el detalle por estrato</b> (sin desagregación por clase ni
-  subsidios). Puedes cargar el <b>conjunto</b> (toda la empresa) o un <b>APS</b>: si cargas por APS, el total
-  del mes es la suma de las APS. Cuando consigas el archivo del SUI, cárgalo y reemplazará al manual.</p>
-  <form method="post" action="/empresa/{{ emp.id }}/carga" class="form-grid">
-    <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
-    <input type="hidden" name="origen" value="manual">
-    {{ periodo_anio() }}
-    <label>Mes <select name="mes">{% for m in range(1,13) %}<option value="{{ m }}">{{ meses.get(m,m) }}</option>{% endfor %}</select></label>
-    <label>Servicio <select name="servicio">{{ servopts() }}</select></label>
-    <label>Ámbito (APS)
-      <select name="cod_dane">
-        <option value="">Conjunto · todas las APS</option>
-        {% for mu in munis %}<option value="{{ mu.cod_dane }}">{{ mu.municipio }}</option>{% endfor %}
-      </select>
-    </label>
-    <label>Suscriptores <input type="number" name="suscriptores" min="0" step="1" required style="width:130px"></label>
-    <label>m³ facturados <input type="number" name="m3" min="0" step="any" required style="width:140px"></label>
-    <button class="btn" type="submit">Guardar manual</button>
-  </form>
-</details>
+  <div class="metodo-panel active" data-m="masivo">
+    <p class="muted2">Sube el reporte del SUI <b>tal como lo descargas</b>, <b>uno por mes</b>, y varios meses
+    a la vez: elige el <b>período</b>, el <b>año</b> y el <b>servicio</b>; el sistema detecta el <b>mes</b> por
+    el nombre de cada archivo y lo puedes corregir antes de cargar. Reconoce los <b>dos formatos del SUI</b>
+    (el clásico y el nuevo), separador coma o «;», y <b>desagrega por APS</b> con el municipio/DANE del reporte.</p>
+    <form method="post" action="/empresa/{{ emp.id }}/cargar-sui-lote" enctype="multipart/form-data" class="form-grid" id="suiLote">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+      {{ periodo_anio() }}
+      <label>Servicio <select name="servicio">{{ servopts() }}</select></label>
+      <label class="wide">Reportes del SUI (uno por mes, .csv) <input type="file" name="archivos" accept=".csv,.txt" multiple id="suiFiles"></label>
+      <div class="wide" id="suiRows" style="margin:4px 0"></div>
+      <button class="btn primary" type="submit">Cargar los meses seleccionados</button>
+    </form>
+  </div>
+
+  <div class="metodo-panel" data-m="manual">
+    <p class="muted2">Para cuando <b>no tienes el reporte del SUI</b> de ese mes (p. ej. archivo dañado).
+    Guarda los <b>totales del mes</b> —suscriptores y m³ facturados— en el resumen; alimenta Validación y
+    Resultados, pero <b>no genera el detalle por estrato</b> (sin desagregación por clase ni subsidios).
+    Puedes cargar el <b>conjunto</b> (toda la empresa) o un <b>APS</b> (municipio): al cargar por APS, el
+    total del mes es la suma de las APS. Cuando consigas el archivo del SUI, cárgalo y reemplazará al manual.</p>
+    <form method="post" action="/empresa/{{ emp.id }}/carga" class="form-grid">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+      <input type="hidden" name="origen" value="manual">
+      {{ periodo_anio() }}
+      <label>Mes <select name="mes">{% for m in range(1,13) %}<option value="{{ m }}">{{ meses.get(m,m) }}</option>{% endfor %}</select></label>
+      <label>Servicio <select name="servicio">{{ servopts() }}</select></label>
+      <label>Ámbito (APS)
+        <select name="cod_dane">
+          <option value="">Conjunto · todas las APS</option>
+          {% for mu in munis %}<option value="{{ mu.cod_dane }}">{{ mu.municipio }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Suscriptores <input type="number" name="suscriptores" min="0" step="1" required style="width:130px"></label>
+      <label>m³ facturados <input type="number" name="m3" min="0" step="any" required style="width:140px"></label>
+      <button class="btn primary" type="submit">Guardar manual</button>
+    </form>
+  </div>
+</div>
 {% endif %}
 <h3 class="serv-h">Cargado</h3>
 <p class="muted2" style="margin:-4px 0 8px">El reporte del SUI trae <b>todas las APS</b>; si incluye la
