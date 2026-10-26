@@ -2,6 +2,7 @@
 {% block title %}CCP · {{ emp.nombre }}{% endblock %}
 {% block body %}
 {% macro n2(x) %}{% if x is none %}<span class="mut">—</span>{% else %}{{ ('%.2f'|format(x))|replace('.',',') }}{% endif %}{% endmacro %}
+{% macro pc(x) %}{% if x is none %}<span class="mut">—</span>{% else %}{{ ('%.1f'|format(x*100))|replace('.',',') }}%{% endif %}{% endmacro %}
 {% macro gchart(titulo, ch, g, labels, dec) %}
 <div class="ccp-gcard">
   <div class="ccp-gtit">{{ titulo }}</div>
@@ -25,13 +26,14 @@
   <a class="back" href="/empresa/{{ emp.id }}">← {{ emp.nombre }}</a>
   <h1>CCP · Consumo Corregido por Pérdidas</h1>
   <p class="sub">Todo lo que entra al cálculo del CCP (art. {{ ccp.art.ccp }} y ss., Res. CRA 1032):
-  datos base, los indicadores por unidad de facturación (ICUF, IPUF, ISUF), la comparación entre el
-  <b>IPUF real</b> y el <b>IPUF aplicado</b> (con el tope IPUF*), el ajuste <b>Fap</b> y el CCP resultante.
-  El CCP se mide sobre la <b>línea base</b> del año tarifario; el <b>período de inicio</b> usa los
-  <b>dos años</b> 2024 y 2025 (toda la información corresponde a esa ventana).</p>
+  datos base, los indicadores por unidad de facturación (ICUF, IPUF, ISUF), el CCP = (ISUF − IPUF*)·N, el
+  ajuste <b>Fap</b> y el <b>nivel de castigo</b> por el estándar de pérdidas (AF/CCP). El CCP se mide sobre
+  la <b>línea base</b> del año tarifario; el <b>período de inicio</b> usa los <b>dos años</b> 2024 y 2025
+  (toda la información corresponde a esa ventana). En alcantarillado el IPUF real se estima con el del
+  acueducto.</p>
 </div>
 
-{% if not ccp.indicadores %}
+{% if not ccp.hay_datos %}
   <p class="empty">Aún no hay información comercial cargada para calcular el CCP en este año tarifario.
   Cárgala en <a href="/empresa/{{ emp.id }}/cargar?fuente=comercial">Cargar información</a>.</p>
 {% else %}
@@ -42,6 +44,14 @@
       {% for p in ccp.periodos %}<option value="{{ p.clave }}" {{ 'selected' if p.clave == ccp.periodo.clave }}>{{ p.etiqueta }}</option>{% endfor %}
     </select>
   </label>
+  {% if ccp.servicios|length > 1 %}
+  <label>Servicio
+    <select name="serv" onchange="this.form.submit()">
+      <option value="">Todos</option>
+      {% for s in ccp.servicios %}<option value="{{ s }}" {{ 'selected' if ccp.servicio == s }}>{{ s|capitalize }}</option>{% endfor %}
+    </select>
+  </label>
+  {% endif %}
   <span class="hint" style="align-self:center">Línea base: <b>{{ ccp.anios_base_lbl }}</b> ·
     IPUF* del segmento: <b>{{ n2(ccp.ipuf_estrella) }}</b> m³/susc·mes · art. {{ ccp.art.ipuf_estrella }}</span>
 </form>
@@ -49,6 +59,12 @@
 {% for s, f in ccp.indicadores.items() %}
 <h2 class="serv-h">{{ s|capitalize }} · {{ ccp.periodo.etiqueta }} · línea base {{ ccp.anios_base_lbl }} ({{ f.meses }} meses con dato)</h2>
 
+{% if f.estimado %}
+<div class="flash" style="margin:6px 0 10px;background:var(--info-bg,#eef3f6);border-color:var(--info-ln,#cde)">
+  El <b>IPUF real</b> de {{ s }} se <b>estima</b> con el del acueducto (no hay macromedición propia de
+  producción): CCP<sub>al</sub> = (ISUF<sub>ac</sub> − ICUF<sub>ac</sub> + ICUF<sub>al</sub> − IPUF*)·N<sub>al</sub>,
+  art. {{ ccp.art.ccp }}.</div>
+{% endif %}
 {% if f.falta %}
 <div class="flash warn" style="margin:6px 0 10px">Falta información para este servicio:
   {{ f.falta|join('; ') }}. Debe solicitarse a la empresa / cargarse para completar el CCP.</div>
@@ -74,7 +90,7 @@ la variación. Cambia el año tarifario arriba.</p>
     <div class="ix-val">{{ f.af|valor }}</div><div class="ix-cap">m³ facturados (consumo)</div></div>
   <div class="ix-card"><div class="ix-top"><span class="ix-name">AP</span></div>
     <div class="ix-val">{% if f.ap > 0 %}{{ f.ap|valor }}{% else %}<span class="mut">—</span>{% endif %}</div>
-    <div class="ix-cap">m³ producidos (macromedición){% if f.ap <= 0 %} · sin dato{% endif %}</div></div>
+    <div class="ix-cap">m³ producidos (macromedición){% if f.ap <= 0 and f.estimado %} · estimado del acueducto{% elif f.ap <= 0 %} · sin dato{% endif %}</div></div>
 </div>
 
 <h3 class="ccp-h">Indicadores por unidad de facturación</h3>
@@ -83,55 +99,75 @@ la variación. Cambia el año tarifario arriba.</p>
   <tbody>
     <tr><td><b>ICUF</b> · consumo por unidad</td><td class="form">AF / N</td>
       <td class="num">{{ n2(f.icuf) }}</td><td>m³/susc·mes</td></tr>
-    <tr><td><b>IPUF real</b> · pérdidas por unidad</td><td class="form">(AP − AF) / N</td>
+    <tr><td><b>IPUF real</b> · pérdidas por unidad{% if f.estimado %} <span class="ccp-tag">estimado del acueducto</span>{% endif %}</td>
+      <td class="form">{% if f.estimado %}IPUF real (acueducto){% else %}(AP − AF) / N{% endif %}</td>
       <td class="num">{{ n2(f.ipuf_real) }}</td><td>m³/susc·mes</td></tr>
-    <tr><td><b>ISUF</b> · suministro por unidad</td><td class="form">AP / N = ICUF + IPUF</td>
+    <tr><td><b>ISUF</b> · suministro por unidad</td><td class="form">{% if f.estimado %}ICUF + IPUF real{% else %}AP / N = ICUF + IPUF{% endif %}</td>
       <td class="num">{{ n2(f.isuf) }}</td><td>m³/susc·mes</td></tr>
+    <tr><td><b>IPUF*</b> · estándar del período</td><td class="form">art. {{ ccp.art.ipuf_estrella }}</td>
+      <td class="num">{{ n2(f.ipuf_estandar) }}</td><td>m³/susc·mes</td></tr>
     {% if f.fap is not none %}
     <tr><td><b>Fap</b> · ajuste optativo del ISUF</td><td class="form">tabla (IPUFreal, IVH, metod., meta)</td>
       <td class="num">{{ n2(f.fap) }}</td><td>m³/susc·mes</td></tr>
-    <tr><td><b>ISUF ajustado</b></td><td class="form">ISUF − Fap</td>
-      <td class="num">{{ n2(f.isuf_ajustado) }}</td><td>m³/susc·mes</td></tr>
+    <tr><td><b>ISUF ajustado</b>{% if f.fap_meta and not f.fap_meta.aplica %} <span class="ccp-tag">no aplicado</span>{% endif %}</td>
+      <td class="form">ISUF − Fap</td><td class="num">{{ n2(f.isuf_ajustado) }}</td><td>m³/susc·mes</td></tr>
     {% endif %}
   </tbody>
 </table>
 
-{% if f.usa_ap %}
-<h3 class="ccp-h">IPUF real vs. IPUF aplicado en el CCP</h3>
-<p class="hint">El CCP reconoce las pérdidas hasta el tope <b>IPUF*</b> (art. {{ ccp.art.ipuf_estrella }}):
-IPUF aplicado = mín(IPUF real, IPUF*). {% if f.ipuf_real > ccp.ipuf_estrella %}Aquí el IPUF real
-<b>supera</b> el tope, así que se aplica el tope.{% else %}Aquí el IPUF real está <b>por debajo</b>
-del tope, así que se reconoce el real.{% endif %}</p>
-{% set mx = [f.ipuf_real, ccp.ipuf_estrella]|max %}
-<div class="ccp-bars">
-  <div class="ccp-row"><span class="ccp-lab">IPUF real</span>
-    <span class="ccp-track"><span class="ccp-fill real" style="width:{{ (f.ipuf_real/mx*100)|round(1) }}%"></span></span>
-    <span class="ccp-num">{{ n2(f.ipuf_real) }}</span></div>
-  <div class="ccp-row"><span class="ccp-lab">IPUF* (tope)</span>
-    <span class="ccp-track"><span class="ccp-fill tope" style="width:{{ (ccp.ipuf_estrella/mx*100)|round(1) }}%"></span></span>
-    <span class="ccp-num">{{ n2(ccp.ipuf_estrella) }}</span></div>
-  <div class="ccp-row"><span class="ccp-lab">IPUF aplicado</span>
-    <span class="ccp-track"><span class="ccp-fill apli" style="width:{{ (f.ipuf_aplicado/mx*100)|round(1) }}%"></span></span>
-    <span class="ccp-num">{{ n2(f.ipuf_aplicado) }}</span></div>
-</div>
-
+{% if f.ccp is not none %}
 <h3 class="ccp-h">CCP resultante</h3>
+<p class="hint">Art. {{ ccp.art.ccp }}: CCP = (ISUF − IPUF*) × N × 12. El CCP <b>no</b> se topa en el
+estándar; la diferencia <b>CCP − AF</b> son las pérdidas por encima del estándar
+(= pérdidas reales − estándar), que el prestador asume.</p>
 <table class="tabla compact">
   <tbody>
-    <tr><td>Pérdidas reales</td><td class="form">AP − AF</td><td class="num">{{ f.perdidas_reales|valor }} m³</td></tr>
-    <tr><td>Estándar (tope)</td><td class="form">IPUF* × N</td><td class="num">{{ f.estandar|valor }} m³</td></tr>
-    <tr><td>Pérdidas reconocidas</td><td class="form">mín(reales, tope)</td><td class="num">{{ f.reconocidas|valor }} m³</td></tr>
-    <tr class="ccp-total"><td><b>CCP</b></td><td class="form">AF + pérdidas reconocidas</td>
+    <tr><td>Agua facturada (AF)</td><td class="form">Σ m³ facturados</td><td class="num">{{ f.af|valor }} m³</td></tr>
+    <tr><td>Pérdidas reales</td><td class="form">{% if f.estimado %}IPUF real · N{% else %}AP − AF{% endif %}</td>
+      <td class="num">{% if f.perdidas_reales is not none %}{{ f.perdidas_reales|valor }}{% else %}—{% endif %} m³</td></tr>
+    <tr><td>Estándar reconocible</td><td class="form">IPUF* × N</td>
+      <td class="num">{% if f.perdidas_estandar is not none %}{{ f.perdidas_estandar|valor }}{% else %}—{% endif %} m³</td></tr>
+    <tr><td>Pérdidas sobre el estándar</td><td class="form">CCP − AF</td>
+      <td class="num">{% if f.sobre_estandar is not none %}{{ f.sobre_estandar|valor }}{% else %}—{% endif %} m³</td></tr>
+    <tr class="ccp-total"><td><b>CCP</b></td>
+      <td class="form">(ISUF − IPUF*) · N</td>
       <td class="num"><b>{{ f.ccp|valor }}</b> m³</td></tr>
   </tbody>
 </table>
+
+<h3 class="ccp-h">Nivel de castigo por el estándar de pérdidas</h3>
+<p class="hint">El CCP es el <b>denominador</b> del cargo por consumo, pero el cobro se hace sobre el agua
+facturada (AF). Las pérdidas por encima del estándar inflan el CCP y no se recaudan: ese costo lo asume
+el prestador. Por cada peso reconocido en los componentes que se dividen por el CCP (CMO, CMI y, en
+acueducto, CMICT) se recupera <b>AF / CCP</b>.</p>
+{% if f.recuperacion is not none %}
+<div class="ix-cards">
+  <div class="ix-card"><div class="ix-top"><span class="ix-name">Recuperación</span></div>
+    <div class="ix-val">{{ pc(f.recuperacion) }}</div><div class="ix-cap">AF / CCP por peso reconocido</div></div>
+  <div class="ix-card"><div class="ix-top"><span class="ix-name">Castigo</span></div>
+    <div class="ix-val">{{ pc(f.castigo if (f.castigo and f.castigo > 0) else 0) }}</div><div class="ix-cap">1 − AF/CCP que asume el prestador</div></div>
+</div>
+{% if f.sobre_estandar and f.sobre_estandar > 0 %}
+<div class="ccp-castbar">
+  <span class="seg rec" style="width:{{ (f.recuperacion*100)|round(1) }}%"></span>
+  <span class="seg cas" style="width:{{ (f.castigo*100)|round(1) }}%"></span>
+</div>
+<div class="ccp-castleg">
+  <span><i class="rec"></i>Recaudado (AF) · {{ pc(f.recuperacion) }}</span>
+  <span><i class="cas"></i>Castigo (pérdidas sobre el estándar) · {{ pc(f.castigo) }}</span>
+</div>
+<p class="muted2" style="margin:6px 0 0">Ejemplo: por cada <b>$100</b> de costo reconocido (CMO/CMI) se
+recaudan <b>${{ ('%.1f'|format(f.recuperacion*100))|replace('.',',') }}</b> y el prestador asume
+<b>${{ ('%.1f'|format(f.castigo*100))|replace('.',',') }}</b>, porque el IPUF real
+({{ n2(f.ipuf_real) }}{% if f.estimado %} estimado{% endif %}) supera el estándar ({{ n2(f.ipuf_estandar) }}).</p>
+{% elif f.recuperacion >= 1 %}
+<p class="muted2" style="margin:6px 0 0">El IPUF real ({{ n2(f.ipuf_real) }}) está en o por debajo del
+estándar ({{ n2(f.ipuf_estandar) }}): no hay castigo y hay sobre-recuperación (AF/CCP ≥ 100 %).</p>
+{% endif %}
+{% endif %}
 {% else %}
 <h3 class="ccp-h">CCP resultante</h3>
-<p class="hint">Sin macromedición de producción (AP), el CCP no corrige pérdidas. En
-{{ s }}, el denominador del cargo por consumo es el agua facturada (AF).</p>
-<table class="tabla compact"><tbody>
-  <tr class="ccp-total"><td><b>CCP = AF</b></td><td class="num"><b>{{ f.ccp|valor }}</b> m³</td></tr>
-</tbody></table>
+<p class="hint">Sin la información necesaria no se puede calcular el CCP de {{ s }} (ver faltantes arriba).</p>
 {% endif %}
 {% endfor %}
 
@@ -171,5 +207,14 @@ IPUF* debe tomarse del art. {{ ccp.art.senda }}. En el período de inicio el top
 .ccp-leg{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;margin-top:5px}
 .ccp-leg span{display:inline-flex;align-items:center;gap:5px}
 .ccp-leg i{width:10px;height:10px;border-radius:2px;display:inline-block}
+.ccp-tag{font-size:10.5px;font-weight:600;padding:1px 6px;border-radius:999px;background:var(--chip,#efeada);color:var(--muted,#8a8578);margin-left:4px}
+.ccp-castbar{display:flex;gap:2px;height:22px;border-radius:6px;overflow:hidden;margin:10px 0 6px;background:var(--line,#e5e0d2)}
+.ccp-castbar .seg{height:100%}
+.ccp-castbar .seg.rec{background:#1f7a6b}
+.ccp-castbar .seg.cas{background:#b5651d}
+.ccp-castleg{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--muted,#8a8578)}
+.ccp-castleg i{width:10px;height:10px;border-radius:2px;display:inline-block;margin-right:5px;vertical-align:middle}
+.ccp-castleg i.rec{background:#1f7a6b}
+.ccp-castleg i.cas{background:#b5651d}
 </style>
 {% endblock %}

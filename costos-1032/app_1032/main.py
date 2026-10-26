@@ -394,11 +394,12 @@ def empresa_ccp(request: Request, eid: int):
         return r
     user = session_user(request)
     per_clave = request.query_params.get("at") or None
+    serv = request.query_params.get("serv") or None
     with db.scope_conn(scope_of(user)) as conn:
         emp = conn.execute(text("SELECT * FROM empresa WHERE id=:e"), {"e": eid}).mappings().first()
         if not emp:
             return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
-        datos = cv.resumen(conn, eid, per_clave)
+        datos = cv.resumen(conn, eid, per_clave, serv)
     return tpl.TemplateResponse(request, "ccp.html", _ctx(request, emp=emp, ccp=datos, meses=ops.MESES))
 
 

@@ -62,46 +62,88 @@ def _agg(conn, empresa_id, anios):
     return out
 
 
+def _es_acueducto(s):
+    return s.lower().startswith("acu")
+
+
+def _es_alcantarillado(s):
+    return s.lower().startswith("alc")
+
+
 def indicadores(conn, empresa_id, anios, ipuf_estrella):
-    """Indicadores y CCP por servicio para la ventana de años base dada (lista)."""
+    """Indicadores y CCP por servicio para la ventana de años base dada (lista).
+
+    CCP según el art. 2.1.2.1.3.3.1 (sin tope): CCP = (ISUF − IPUF*) × N × 12 = AP − IPUF*·N.
+    La diferencia CCP − AF son las pérdidas POR ENCIMA del estándar; como el cargo se cobra sobre
+    el agua facturada, ese costo lo asume el prestador → es el «castigo por pérdidas» (§ 11 bis del
+    marco). Por eso la recuperación por peso del CMO/CMI/CMICT_ac vale AF/CCP.
+
+    Alcantarillado (art. 2.1.2.1.3.3.1, fórmula de CCP_al): no tiene macromedición propia, así que
+    el IPUF real se ESTIMA con el del acueducto:
+        CCP_al = (ISUF_ac − ICUF_ac + ICUF_al − IPUF*)·N_al = AF_al + (IPUF_real_ac − IPUF*)·N_al.
+    """
     datos = _agg(conn, empresa_id, anios)
+    # IPUF real (por unidad) del acueducto, para estimar el de alcantarillado.
+    ipuf_real_ac = None
+    for s, d in datos.items():
+        if _es_acueducto(s) and d["ap"] > 0 and d["n"] > 0:
+            ipuf_real_ac = (d["ap"] - d["af"]) / d["n"]
+            break
     res = {}
     for s, d in datos.items():
         n, af, ap = d["n"], d["af"], d["ap"]
-        fila = {"anios": anios, "meses": d["meses"], "n": n, "af": af, "ap": ap,
-                "icuf": None, "ipuf_real": None, "isuf": None,
-                "perdidas_reales": None, "estandar": None, "reconocidas": None,
-                "ipuf_aplicado": None, "ccp": None, "fap": None, "isuf_ajustado": None,
-                "usa_ap": ap > 0, "falta": []}
+        fila = {"servicio": s, "anios": anios, "meses": d["meses"], "n": n, "af": af, "ap": ap,
+                "icuf": None, "ipuf_real": None, "isuf": None, "ipuf_estandar": ipuf_estrella,
+                "perdidas_reales": None, "perdidas_estandar": (ipuf_estrella * n if n > 0 else None),
+                "ccp": None, "sobre_estandar": None, "recuperacion": None, "castigo": None,
+                "estimado": False, "usa_ap": ap > 0, "fap": None, "isuf_ajustado": None, "falta": []}
         if n <= 0:
             fila["falta"].append("suscriptores (Σ suscriptores-mes = 0)")
         if af <= 0:
             fila["falta"].append("m³ facturados")
         if n > 0:
             fila["icuf"] = af / n
-        # pérdidas / IPUF solo con macromedición de producción (típico de acueducto)
-        if ap > 0 and n > 0:
+
+        if _es_alcantarillado(s) and ap <= 0:
+            # Sin macromedición propia: se estima con el IPUF real del acueducto.
+            if ipuf_real_ac is not None and n > 0 and af > 0:
+                fila["estimado"] = True
+                fila["ipuf_real"] = ipuf_real_ac
+                fila["isuf"] = fila["icuf"] + ipuf_real_ac
+                fila["perdidas_reales"] = ipuf_real_ac * n
+                fila["ccp"] = af + (ipuf_real_ac - ipuf_estrella) * n
+            elif af > 0:
+                fila["ccp"] = af
+                fila["falta"].append("macromedición de ACUEDUCTO (para estimar el IPUF de alcantarillado)")
+        elif ap > 0 and n > 0:
+            # Servicio con macromedición propia (acueducto): fórmula directa, sin tope.
             fila["ipuf_real"] = (ap - af) / n
             fila["isuf"] = ap / n
             fila["perdidas_reales"] = max(ap - af, 0.0)
-            fila["estandar"] = ipuf_estrella * n
-            fila["reconocidas"] = min(fila["perdidas_reales"], fila["estandar"])
-            fila["ipuf_aplicado"] = fila["reconocidas"] / n
-            fila["ccp"] = af + fila["reconocidas"]
+            fila["ccp"] = ap - ipuf_estrella * n          # = AF + (pérdidas reales − estándar)
         elif af > 0:
-            # sin AP (p. ej. alcantarillado): el CCP no corrige; el denominador es AF
             fila["ccp"] = af
-            if s.lower().startswith("acu"):
+            if _es_acueducto(s):
                 fila["falta"].append("m³ producidos (macromedición)")
-        # Fap (ajuste optativo del ISUF)
+
+        # Fap (ajuste optativo del ISUF, parágrafo 3). Si aplica, el CCP usa el ISUF ajustado.
         f = ccp.get(conn, empresa_id, s)
         if f and f["fap"] is not None:
             fila["fap"] = float(f["fap"])
             fila["fap_meta"] = {"ivh": f["ivh"], "metodologia": f["metodologia"],
                                 "cumplio_meta": f["cumplio_meta"], "ipuf_real_fap": f["ipuf_real"],
                                 "aplica": f["aplica"]}
-            if fila["isuf"] is not None and f["aplica"]:
+            if fila["isuf"] is not None:
                 fila["isuf_ajustado"] = fila["isuf"] - float(f["fap"])
+                # El Fap es optativo; se muestra como referencia pero el CCP del estudio se calcula
+                # con el ISUF sin ajustar, igual que el motor de recálculo (coherencia).
+
+        # Derivados del CCP: pérdidas sobre el estándar, recuperación (AF/CCP) y castigo.
+        if fila["ccp"] is not None:
+            fila["sobre_estandar"] = fila["ccp"] - af
+            if fila["ccp"] > 0:
+                fila["recuperacion"] = af / fila["ccp"]
+                fila["castigo"] = 1.0 - af / fila["ccp"]
         res[s] = fila
     return res
 
@@ -220,9 +262,10 @@ def serie_mensual(conn, empresa_id, servicio, anios=None):
     }
 
 
-def resumen(conn, empresa_id, per_clave=None):
+def resumen(conn, empresa_id, per_clave=None, servicio=None):
     """Paquete completo para la vista CCP, por AÑO TARIFARIO. El período seleccionado define su
-    ventana de años base (el de inicio = 2024–2025) y toda la información se calcula sobre ella."""
+    ventana de años base (el de inicio = 2024–2025) y toda la información se calcula sobre ella.
+    `servicio` (opcional) restringe la vista a un servicio para acortar el scroll (selector)."""
     anios_data = set(anios_con_datos(conn, empresa_id))
     # Años tarifarios ofrecidos: los que tienen algún año base con datos; siempre el de inicio.
     con_datos = [p for p in per.PERIODOS if set(p["anios_base"]) & anios_data]
@@ -234,8 +277,12 @@ def resumen(conn, empresa_id, per_clave=None):
     anios_base = sel["anios_base"]
     lbl = "–".join(str(a) for a in anios_base)
     ipuf_estrella = rc.ipuf_estrella(conn, empresa_id)
-    ind = indicadores(conn, empresa_id, anios_base, ipuf_estrella)
+    ind_full = indicadores(conn, empresa_id, anios_base, ipuf_estrella)
+    servicios = sorted(ind_full.keys())
+    serv_sel = servicio if servicio in ind_full else None
+    ind = {s: f for s, f in ind_full.items() if (not serv_sel or s == serv_sel)}
     series = {s: serie_mensual(conn, empresa_id, s, anios_base) for s in ind.keys()}
     return {"periodo": sel, "periodos": opts, "anios_base": anios_base, "anios_base_lbl": lbl,
             "anio": lbl, "ipuf_estrella": ipuf_estrella, "indicadores": ind, "series": series,
+            "servicios": servicios, "servicio": serv_sel, "hay_datos": bool(ind_full),
             "senda": senda(conn, empresa_id), "art": ART}

@@ -2,8 +2,9 @@
 """Pruebas de la vista CCP (Consumo Corregido por Pérdidas):
 
   · indicadores por unidad de facturación: ICUF=AF/N, IPUF real=(AP−AF)/N, ISUF=AP/N=ICUF+IPUF;
-  · IPUF aplicado = mín(IPUF real, IPUF*) y CCP = AF + pérdidas reconocidas (caso tope activo);
-  · alcantarillado sin macromedición: CCP = AF, sin IPUF/ISUF;
+  · CCP sin tope (art. 2.1.2.1.3.3.1): CCP = (ISUF − IPUF*)·N = AP − IPUF*·N;
+  · nivel de castigo: recuperación = AF/CCP, castigo = 1 − AF/CCP;
+  · alcantarillado sin macromedición: IPUF real estimado del acueducto → CCP_al = AF + (IPUFac−IPUF*)·N;
   · senda del IPUF* por año tarifario (segundo segmento = 6,6,6,5,5,4);
   · la ruta /empresa/{id}/ccp responde 200.
 
@@ -48,7 +49,7 @@ ex("INSERT INTO macromedicion(empresa_id,anio,mes,servicio,punto,m3_producido,or
 ex("INSERT INTO carga_mensual(empresa_id,anio,mes,servicio,suscriptores,m3_facturados,origen) "
    "VALUES (1,2097,1,'alcantarillado',800,12000,'test')")
 
-print("== Indicadores y CCP (acueducto, tope activo) ==")
+print("== Indicadores y CCP (acueducto, fórmula sin tope art. 2.1.2.1.3.3.1) ==")
 with db.scope_conn({"allow_all": True, "empresa_ids": [], "user_id": 1}) as conn:
     # Se calcula directamente sobre la ventana de años base [2097] (API por año tarifario).
     ipuf_e = cv.rc.ipuf_estrella(conn, 1)
@@ -60,15 +61,25 @@ with db.scope_conn({"allow_all": True, "empresa_ids": [], "user_id": 1}) as conn
     check(near(ac["isuf"], 24.0) and near(ac["isuf"], ac["icuf"] + ac["ipuf_real"]),
           f"ISUF = AP/N = 24,0 = ICUF+IPUF (obtenido {ac['isuf']})")
     check(near(r["ipuf_estrella"], 6.0), "IPUF* del segmento = 6,0")
-    check(near(ac["ipuf_aplicado"], 6.0), f"IPUF aplicado = mín(9; 6) = 6,0 (obtenido {ac['ipuf_aplicado']})")
-    check(near(ac["reconocidas"], 6000.0), f"pérdidas reconocidas = 6·N = 6000 (obtenido {ac['reconocidas']})")
-    check(near(ac["ccp"], 21000.0), f"CCP = AF + reconocidas = 21000 (obtenido {ac['ccp']})")
+    # CCP = (ISUF − IPUF*)·N = AP − IPUF*·N = 24000 − 6·1000 = 18000 (sin tope)
+    check(near(ac["ccp"], 18000.0), f"CCP = AP − IPUF*·N = 18000 (obtenido {ac['ccp']})")
+    check(near(ac["sobre_estandar"], 3000.0),
+          f"CCP − AF = pérdidas sobre el estándar = 3000 (obtenido {ac['sobre_estandar']})")
+    check(near(ac["recuperacion"], 15000.0 / 18000.0),
+          f"recuperación = AF/CCP = 0,833 (obtenido {ac['recuperacion']})")
+    check(near(ac["castigo"], 1 - 15000.0 / 18000.0),
+          f"castigo = 1 − AF/CCP = 0,167 (obtenido {ac['castigo']})")
 
-    print("== Alcantarillado sin macromedición ==")
+    print("== Alcantarillado: IPUF real estimado del acueducto (art. 2.1.2.1.3.3.1) ==")
     al = r["indicadores"]["alcantarillado"]
-    check(al["ipuf_real"] is None and al["isuf"] is None, "sin AP: IPUF e ISUF no aplican")
-    check(near(al["ccp"], 12000.0), f"CCP = AF = 12000 (obtenido {al['ccp']})")
+    check(al["estimado"] is True, "alcantarillado marca el IPUF como estimado")
+    check(near(al["ipuf_real"], 9.0), f"IPUF real alcantarillado = IPUF real acueducto = 9,0 (obtenido {al['ipuf_real']})")
     check(near(al["icuf"], 15.0), "ICUF del alcantarillado = AF/N = 15,0")
+    check(near(al["isuf"], 24.0), f"ISUF alcantarillado = ICUF + IPUF estimado = 24,0 (obtenido {al['isuf']})")
+    # CCP_al = AF + (IPUF_real_ac − IPUF*)·N_al = 12000 + (9−6)·800 = 14400
+    check(near(al["ccp"], 14400.0), f"CCP_al = AF + (IPUFac−IPUF*)·N = 14400 (obtenido {al['ccp']})")
+    check(near(al["castigo"], 1 - 12000.0 / 14400.0),
+          f"castigo alcantarillado = 1 − AF/CCP (obtenido {al['castigo']})")
 
     print("== Senda del IPUF* por año tarifario ==")
     sd = r["senda"]
@@ -84,8 +95,8 @@ c.post("/login", data={"email": "mgomeza78@gmail.com", "password": PW, "csrf": m
        follow_redirects=False)
 check(c.get("/empresa/1/ccp").status_code == 200, "GET /empresa/1/ccp responde 200")
 html = c.get("/empresa/1/ccp").text
-check("Consumo Corregido por Pérdidas" in html and "ISUF" in html and "IPUF aplicado" in html,
-      "la página muestra CCP, ISUF e IPUF aplicado")
+check("Consumo Corregido por Pérdidas" in html and "ISUF" in html and "Nivel de castigo" in html,
+      "la página muestra CCP, ISUF y el nivel de castigo")
 
 limpiar()
 print()

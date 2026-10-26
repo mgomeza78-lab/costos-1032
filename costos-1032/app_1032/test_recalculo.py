@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Pruebas del motor de recálculo mensual (seguimiento).
 
-  · CCP del mes con tope IPUF* (art. 2.1.2.1.3.3): pérdidas reconocidas ≤ estándar;
+  · CCP del mes sin tope (art. 2.1.2.1.3.3.1): CCP = (ISUF − IPUF*)·N = AP − IPUF*·N;
   · el motor reproduce los componentes validados al alimentarlo con drivers = año base;
   · integración: recalcular por empresa produce costos del mes y acumulado, y la CCP
     muestra el castigo por pérdidas de la macromedición de muestra;
@@ -39,18 +39,23 @@ def cli(email):
     return c
 
 
-# ---------------- 1) Unidad: CCP con tope IPUF* ----------------
-print("== CCP del mes con tope IPUF* (art. 2.1.2.1.3.3) ==")
-# pérdidas reales (2.200.000-1.463.017=736.983) > estándar (6×122.188=733.128) → capado
-ccp, pr, rec = rs.ccp_mes(af=1463017, ap=2200000, n=122188, ipuf=6)
-check(abs(rec - 6 * 122188) < 1 and abs(ccp - (1463017 + 6 * 122188)) < 1,
-      f"pérdidas capadas al estándar (reconocidas={rec:,.0f}, CCP={ccp:,.0f})")
-# pérdidas reales < estándar → se reconoce toda la producción (CCP=AP)
-ccp2, pr2, rec2 = rs.ccp_mes(af=1000000, ap=1050000, n=100000, ipuf=6)
-check(abs(ccp2 - 1050000) < 1, f"pérdidas bajo el estándar: CCP=AP ({ccp2:,.0f})")
-# sin macromedición (AP=0) → CCP=AF
+# ---------------- 1) Unidad: CCP sin tope (art. 2.1.2.1.3.3.1) ----------------
+print("== CCP del mes SIN tope (art. 2.1.2.1.3.3.1): CCP = AP − IPUF*·N ==")
+# pérdidas reales (2.200.000-1.463.017=736.983) > estándar (6×122.188=733.128): CCP − AF = sobre estándar
+ccp, pr, sob = rs.ccp_mes(af=1463017, ap=2200000, n=122188, ipuf=6)
+check(abs(ccp - (2200000 - 6 * 122188)) < 1 and abs((ccp - 1463017) - sob) < 1,
+      f"CCP = AP − IPUF*·N = {2200000 - 6 * 122188:,.0f} (obtenido {ccp:,.0f}); sobre estándar = CCP − AF = {sob:,.0f}")
+# por debajo del estándar: CCP = AP − IPUF*·N < AF (sobre-recuperación, no castigo)
+ccp2, pr2, sob2 = rs.ccp_mes(af=1000000, ap=1050000, n=100000, ipuf=6)
+check(abs(ccp2 - (1050000 - 6 * 100000)) < 1 and ccp2 < 1000000,
+      f"por debajo del estándar: CCP = {ccp2:,.0f} < AF (sobre-recuperación)")
+# sin macromedición (AP=0) y sin estimación → CCP = AF
 ccp3, _, _ = rs.ccp_mes(af=500000, ap=0, n=50000, ipuf=6)
-check(ccp3 == 500000, "sin AP: CCP = AF")
+check(ccp3 == 500000, "sin AP ni estimación: CCP = AF")
+# alcantarillado sin AP: IPUF real estimado del acueducto → CCP = AF + (IPUFreal − IPUF*)·N
+ccp4, pr4, sob4 = rs.ccp_mes(af=800000, ap=0, n=90000, ipuf=6, ipuf_real_ext=10)
+check(abs(ccp4 - (800000 + (10 - 6) * 90000)) < 1 and abs(pr4 - 10 * 90000) < 1,
+      f"alcantarillado estimado: CCP = AF + (IPUFac−IPUF*)·N = {800000 + (10 - 6) * 90000:,.0f} (obtenido {ccp4:,.0f})")
 
 # ---------------- 2) Reproducción del año base ----------------
 print("== Reproducción de los componentes validados (drivers = año base) ==")

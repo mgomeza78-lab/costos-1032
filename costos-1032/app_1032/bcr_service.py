@@ -284,15 +284,35 @@ def ipc_dic(conn, anio):
 
 
 def ccp_desde_consumos(conn, empresa_id, servicio, anio=2025, ipuf=IPUF_INICIO):
-    """CCP del año = m³ facturados + pérdidas aceptables (IPUF* × Σ suscriptores-mes).
-    Para el período de inicio IPUF* = 6 m³/susc·mes (art. 2.1.2.1.3.5.2, par. 1). None si no hay datos."""
+    """CCP del año (art. 2.1.2.1.3.3.1), SIN tope: CCP = (ISUF − IPUF*)·N = AP − IPUF*·N.
+    AP = Σ m³ producidos (macromedición) del año. IPUF* = 6 m³/susc·mes en el período de inicio.
+    En alcantarillado (sin macromedición propia) el IPUF real se estima con el del acueducto del
+    mismo año. Si no hay forma de estimar las pérdidas, CCP = AF (sin corrección). None si no hay
+    información comercial."""
     row = conn.execute(text(
         "SELECT coalesce(sum(m3_facturados),0) AS m3, coalesce(sum(suscriptores),0) AS susc, count(*) AS n "
         "FROM carga_mensual WHERE empresa_id=:e AND servicio=:s AND anio=:a AND cod_dane='' AND m3_facturados IS NOT NULL"),
         {"e": empresa_id, "s": servicio, "a": anio}).mappings().first()
-    if not row or not row["n"]:
+    if not row or not row["n"] or not row["susc"]:
         return None
-    return float(row["m3"]) + float(ipuf) * float(row["susc"])
+    af = float(row["m3"]); n = float(row["susc"])
+    ap = float(conn.execute(text(
+        "SELECT coalesce(sum(m3_producido),0) FROM macromedicion WHERE empresa_id=:e AND servicio=:s AND anio=:a"),
+        {"e": empresa_id, "s": servicio, "a": anio}).scalar() or 0.0)
+    if ap > 0:
+        return ap - float(ipuf) * n
+    # Sin AP propio (alcantarillado): estima el IPUF real con el del acueducto del año base.
+    ac = conn.execute(text(
+        "SELECT coalesce(sum(m3_facturados),0) AS af, coalesce(sum(suscriptores),0) AS susc "
+        "FROM carga_mensual WHERE empresa_id=:e AND servicio='acueducto' AND anio=:a AND cod_dane='' "
+        "AND m3_facturados IS NOT NULL"), {"e": empresa_id, "a": anio}).mappings().first()
+    ap_ac = float(conn.execute(text(
+        "SELECT coalesce(sum(m3_producido),0) FROM macromedicion WHERE empresa_id=:e AND servicio='acueducto' AND anio=:a"),
+        {"e": empresa_id, "a": anio}).scalar() or 0.0)
+    if ac and ac["susc"] and ap_ac > 0:
+        ipuf_real_ac = (ap_ac - float(ac["af"])) / float(ac["susc"])
+        return af + (ipuf_real_ac - float(ipuf)) * n
+    return af
 
 
 def param_get(conn, empresa_id, servicio):

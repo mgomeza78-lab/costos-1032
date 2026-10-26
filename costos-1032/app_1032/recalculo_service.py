@@ -15,9 +15,11 @@ Fórmulas (pesos del año base; el cobrado ya viene indexado):
           denom = CCP en acueducto, AF en alcantarillado)
   CMI   = estructural (BCR₀, anual); se reporta el valor base (indexado aparte).
 
-CCP del mes (art. 2.1.2.1.3.3): CCP = AF + pérdidas reconocidas, con las pérdidas limitadas
-al estándar IPUF* (m³/suscriptor·mes). Si las pérdidas reales ≤ estándar, se reconoce toda la
-producción (CCP = AP); si las superan, se reconoce solo hasta el estándar (castigo por pérdidas).
+CCP del mes (art. 2.1.2.1.3.3.1): CCP = (ISUF − IPUF*)·N = AP − IPUF*·N, SIN tope. La diferencia
+CCP − AF son las pérdidas POR ENCIMA del estándar IPUF* (m³/suscriptor·mes); como el cargo por
+consumo se cobra sobre el agua facturada (AF), ese costo lo asume el prestador (castigo por
+pérdidas: la recuperación por peso del CMO/CMI/CMICT_ac vale AF/CCP). En alcantarillado, que no
+tiene macromedición propia, el IPUF real se estima con el del acueducto del mismo mes.
 """
 from sqlalchemy import text
 
@@ -67,16 +69,24 @@ def _drivers_mes(conn, empresa_id):
     return d
 
 
-def ccp_mes(af, ap, n, ipuf):
-    """Consumo corregido por pérdidas del mes (art. 2.1.2.1.3.3) con tope IPUF*.
-    Pérdidas reconocidas = min(pérdidas reales, estándar IPUF*·N). Si no hay AP (p. ej.
-    alcantarillado sin medición de producción), CCP = AF (sin corrección)."""
-    if not ap or ap <= 0:
-        return af, 0.0, 0.0
-    perdidas_reales = max(ap - af, 0.0)
+def ccp_mes(af, ap, n, ipuf, ipuf_real_ext=None):
+    """Consumo corregido por pérdidas del mes (art. 2.1.2.1.3.3.1), SIN tope:
+    CCP = (ISUF − IPUF*)·N = AP − IPUF*·N. Devuelve (ccp, perdidas_reales, sobre_estandar),
+    donde sobre_estandar = pérdidas reales − estándar = CCP − AF (puede ser negativo si el
+    prestador está por debajo del estándar).
+
+    · Con AP (acueducto): perdidas_reales = AP − AF; CCP = AP − IPUF*·N.
+    · Sin AP pero con `ipuf_real_ext` (alcantarillado: IPUF real estimado del acueducto):
+      perdidas_reales = ipuf_real_ext·N; CCP = AF + (ipuf_real_ext − IPUF*)·N.
+    · Sin AP y sin estimación: CCP = AF (no se puede corregir)."""
     estandar = ipuf * n          # m³ del mes (IPUF* es m³/susc·mes)
-    reconocidas = min(perdidas_reales, estandar)
-    return af + reconocidas, perdidas_reales, reconocidas
+    if ap and ap > 0 and n > 0:
+        perdidas_reales = max(ap - af, 0.0)
+        return max(ap - estandar, 0.0), perdidas_reales, perdidas_reales - estandar
+    if ipuf_real_ext is not None and n > 0:
+        perdidas_reales = ipuf_real_ext * n
+        return max(af + perdidas_reales - estandar, 0.0), perdidas_reales, perdidas_reales - estandar
+    return af, 0.0, 0.0
 
 
 def _num_mes(conn, empresa_id):
@@ -119,6 +129,9 @@ def recalcular(conn, empresa_id):
         return 0
     ipuf = ipuf_estrella(conn, empresa_id)
     drivers = _drivers_mes(conn, empresa_id)
+    # Drivers del acueducto por (año, mes), para estimar el IPUF real del alcantarillado (sin
+    # macromedición propia) según el art. 2.1.2.1.3.3.1 (fórmula de CCP_al).
+    ac_drv = {(a, m): v for (s, a, m), v in drivers.items() if s.lower().startswith("acu")}
     nums = _num_mes(conn, empresa_id)
     # tarifa cobrada (indexada) para la brecha de suficiencia
     cobr = {}
@@ -155,7 +168,13 @@ def recalcular(conn, empresa_id):
         for (a, m) in meses:
             dv = drivers.get((servicio, a, m), {"n": 0.0, "af": 0.0, "ap": 0.0})
             n_mes, af_mes, ap_mes = dv["n"], dv["af"], dv["ap"]
-            ccp_m, perd_real, perd_rec = ccp_mes(af_mes, ap_mes, n_mes, ipuf)
+            # Alcantarillado sin AP propio: estima el IPUF real con el del acueducto del mes.
+            ipuf_ext = None
+            if not es_ac and (not ap_mes or ap_mes <= 0):
+                da = ac_drv.get((a, m))
+                if da and da.get("ap", 0) > 0 and da.get("n", 0) > 0:
+                    ipuf_ext = (da["ap"] - da["af"]) / da["n"]
+            ccp_m, perd_real, _ = ccp_mes(af_mes, ap_mes, n_mes, ipuf, ipuf_ext)
             ianc = (perd_real / ap_mes * 100.0) if ap_mes else None
             num, origen = _numeradores(bs, nums.get((servicio, a, m)))
             denom_m = _denom_cmict(ccp_m, af_mes)        # CMICT: CCP (ac) / AF (al), escalado
