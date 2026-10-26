@@ -18,11 +18,16 @@ from sqlalchemy import text
 # y uno nuevo en camelCase (codigoClaseUso, consumoM3, …). Cada concepto lista sus alias EN
 # MAYÚSCULAS y sin el sufijo _NN (como los deja _mapa_base); se toma el primer alias presente.
 # Confirmados contra archivos reales de Las Ceibas (AC y ALC, años 2024–2026).
-# `muni` (opcional): columna del municipio/DANE del reporte, para desagregar por APS. Si el
-# reporte la trae, suscriptores y m³ se reparten por APS (la llave coincide con `divipola`).
-_MUNI_ALIASES = ["DIVIPOLA", "DANE", "CODDANE", "CODIGODANE", "CODMUNICIPIO", "CODIGOMUNICIPIO",
-                 "IDMUNICIPIO", "MUNICIPIO", "MUNICIPIODANE", "CODIGODIVIPOLA", "CODIGOMPIO", "MPIO",
-                 "CODMPIO", "CODIGOMUNICIPIODANE"]
+# Para desagregar por APS. El reporte del SUI trae el DANE en DOS columnas: DEPARTAMENTO (2 díg.)
+# y MUNICIPIO (3 díg.); se combinan → cod_dane de 5 díg. (p. ej. 41 + 001 = 41001 Neiva, 41 + 524 =
+# 41524 Palermo). `muni` cubre el caso de un solo campo con el DANE completo (fallback). La llave
+# coincide con `divipola`. (Se ignora CENTROPOBLADO.)
+_DEPTO_ALIASES = ["DEPARTAMENTO", "CODDEPARTAMENTO", "CODIGODEPARTAMENTO", "DEPTO", "CODDEPTO",
+                  "IDDEPARTAMENTO", "CODDANEDEPARTAMENTO", "DPTO", "CODDPTO"]
+_MUN_ALIASES = ["MUNICIPIO", "CODMUNICIPIO", "CODIGOMUNICIPIO", "MPIO", "CODMPIO", "IDMUNICIPIO",
+                "CODIGOMPIO"]
+_DANE_FULL_ALIASES = ["DIVIPOLA", "DANE", "CODDANE", "CODIGODANE", "CODIGODIVIPOLA",
+                      "MUNICIPIODANE", "CODIGOMUNICIPIODANE"]
 CAMPOS_SUI = {
     "acueducto": {
         "clase": ["CLASEUSO", "CODIGOCLASEUSO"],
@@ -30,7 +35,7 @@ CAMPOS_SUI = {
         "sub":   ["CONS_SUB", "CONSUMOSUBSIDIADOM3"],
         "fcf":   ["FACTORSUBSIDIOCARGOFIJO", "FACTORSUBSIDIOCONTRIBUCIONCARGOFIJO"],
         "fcc":   ["FACTORSUBSIDIOCONSUMO", "FACTORSUBSIDIOCONTRIBUCIONCONSUMO"],
-        "muni":  _MUNI_ALIASES,
+        "depto": _DEPTO_ALIASES, "mun": _MUN_ALIASES, "muni": _DANE_FULL_ALIASES,
     },
     "alcantarillado": {
         "clase": ["CLASEUSO", "CODIGOCLASEUSO"],
@@ -38,11 +43,20 @@ CAMPOS_SUI = {
         "sub":   ["VERTIMIENTOSUB", "VERTIMIENTOSUBSIDIADOM3"],
         "fcf":   ["FACTORSUBCONTCFIJO", "FACTORSUBSIDIOCONTRIBUCIONCARGOFIJO"],
         "fcc":   ["FACTORSUBSIDIOVERTIMIENTO", "FACTORSUBSIDIOCONTRIBUCIONCONSUMO"],
-        "muni":  _MUNI_ALIASES,
+        "depto": _DEPTO_ALIASES, "mun": _MUN_ALIASES, "muni": _DANE_FULL_ALIASES,
     },
 }
-# Conceptos imprescindibles para agregar por clase; factores de subsidio y municipio son opcionales.
+# Conceptos imprescindibles para agregar por clase; factores, departamento y municipio son opcionales.
 CAMPOS_SUI_REQ = {"clase", "cons", "sub"}
+
+
+def _cod_dane_combinado(depto, mun):
+    """Combina DEPARTAMENTO (2 díg.) + MUNICIPIO (3 díg.) → cod_dane de 5 díg. '' si falta alguno."""
+    d = "".join(ch for ch in (depto or "") if ch.isdigit())
+    mu = "".join(ch for ch in (mun or "") if ch.isdigit())
+    if not d or not mu:
+        return ""
+    return d.zfill(2)[-2:] + mu.zfill(3)[-3:]
 _SUFIJO = re.compile(r"_\d+$")
 
 _SERV = {"AC": "acueducto", "AL": "alcantarillado",
@@ -317,9 +331,12 @@ def cargar_facturacion_sui(conn, empresa_id, servicio, anio, mes, contenido):
         det = ", ".join(etq.get(c, c) for c in faltan)
         return 0, [f"no se reconoció el reporte de {serv}: faltan columnas de {det}; "
                    f"verifica que sea el CSV original del SUI (no un Excel .xlsx)"]
-    # Si el reporte trae municipio/DANE, se reparte por APS (la llave coincide con `divipola`);
-    # el municipio que no corresponda a un APS de la empresa cae en el conjunto ('').
-    mapa = aps_mapa(conn, empresa_id) if campos.get("muni") else {}
+    # Desagregación por APS: el DANE viene en DOS columnas (DEPARTAMENTO + MUNICIPIO) que se
+    # combinan (41 + 001 = 41001); si solo hay un campo con el DANE completo, se usa ese. El
+    # municipio que no corresponda a un APS de la empresa cae en el conjunto ('') sin perder el dato.
+    usa_combo = bool(campos.get("depto") and campos.get("mun"))
+    usa_aps = usa_combo or bool(campos.get("muni"))
+    mapa = aps_mapa(conn, empresa_id) if usa_aps else {}
     # Agregación en streaming (no materializa toda la lista): clave para los archivos de ~30 MB.
     #  · agg_q: cantidades por (clase, cod_dane) — alimenta el detalle por APS.
     #  · agg_f: factores por clase (los factores no dependen del APS).
@@ -330,9 +347,12 @@ def cargar_facturacion_sui(conn, empresa_id, servicio, anio, mes, contenido):
         if clv is None:
             continue
         cod = ""
-        if campos.get("muni"):
-            cod, _e = _resolver_aps(r.get(campos["muni"]), mapa)
-            cod = cod or ""          # municipio no reconocido -> conjunto (sin perder el dato)
+        if usa_combo:
+            cod5 = _cod_dane_combinado(r.get(campos["depto"]), r.get(campos["mun"]))
+            if cod5:
+                cod, _e = _resolver_aps(cod5, mapa); cod = cod or ""
+        elif campos.get("muni"):
+            cod, _e = _resolver_aps(r.get(campos["muni"]), mapa); cod = cod or ""
         a = agg_q[(clv, cod)]
         a["n"] += 1
         a["m3"] += _num(r.get(campos["cons"])) or 0.0

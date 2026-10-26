@@ -35,6 +35,37 @@
   {{ f.falta|join('; ') }}. Debe solicitarse a la empresa / cargarse para completar el CCP.</div>
 {% endif %}
 
+{% set sm = ccp.series.get(s) %}
+{% if sm and sm.labels %}
+<h3 class="ccp-h">Gráficas mensuales</h3>
+<div class="ccp-graf2">
+  <div class="ccp-gcard">
+    <div class="ccp-gtit">Agua producida vs. facturada (m³/mes)</div>
+    <svg viewBox="0 0 100 36" preserveAspectRatio="none" class="ccp-svg">
+      <line x1="0" y1="35" x2="100" y2="35" class="ccp-axisln"/>
+      {% if sm.hay_ap %}<polyline points="{{ sm.vol.ap }}" fill="none" stroke="#3b6ea5" stroke-width="0.7" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>{% endif %}
+      <polyline points="{{ sm.vol.af }}" fill="none" stroke="#1f7a6b" stroke-width="0.7" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>
+    </svg>
+    <div class="ccp-xlab"><span>{{ sm.labels[0] }}</span>{% if sm.labels|length>2 %}<span>{{ sm.labels[(sm.labels|length)//2] }}</span>{% endif %}<span>{{ sm.labels[-1] }}</span></div>
+    <div class="ccp-leg">{% if sm.hay_ap %}<span><i style="background:#3b6ea5"></i>Producida ({{ sm.vol.ap_ult|valor }})</span>{% endif %}
+      <span><i style="background:#1f7a6b"></i>Facturada ({{ sm.vol.af_ult|valor }})</span></div>
+  </div>
+  <div class="ccp-gcard">
+    <div class="ccp-gtit">Indicadores por unidad (m³/susc·mes)</div>
+    <svg viewBox="0 0 100 36" preserveAspectRatio="none" class="ccp-svg">
+      <line x1="0" y1="35" x2="100" y2="35" class="ccp-axisln"/>
+      {% if sm.hay_ap %}<polyline points="{{ sm.ind.isuf }}" fill="none" stroke="#7a4fa0" stroke-width="0.7" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>
+      <polyline points="{{ sm.ind.ipuf }}" fill="none" stroke="#b5651d" stroke-width="0.7" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>{% endif %}
+      <polyline points="{{ sm.ind.icuf }}" fill="none" stroke="#1f7a6b" stroke-width="0.7" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>
+    </svg>
+    <div class="ccp-xlab"><span>{{ sm.labels[0] }}</span>{% if sm.labels|length>2 %}<span>{{ sm.labels[(sm.labels|length)//2] }}</span>{% endif %}<span>{{ sm.labels[-1] }}</span></div>
+    <div class="ccp-leg"><span><i style="background:#1f7a6b"></i>ICUF ({{ n2(sm.ind.icuf_ult) }})</span>
+      {% if sm.hay_ap %}<span><i style="background:#b5651d"></i>IPUF ({{ n2(sm.ind.ipuf_ult) }})</span>
+      <span><i style="background:#7a4fa0"></i>ISUF ({{ n2(sm.ind.isuf_ult) }})</span>{% endif %}</div>
+  </div>
+</div>
+{% endif %}
+
 <h3 class="ccp-h">Datos base</h3>
 <div class="ix-cards">
   <div class="ix-card"><div class="ix-top"><span class="ix-name">N</span></div>
@@ -127,4 +158,16 @@ IPUF* debe tomarse del art. {{ ccp.art.senda }}. En el período de inicio el top
 {% endif %}
 
 {% endif %}
+<style>
+.ccp-graf2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:6px 0 12px}
+@media(max-width:720px){.ccp-graf2{grid-template-columns:1fr}}
+.ccp-gcard{min-width:0}
+.ccp-gtit{font-size:12.5px;color:var(--muted,#8a8578);margin-bottom:3px}
+.ccp-svg{width:100%;height:150px;display:block;background:var(--paper,#fff);border:1px solid var(--line,#e5e0d2);border-radius:var(--r,8px)}
+.ccp-axisln{stroke:var(--line,#d8d2c4);stroke-width:0.3;vector-effect:non-scaling-stroke}
+.ccp-xlab{display:flex;justify-content:space-between;font-size:11px;color:var(--muted,#8a8578);margin-top:2px}
+.ccp-leg{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;margin-top:5px}
+.ccp-leg span{display:inline-flex;align-items:center;gap:5px}
+.ccp-leg i{width:10px;height:10px;border-radius:2px;display:inline-block}
+</style>
 {% endblock %}

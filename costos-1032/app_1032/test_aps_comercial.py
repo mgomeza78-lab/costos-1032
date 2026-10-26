@@ -34,14 +34,15 @@ def _clean():
 
 _clean()
 
-# --- Reporte SUI de acueducto CON municipio/DANE (una fila por suscriptor) ---
+# --- Reporte SUI de acueducto en el FORMATO REAL: DANE en dos columnas DEPARTAMENTO(2)+MUNICIPIO(3)
+#     y encabezados con sufijo _NN (una fila por suscriptor). 41+001=41001 Neiva, 41+524=41524 Palermo.
 sui_muni = (
-    "CLASEUSO,LECT_CONSUMO,CONS_SUB,DIVIPOLA\n"
-    "1,20,20,41001\n"
-    "1,20,20,41001\n"      # clase 1, Neiva: 2 susc, 40 m3
-    "5,30,0,41524\n"
-    "5,30,0,41524\n"       # clase 5, Palermo: 2 susc, 60 m3
-    "5,30,0,41001\n"       # clase 5, Neiva: 1 susc, 30 m3
+    "NUID_1,DEPARTAMENTO_2,MUNICIPIO_3,CENTROPOBLADO_4,CLASEUSO_16,LECT_CONSUMO_26,CONS_SUB_27\n"
+    "1,41,001,001,1,20,20\n"
+    "2,41,001,001,1,20,20\n"      # clase 1, Neiva: 2 susc, 40 m3
+    "3,41,524,001,5,30,0\n"
+    "4,41,524,001,5,30,0\n"       # clase 5, Palermo: 2 susc, 60 m3
+    "5,41,001,001,5,30,0\n"       # clase 5, Neiva: 1 susc, 30 m3
 )
 print("== SUI con municipio → detalle por (clase, APS) + resumen conjunto ==")
 with db.scope_conn({"allow_all": True}) as cn:
@@ -82,7 +83,7 @@ check(fc.get(5) == 3, f"factura clase 5 = 3 susc (Neiva 1 + Palermo 2, una sola 
 check(fc.get(1) == 2, f"factura clase 1 = 2 susc ({fc.get(1)})")
 
 print("== Re-cargue del mismo mes SIN municipio → reemplazo limpio (sin huérfanas por APS) ==")
-sui_sin = ("CLASEUSO,LECT_CONSUMO,CONS_SUB\n" "1,20,20\n" "1,20,20\n" "5,30,0\n")
+sui_sin = ("CLASEUSO_16,LECT_CONSUMO_26,CONS_SUB_27\n" "1,20,20\n" "1,20,20\n" "5,30,0\n")
 with db.scope_conn({"allow_all": True}) as cn:
     ingesta.cargar_facturacion_sui(cn, EID, "acueducto", A, 7, sui_sin)
 with db.engine_owner.connect() as cn:
@@ -146,6 +147,42 @@ with db.engine_owner.connect() as cn:
     tot_cace2 = rc._num_mes(cn, EID).get(("acueducto", A, 9), {}).get("CACe")
 check(danes2 == [""], f"recargar el conjunto deja solo '' ({danes2})")
 check(tot_cace2 == 1000.0, f"total vuelve a 1000 (un solo balance conjunto) ({tot_cace2})")
+
+print("== Balance «Cargado»: numeradores CMA/CMO/CMICT (pivote de la clasificación) ==")
+# CACe=1000 → num_cma=1000 ; COCe=2000 → num_cmo=2000 ; sin ICTA/ITO/TA → num_cmict=0/None
+with db.engine_owner.connect() as cn:
+    piv = cn.execute(text(
+        "SELECT SUM(valor) FILTER (WHERE concepto='CACe') AS num_cma, "
+        "       SUM(valor) FILTER (WHERE concepto IN ('COCe','CE','CIQ','COIR')) AS num_cmo, "
+        "       SUM(valor) FILTER (WHERE concepto IN ('ICTA','ITO','TA')) AS num_cmict "
+        "FROM numerador_mensual WHERE empresa_id=:e AND anio=:a AND mes=9 AND servicio='acueducto'"),
+        {"e": EID, "a": A}).mappings().first()
+check(piv and abs((piv["num_cma"] or 0) - 1000.0) < 1e-6, f"numerador del CMA = CACe = 1000 ({piv['num_cma'] if piv else None})")
+check(piv and abs((piv["num_cmo"] or 0) - 2000.0) < 1e-6, f"numerador del CMO = COCe = 2000 ({piv['num_cmo'] if piv else None})")
+
+print("== Comercial MANUAL por APS (ruta /carga): conjunto = suma de APS ==")
+def _csrf(path):
+    mm = re.search(r'name="csrf-token" content="([^"]+)"', cli.get(path).text)
+    return mm.group(1) if mm else ""
+tokc = _csrf(f"/empresa/{EID}/cargar?fuente=comercial")
+cli.post(f"/empresa/{EID}/carga", data={"csrf": tokc, "anio": A, "mes": 11, "servicio": "acueducto",
+         "cod_dane": "41001", "suscriptores": "100", "m3": "2000", "origen": "manual"}, follow_redirects=False)
+cli.post(f"/empresa/{EID}/carga", data={"csrf": tokc, "anio": A, "mes": 11, "servicio": "acueducto",
+         "cod_dane": "41524", "suscriptores": "50", "m3": "1000", "origen": "manual"}, follow_redirects=False)
+with db.engine_owner.connect() as cn:
+    r = {x["cod_dane"]: (x["suscriptores"], x["m3_facturados"]) for x in cn.execute(text(
+        "SELECT cod_dane, suscriptores, m3_facturados FROM carga_mensual "
+        "WHERE empresa_id=:e AND anio=:a AND mes=11 AND servicio='acueducto'"), {"e": EID, "a": A}).mappings()}
+check(r.get("41001") == (100, 2000.0) and r.get("41524") == (50, 1000.0), f"filas por APS guardadas ({r})")
+check(r.get("") == (150, 3000.0), f"conjunto '' = suma de APS (150 susc / 3000 m³) ({r.get('')})")
+
+print("== Comercial MANUAL conjunto borra el desglose por APS ==")
+cli.post(f"/empresa/{EID}/carga", data={"csrf": tokc, "anio": A, "mes": 11, "servicio": "acueducto",
+         "cod_dane": "", "suscriptores": "999", "m3": "9999", "origen": "manual"}, follow_redirects=False)
+with db.engine_owner.connect() as cn:
+    danes3 = cn.execute(text("SELECT DISTINCT cod_dane FROM carga_mensual "
+        "WHERE empresa_id=:e AND anio=:a AND mes=11 AND servicio='acueducto'"), {"e": EID, "a": A}).scalars().all()
+check(danes3 == [""], f"cargar el conjunto borró las APS del mes ({danes3})")
 
 _clean()
 print("\n" + ("TODAS LAS PRUEBAS DE COMERCIAL/BALANCE POR APS PASARON" if not _fail else f"FALLARON {len(_fail)}: {_fail}"))

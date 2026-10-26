@@ -71,13 +71,20 @@ el nombre de cada archivo y lo puedes corregir antes de cargar. Reconoce los <b>
   <p class="muted2" style="margin-top:8px">Úsalo solo si no tienes el reporte del SUI de ese mes (p. ej. un archivo
   dañado). Guarda los <b>totales del mes</b> —suscriptores y m³ facturados— en el resumen; esto alimenta
   Validación y Resultados, pero <b>no genera el detalle por estrato</b> (sin desagregación por clase ni
-  subsidios). Cuando consigas el archivo del SUI, cárgalo y reemplazará al manual con el detalle completo.</p>
+  subsidios). Puedes cargar el <b>conjunto</b> (toda la empresa) o un <b>APS</b>: si cargas por APS, el total
+  del mes es la suma de las APS. Cuando consigas el archivo del SUI, cárgalo y reemplazará al manual.</p>
   <form method="post" action="/empresa/{{ emp.id }}/carga" class="form-grid">
     <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
     <input type="hidden" name="origen" value="manual">
     {{ periodo_anio() }}
     <label>Mes <select name="mes">{% for m in range(1,13) %}<option value="{{ m }}">{{ meses.get(m,m) }}</option>{% endfor %}</select></label>
     <label>Servicio <select name="servicio">{{ servopts() }}</select></label>
+    <label>Ámbito (APS)
+      <select name="cod_dane">
+        <option value="">Conjunto · todas las APS</option>
+        {% for mu in munis %}<option value="{{ mu.cod_dane }}">{{ mu.municipio }}</option>{% endfor %}
+      </select>
+    </label>
     <label>Suscriptores <input type="number" name="suscriptores" min="0" step="1" required style="width:130px"></label>
     <label>m³ facturados <input type="number" name="m3" min="0" step="any" required style="width:140px"></label>
     <button class="btn" type="submit">Guardar manual</button>
@@ -178,13 +185,24 @@ Puedes subir el tuyo (tiene prioridad); las cuentas que no figuren quedan «sin 
   {% endif %}
 </div>
 {% endif %}
-<h3 class="serv-h">Cargado</h3>
+<h3 class="serv-h">Cargado · resultado de la clasificación (Res. 1032)</h3>
+<p class="muted2" style="margin:-4px 0 8px">Numeradores de costo que resultan de clasificar las cuentas del
+balance con los criterios de la Res. CRA 1032, por período y servicio: <b>numerador del CMA</b> (costos
+administrativos, CACe), <b>del CMO</b> (operativos: COCe + energía + insumos químicos + otros) y <b>del
+CMICT</b> (inversiones y tasas: ICTA + ITO + TA). Si cargaste un balance para un rango de meses, el valor se
+<b>reparte por igual</b> entre esos meses (por eso se repite); para variación mensual, carga el balance de
+cada mes por separado.</p>
 {% if bal %}
 <table class="tabla">
-  <thead><tr><th>Período</th><th>Año tarifario</th><th>Servicio</th><th class="r">Numeradores</th><th class="r">Valor total</th><th></th></tr></thead>
+  <thead><tr><th>Período</th><th>Año tarifario</th><th>Servicio</th><th>Ámbito</th>
+    <th class="r">Num. CMA</th><th class="r">Num. CMO</th><th class="r">Num. CMICT</th><th></th></tr></thead>
   <tbody>
     {% for x in bal %}<tr><td class="comp">{{ meses.get(x.mes,x.mes) }}-{{ x.anio }}</td><td>{{ aniotar(x.anio) }}</td>
-      <td>{{ x.servicio }}</td><td class="num">{{ x.n }}</td><td class="num">{{ x.total|valor('$') if x.total is not none else '—' }}</td>
+      <td>{{ x.servicio }}</td>
+      <td>{% if x.cod_dane %}{{ x.municipio or x.cod_dane }}{% else %}<span class="muted2">Conjunto</span>{% endif %}</td>
+      <td class="num">{{ x.num_cma|valor('$') if x.num_cma is not none else '—' }}</td>
+      <td class="num">{{ x.num_cmo|valor('$') if x.num_cmo is not none else '—' }}</td>
+      <td class="num">{{ x.num_cmict|valor('$') if x.num_cmict is not none else '—' }}</td>
       <td class="c">{{ delcargue('balance', x) }}</td></tr>{% endfor %}
   </tbody>
 </table>

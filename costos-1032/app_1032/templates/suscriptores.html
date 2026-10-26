@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block title %}Suscriptores · {{ emp.nombre }}{% endblock %}
+{% block body %}
+{% macro n0(x) %}{% if x is none %}<span class="mut">—</span>{% else %}{{ x|valor }}{% endif %}{% endmacro %}
+{% macro pct(x) %}{% if x is none %}<span class="mut">—</span>{% else %}{{ ('%+.1f'|format(x))|replace('.',',') }}%{% endif %}{% endmacro %}
+
+<div class="page-head">
+  <a class="back" href="/empresa/{{ emp.id }}">← {{ emp.nombre }}</a>
+  <h1>Suscriptores</h1>
+  <p class="sub">Análisis de la base de suscriptores a partir del detalle comercial cargado: evolución
+  mensual, composición por clase de uso, distribución por APS y tasa de crecimiento anual. El número de
+  suscriptores de un mes es un <b>stock</b> (se suma por clases y APS del mes, no entre meses).</p>
+</div>
+
+{% if not d.hay_datos %}
+  <p class="empty">Aún no hay detalle comercial cargado. Cárgalo en
+  <a href="/empresa/{{ emp.id }}/cargar?fuente=comercial">Cargar información → Comercial</a>.</p>
+{% else %}
+
+<form method="get" action="/empresa/{{ emp.id }}/suscriptores" class="graf-ctrl">
+  <label>Servicio
+    <select name="serv" onchange="this.form.submit()">
+      <option value="">Todos</option>
+      {% for s in d.servicios %}<option value="{{ s }}" {{ 'selected' if d.servicio==s }}>{{ s|capitalize }}</option>{% endfor %}
+    </select>
+  </label>
+  {% if d.hay_aps %}
+  <label>APS
+    <select name="aps" onchange="this.form.submit()">
+      <option value="__all__">Todas (empresa)</option>
+      {% for a in d.aps_list %}<option value="{{ a.cod_dane }}" {{ 'selected' if d.cod_dane==a.cod_dane }}>{{ a.municipio }}</option>{% endfor %}
+    </select>
+  </label>
+  {% endif %}
+</form>
+
+<div class="ix-cards">
+  {% for k in d.kpis %}
+  <div class="ix-card"><div class="ix-top"><span class="ix-name">{{ k.servicio|capitalize }}</span></div>
+    <div class="ix-val">{{ n0(k.ultimo) }}</div>
+    <div class="ix-cap">suscriptores · {{ k.periodo }}{% if k.crecimiento is not none %} · crecim. anual {{ pct(k.crecimiento) }}{% endif %}</div></div>
+  {% endfor %}
+</div>
+
+<h2 class="serv-h">Evolución mensual del número de suscriptores</h2>
+<div class="sus-graf">
+  <svg viewBox="0 0 100 36" preserveAspectRatio="none" class="sus-svg">
+    <line x1="0" y1="35" x2="100" y2="35" class="sus-axis"/>
+    {% for s in d.graf.series %}
+    <polyline points="{{ s.points }}" fill="none" stroke="{{ s.color }}" stroke-width="0.7"
+      vector-effect="non-scaling-stroke" stroke-linejoin="round"/>
+    {% endfor %}
+  </svg>
+  <div class="sus-xlab">
+    {% if d.graf.labels %}<span>{{ d.graf.labels[0] }}</span>
+    {% if d.graf.labels|length > 2 %}<span>{{ d.graf.labels[(d.graf.labels|length)//2] }}</span>{% endif %}
+    <span>{{ d.graf.labels[-1] }}</span>{% endif %}
+  </div>
+  <div class="sus-leg">
+    {% for s in d.graf.series %}<span class="sus-leg-it"><i style="background:{{ s.color }}"></i>{{ s.servicio|capitalize }} ({{ n0(s.ultimo) }})</span>{% endfor %}
+    <span class="mut" style="margin-left:auto">máx. eje: {{ n0(d.graf.vmax) }}</span>
+  </div>
+</div>
+
+{% for s in d.servicios if (not d.servicio or d.servicio==s) %}
+<h2 class="serv-h">{{ s|capitalize }} · composición del último período</h2>
+{% set comp = d.composicion.get(s) %}
+{% if comp %}
+<div class="ccp-bars">
+  {% set cmax = (comp|map(attribute='susc')|max) or 1 %}
+  {% for c in comp %}
+  <div class="ccp-row"><span class="ccp-lab">{{ c.nombre }}</span>
+    <span class="ccp-track"><span class="ccp-fill real" style="width:{{ (c.susc/cmax*100)|round(1) }}%"></span></span>
+    <span class="ccp-num">{{ n0(c.susc) }} · {{ (c.pct)|round(1)|replace('.',',') }}%</span></div>
+  {% endfor %}
+</div>
+{% else %}<p class="mut">Sin datos de composición para este servicio.</p>{% endif %}
+
+{% if d.hay_aps and d.por_aps.get(s) %}
+<h3 class="ccp-h">Distribución por APS (último período)</h3>
+<table class="tabla compact">
+  <thead><tr><th>APS</th><th class="r">Suscriptores</th><th class="r">Participación</th></tr></thead>
+  <tbody>
+    {% for a in d.por_aps.get(s) %}<tr><td>{{ a.municipio }}</td>
+      <td class="num">{{ n0(a.susc) }}</td><td class="num">{{ (a.pct)|round(1)|replace('.',',') }}%</td></tr>{% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<h3 class="ccp-h">Crecimiento anual (promedio mensual de suscriptores)</h3>
+<table class="tabla compact">
+  <thead><tr><th>Año</th><th class="r">Prom. mensual</th><th class="r">Crecimiento anual</th></tr></thead>
+  <tbody>
+    {% for g in d.crecimiento.get(s, []) %}<tr><td>{{ g.anio }}</td>
+      <td class="num">{{ g.prom|round|int|valor }}</td><td class="num">{{ pct(g.crecimiento) }}</td></tr>{% endfor %}
+  </tbody>
+</table>
+{% endfor %}
+
+<p class="hint">El detalle comercial proviene del reporte del SUI (desagregado por APS con el código DANE del
+municipio) y, en contingencia, de las entradas manuales. La clase de uso sigue los códigos CLASEUSO del SUI.</p>
+{% endif %}
+
+<style>
+.sus-graf{margin:6px 0 14px}
+.sus-svg{width:100%;height:190px;display:block;background:var(--paper,#fff);border:1px solid var(--line,#e5e0d2);border-radius:var(--r,8px)}
+.sus-axis{stroke:var(--line,#d8d2c4);stroke-width:0.3;vector-effect:non-scaling-stroke}
+.sus-xlab{display:flex;justify-content:space-between;font-size:11px;color:var(--muted,#8a8578);margin-top:2px}
+.sus-leg{display:flex;gap:14px;align-items:center;flex-wrap:wrap;font-size:12.5px;margin-top:6px}
+.sus-leg-it{display:inline-flex;align-items:center;gap:5px}
+.sus-leg-it i{width:11px;height:11px;border-radius:2px;display:inline-block}
+</style>
+{% endblock %}

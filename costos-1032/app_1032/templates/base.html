@@ -56,13 +56,14 @@
         </ol>
       </details>
 
-      {% set en_res = p == '/empresa/' ~ emp.id|string or '/resultados' in p or '/ccp' in p or '/evolucion' in p or '/simulador' in p %}
+      {% set en_res = p == '/empresa/' ~ emp.id|string or '/suscriptores' in p or '/resultados' in p or '/ccp' in p or '/evolucion' in p or '/simulador' in p %}
       <details class="rail-group" {{ 'open' if en_res }}>
         <summary>Resultados</summary>
         <ol class="rail-nav nonum">
+          <li><a class="link {{ 'active' if '/suscriptores' in p }}" href="/empresa/{{ emp.id }}/suscriptores">Suscriptores</a></li>
+          <li><a class="link {{ 'active' if '/ccp' in p }}" href="/empresa/{{ emp.id }}/ccp">CCP y pérdidas</a></li>
           <li><a class="link {{ 'active' if p == '/empresa/' ~ emp.id|string }}" href="/empresa/{{ emp.id }}">Costos de referencia actuales</a></li>
           <li><a class="link {{ 'active' if '/resultados' in p }}" href="/empresa/{{ emp.id }}/resultados">Resultados por año tarifario</a></li>
-          <li><a class="link {{ 'active' if '/ccp' in p }}" href="/empresa/{{ emp.id }}/ccp">CCP y pérdidas</a></li>
           <li><a class="link {{ 'active' if '/evolucion' in p }}" href="/empresa/{{ emp.id }}/evolucion">Evolución</a></li>
           <li><a class="link {{ 'active' if '/simulador' in p }}" href="/empresa/{{ emp.id }}/simulador">Simuladores tarifarios</a></li>
         </ol>

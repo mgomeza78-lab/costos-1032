@@ -42,7 +42,7 @@ def _agg(conn, empresa_id, anio):
     com = conn.execute(text(
         "SELECT servicio, COALESCE(SUM(suscriptores),0) n, COALESCE(SUM(m3_facturados),0) af, "
         "       COUNT(*) meses "
-        "FROM carga_mensual WHERE empresa_id=:e AND anio=:a GROUP BY servicio"),
+        "FROM carga_mensual WHERE empresa_id=:e AND anio=:a AND cod_dane='' GROUP BY servicio"),
         {"e": empresa_id, "a": anio}).mappings().all()
     mm = {r["servicio"]: float(r["ap"]) for r in conn.execute(text(
         "SELECT servicio, COALESCE(SUM(m3_producido),0) ap FROM macromedicion "
@@ -118,6 +118,59 @@ def senda(conn, empresa_id):
             "estandar": ESTANDAR_IPUF, "ipuf_inicio": ipuf_ini}
 
 
+def _poly(valores, vmin, vmax, w=100.0, h=36.0, pad=3.0):
+    """Puntos 'x,y …' para una polilínea SVG (viewBox w×h, y invertido)."""
+    n = len(valores)
+    if n == 0:
+        return ""
+    span = (vmax - vmin) or 1.0
+    if n == 1:
+        y = h - pad - (valores[0] - vmin) / span * (h - 2 * pad)
+        return f"0,{y:.2f} {w:.2f},{y:.2f}"
+    out = []
+    for i, v in enumerate(valores):
+        x = i / (n - 1) * w
+        y = h - pad - (v - vmin) / span * (h - 2 * pad)
+        out.append(f"{x:.2f},{y:.2f}")
+    return " ".join(out)
+
+
+def serie_mensual(conn, empresa_id, servicio):
+    """Serie mensual (cronológica) de AF, AP y los indicadores ICUF/IPUF/ISUF del servicio,
+    con las polilíneas SVG listas para graficar. El total/N usa el conjunto (cod_dane='')."""
+    com = {(r["anio"], r["mes"]): (float(r["n"] or 0), float(r["af"] or 0)) for r in conn.execute(text(
+        "SELECT anio, mes, COALESCE(suscriptores,0) n, COALESCE(m3_facturados,0) af "
+        "FROM carga_mensual WHERE empresa_id=:e AND servicio=:s AND cod_dane=''"),
+        {"e": empresa_id, "s": servicio}).mappings().all()}
+    mm = {(r["anio"], r["mes"]): float(r["ap"] or 0) for r in conn.execute(text(
+        "SELECT anio, mes, COALESCE(SUM(m3_producido),0) ap FROM macromedicion "
+        "WHERE empresa_id=:e AND servicio=:s GROUP BY anio, mes"),
+        {"e": empresa_id, "s": servicio}).mappings().all()}
+    pers = sorted(set(com) | set(mm))
+    if not pers:
+        return None
+    af = [com.get(k, (0, 0))[1] for k in pers]
+    ap = [mm.get(k, 0.0) for k in pers]
+    n = [com.get(k, (0, 0))[0] for k in pers]
+    icuf = [(af[i] / n[i]) if n[i] else 0.0 for i in range(len(pers))]
+    ipuf = [((ap[i] - af[i]) / n[i]) if (n[i] and ap[i] > 0) else 0.0 for i in range(len(pers))]
+    isuf = [(ap[i] / n[i]) if (n[i] and ap[i] > 0) else 0.0 for i in range(len(pers))]
+    hay_ap = any(v > 0 for v in ap)
+    vmax_vol = max(max(af or [0]), max(ap or [0]), 1)
+    vmax_ind = max(max(icuf or [0]), max(ipuf or [0]), max(isuf or [0]), 1)
+    labels = [f"{MESES.get(m, m)}·{str(a)[2:]}" for (a, m) in pers]
+    return {
+        "labels": labels, "hay_ap": hay_ap,
+        "vol": {"vmax": vmax_vol,
+                "af": _poly(af, 0, vmax_vol), "ap": _poly(ap, 0, vmax_vol),
+                "af_ult": af[-1], "ap_ult": ap[-1]},
+        "ind": {"vmax": vmax_ind,
+                "icuf": _poly(icuf, 0, vmax_ind), "ipuf": _poly(ipuf, 0, vmax_ind),
+                "isuf": _poly(isuf, 0, vmax_ind),
+                "icuf_ult": icuf[-1], "ipuf_ult": ipuf[-1], "isuf_ult": isuf[-1]},
+    }
+
+
 def resumen(conn, empresa_id, anio=None):
     """Paquete completo para la vista CCP."""
     anios = anios_con_datos(conn, empresa_id)
@@ -125,5 +178,6 @@ def resumen(conn, empresa_id, anio=None):
         anio = anios[0] if anios else None
     ipuf_estrella = rc.ipuf_estrella(conn, empresa_id)
     ind = indicadores(conn, empresa_id, anio, ipuf_estrella) if anio else {}
+    series = {s: serie_mensual(conn, empresa_id, s) for s in ind.keys()}
     return {"anio": anio, "anios": anios, "ipuf_estrella": ipuf_estrella,
-            "indicadores": ind, "senda": senda(conn, empresa_id), "art": ART}
+            "indicadores": ind, "series": series, "senda": senda(conn, empresa_id), "art": ART}

@@ -288,7 +288,7 @@ def ccp_desde_consumos(conn, empresa_id, servicio, anio=2025, ipuf=IPUF_INICIO):
     Para el período de inicio IPUF* = 6 m³/susc·mes (art. 2.1.2.1.3.5.2, par. 1). None si no hay datos."""
     row = conn.execute(text(
         "SELECT coalesce(sum(m3_facturados),0) AS m3, coalesce(sum(suscriptores),0) AS susc, count(*) AS n "
-        "FROM carga_mensual WHERE empresa_id=:e AND servicio=:s AND anio=:a AND m3_facturados IS NOT NULL"),
+        "FROM carga_mensual WHERE empresa_id=:e AND servicio=:s AND anio=:a AND cod_dane='' AND m3_facturados IS NOT NULL"),
         {"e": empresa_id, "s": servicio, "a": anio}).mappings().first()
     if not row or not row["n"]:
         return None
@@ -660,7 +660,7 @@ def demanda_anual(conn, empresa_id, servicio):
     """m³ anuales a partir de lo facturado (anualiza si hay menos de 12 meses). None si no hay datos."""
     row = conn.execute(text(
         "SELECT coalesce(sum(m3_facturados),0) AS m3, count(*) AS n "
-        "FROM carga_mensual WHERE empresa_id=:e AND servicio=:s AND m3_facturados IS NOT NULL"),
+        "FROM carga_mensual WHERE empresa_id=:e AND servicio=:s AND cod_dane='' AND m3_facturados IS NOT NULL"),
         {"e": empresa_id, "s": servicio}).mappings().first()
     if not row or not row["n"] or not row["m3"]:
         return None

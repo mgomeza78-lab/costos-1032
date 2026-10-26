@@ -47,7 +47,7 @@ def _comercial(conn, empresa_id, anio, mes):
         return None
     rows = conn.execute(text(
         "SELECT servicio, suscriptores, m3_facturados FROM carga_mensual "
-        "WHERE empresa_id=:e AND anio=:a AND mes=:m ORDER BY servicio"),
+        "WHERE empresa_id=:e AND anio=:a AND mes=:m AND cod_dane='' ORDER BY servicio"),
         {"e": empresa_id, "a": anio, "m": mes}).mappings().all()
     if not rows:
         rows = conn.execute(text(
@@ -76,7 +76,7 @@ def _perdidas(conn, empresa_id, anio, mes):
             {"e": empresa_id, "a": anio, "m": mes}).scalar()
         fact = conn.execute(text(
             "SELECT m3_facturados FROM carga_mensual "
-            "WHERE empresa_id=:e AND anio=:a AND mes=:m AND servicio='acueducto'"),
+            "WHERE empresa_id=:e AND anio=:a AND mes=:m AND servicio='acueducto' AND cod_dane=''"),
             {"e": empresa_id, "a": anio, "m": mes}).scalar()
         if prod and fact and prod > 0:
             out["pct"] = max(0.0, (prod - fact) / prod * 100.0)

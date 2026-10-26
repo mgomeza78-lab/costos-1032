@@ -26,6 +26,7 @@ import config, db, rbac, nucleo_service
 import operacion_service as ops
 import indices_service as ix
 import ccp_view as cv
+import suscriptores_view as sv
 import recalculo_service as rc
 import inversiones_service as inv
 import subsidios_service as subs
@@ -360,7 +361,7 @@ def empresa_detail(request: Request, eid: int):
         cargado = conn.execute(text(
             "SELECT anio, servicio, count(DISTINCT mes) AS meses, "
             "round(avg(suscriptores))::int AS susc_prom, sum(m3_facturados) AS m3_total "
-            "FROM carga_mensual WHERE empresa_id=:e GROUP BY anio, servicio "
+            "FROM carga_mensual WHERE empresa_id=:e AND cod_dane='' GROUP BY anio, servicio "
             "ORDER BY anio DESC, servicio"), {"e": eid}).mappings().all()
     por_servicio = {}
     for row in res:
@@ -368,6 +369,22 @@ def empresa_detail(request: Request, eid: int):
     return tpl.TemplateResponse(request, "empresa.html", _ctx(
         request, emp=emp, por_servicio=por_servicio, cargado=cargado, meses=ops.MESES,
         tiene_perfil=nucleo_service.perfil_existe(emp["codigo"])))
+
+
+@app.get("/empresa/{eid}/suscriptores", response_class=HTMLResponse)
+def empresa_suscriptores(request: Request, eid: int):
+    if (r := _need_login(request)):
+        return r
+    user = session_user(request)
+    servicio = request.query_params.get("serv") or None
+    cod = request.query_params.get("aps")
+    cod_dane = cod if cod is not None and cod != "__all__" else None
+    with db.scope_conn(scope_of(user)) as conn:
+        emp = conn.execute(text("SELECT * FROM empresa WHERE id=:e"), {"e": eid}).mappings().first()
+        if not emp:
+            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        datos = sv.dashboard(conn, eid, servicio=servicio, cod_dane=cod_dane)
+    return tpl.TemplateResponse(request, "suscriptores.html", _ctx(request, emp=emp, d=datos))
 
 
 @app.get("/empresa/{eid}/ccp", response_class=HTMLResponse)
@@ -822,7 +839,7 @@ def mensual(request: Request, eid: int):
 @app.post("/empresa/{eid}/carga")
 def cargar(request: Request, eid: int, anio: int = Form(...), mes: int = Form(...),
            servicio: str = Form(...), suscriptores: str = Form(""), m3: str = Form(""),
-           facturacion: str = Form(""), novedades: str = Form(""),
+           facturacion: str = Form(""), novedades: str = Form(""), cod_dane: str = Form(""),
            origen: str = Form("archivo_propio"), next: str = Form(""), csrf: str = Form("")):
     if (r := _need_login(request)):
         return r
@@ -832,6 +849,7 @@ def cargar(request: Request, eid: int, anio: int = Form(...), mes: int = Form(..
     dflt = f"/empresa/{eid}/mensual"
     if not rbac.can(user, "cargar_mensual"):
         return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
+    cod_dane = (cod_dane or "").strip()
 
     def _num(x):
         x = (x or "").strip().replace(",", ".")
@@ -839,22 +857,41 @@ def cargar(request: Request, eid: int, anio: int = Form(...), mes: int = Form(..
 
     try:
         with db.scope_conn(scope_of(user)) as conn:
+            # Totales manuales del mes por APS: el conjunto ('') es el total que leen los cálculos;
+            # las filas por-APS (cod_dane != '') son el desglose para la vista. Para que el total
+            # cuadre, cargar el conjunto borra el desglose por APS del mes y, al cargar un APS, el
+            # conjunto se recalcula como la suma de las APS.
+            if cod_dane == "":
+                conn.execute(text("DELETE FROM carga_mensual WHERE empresa_id=:e AND anio=:a AND mes=:m "
+                                  "AND servicio=:s AND cod_dane<>''"),
+                             {"e": eid, "a": anio, "m": mes, "s": servicio})
             conn.execute(text(
                 "INSERT INTO carga_mensual(empresa_id,anio,mes,servicio,cod_dane,suscriptores,m3_facturados,"
                 " facturacion,novedades,origen,cargado_por) "
-                "VALUES (:e,:a,:m,:s,'',:su,:m3,:fa,:nv,:og,:up) "
+                "VALUES (:e,:a,:m,:s,:cd,:su,:m3,:fa,:nv,:og,:up) "
                 "ON CONFLICT (empresa_id,anio,mes,servicio,cod_dane) DO UPDATE SET "
                 " suscriptores=excluded.suscriptores, m3_facturados=excluded.m3_facturados, "
                 " facturacion=excluded.facturacion, novedades=excluded.novedades, "
                 " origen=excluded.origen, cargado_por=excluded.cargado_por, cargado_en=now()"),
-                {"e": eid, "a": anio, "m": mes, "s": servicio,
+                {"e": eid, "a": anio, "m": mes, "s": servicio, "cd": cod_dane,
                  "su": int(_num(suscriptores)) if _num(suscriptores) is not None else None,
                  "m3": _num(m3), "fa": _num(facturacion), "nv": novedades.strip() or None,
                  "og": origen, "up": user["user_id"]})
+            # Si se cargó un APS, recalcular el conjunto ('') = suma de las APS del mes.
+            if cod_dane != "":
+                conn.execute(text(
+                    "INSERT INTO carga_mensual(empresa_id,anio,mes,servicio,cod_dane,suscriptores,m3_facturados,origen) "
+                    "SELECT :e,:a,:m,:s,'',SUM(suscriptores),SUM(m3_facturados),'manual_aps' "
+                    "FROM carga_mensual WHERE empresa_id=:e AND anio=:a AND mes=:m AND servicio=:s AND cod_dane<>'' "
+                    "ON CONFLICT (empresa_id,anio,mes,servicio,cod_dane) DO UPDATE SET "
+                    " suscriptores=excluded.suscriptores, m3_facturados=excluded.m3_facturados, "
+                    " origen=excluded.origen, cargado_en=now()"),
+                    {"e": eid, "a": anio, "m": mes, "s": servicio})
     except Exception as e:
         return RedirectResponse(_dest(next, dflt, f"err=No+se+pudo+cargar+({type(e).__name__})"),
                                 status_code=303)
-    db.audit(scope_of(user), "carga_mensual", "empresa", eid, f"{ops.MESES.get(mes,mes)}-{anio} {servicio}")
+    amb = "" if cod_dane == "" else f" APS {cod_dane}"
+    db.audit(scope_of(user), "carga_mensual", "empresa", eid, f"{ops.MESES.get(mes,mes)}-{anio} {servicio}{amb}")
     return RedirectResponse(_dest(next, dflt, "msg=Carga+registrada"), status_code=303)
 
 
@@ -2374,25 +2411,41 @@ def cargar_info(request: Request, eid: int):
             return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
         _yf = " AND anio=:a" if cm_anio else ""
         _yp = {"e": eid, "a": cm_anio} if cm_anio else {"e": eid}
-        # Totales (conjunto) — lo que ya existía; cubre cargue SUI y entradas manuales.
+        # Totales (conjunto, cod_dane='') — cubre cargue SUI y entradas manuales.
         com = conn.execute(text(
             "SELECT anio, mes, servicio, suscriptores, m3_facturados, origen FROM carga_mensual "
-            "WHERE empresa_id=:e" + _yf + " ORDER BY anio, mes, servicio"), _yp).mappings().all()
-        # Desglose por APS (desde el detalle por clase, sumando clases). '' = conjunto.
+            "WHERE empresa_id=:e AND cod_dane=''" + _yf + " ORDER BY anio, mes, servicio"),
+            _yp).mappings().all()
+        # Desglose por APS: del detalle por clase (SUI/CSV, sumando clases) + los totales manuales
+        # por APS del resumen (cod_dane<>''). '' = conjunto (cuando el SUI no trae municipio).
         com_aps = conn.execute(text(
-            "SELECT d.anio, d.mes, d.servicio, d.cod_dane, m.nombre AS municipio, "
-            "       SUM(d.suscriptores) AS suscriptores, SUM(d.m3) AS m3 "
-            "FROM carga_mensual_detalle d LEFT JOIN municipio m ON m.cod_dane = d.cod_dane "
-            "WHERE d.empresa_id=:e" + _yf + " "
-            "GROUP BY d.anio, d.mes, d.servicio, d.cod_dane, m.nombre "
-            "ORDER BY d.anio, d.mes, d.servicio, d.cod_dane"), _yp).mappings().all()
+            "SELECT anio, mes, servicio, cod_dane, municipio, suscriptores, m3 FROM ("
+            "  SELECT d.anio, d.mes, d.servicio, d.cod_dane, m.nombre AS municipio, "
+            "         SUM(d.suscriptores) AS suscriptores, SUM(d.m3) AS m3 "
+            "  FROM carga_mensual_detalle d LEFT JOIN municipio m ON m.cod_dane = d.cod_dane "
+            "  WHERE d.empresa_id=:e GROUP BY d.anio, d.mes, d.servicio, d.cod_dane, m.nombre "
+            "  UNION ALL "
+            "  SELECT cm.anio, cm.mes, cm.servicio, cm.cod_dane, m.nombre AS municipio, "
+            "         cm.suscriptores AS suscriptores, cm.m3_facturados AS m3 "
+            "  FROM carga_mensual cm LEFT JOIN municipio m ON m.cod_dane = cm.cod_dane "
+            "  WHERE cm.empresa_id=:e AND cm.cod_dane<>'' "
+            ") t WHERE 1=1" + _yf + " ORDER BY anio, mes, servicio, cod_dane"), _yp).mappings().all()
         com_anios = conn.execute(text(
             "SELECT DISTINCT anio FROM carga_mensual WHERE empresa_id=:e "
             "UNION SELECT DISTINCT anio FROM carga_mensual_detalle WHERE empresa_id=:e "
             "ORDER BY anio"), {"e": eid}).scalars().all()
+        # Resultado de la clasificación de cuentas (Res. 1032) por período/servicio/APS:
+        # numerador del CMA (CACe), del CMO (COCe+CE+CIQ+COIR) y del CMICT (ICTA+ITO+TA).
         bal = conn.execute(text(
-            "SELECT anio, mes, servicio, count(*) AS n, sum(valor) AS total FROM numerador_mensual "
-            "WHERE empresa_id=:e GROUP BY anio, mes, servicio ORDER BY anio, mes, servicio"),
+            "SELECT nm.anio, nm.mes, nm.servicio, nm.cod_dane, m.nombre AS municipio, "
+            "  SUM(nm.valor) FILTER (WHERE nm.concepto='CACe') AS num_cma, "
+            "  SUM(nm.valor) FILTER (WHERE nm.concepto IN ('COCe','CE','CIQ','COIR')) AS num_cmo, "
+            "  SUM(nm.valor) FILTER (WHERE nm.concepto IN ('ICTA','ITO','TA')) AS num_cmict, "
+            "  SUM(nm.valor) AS total "
+            "FROM numerador_mensual nm LEFT JOIN municipio m ON m.cod_dane = nm.cod_dane "
+            "WHERE nm.empresa_id=:e "
+            "GROUP BY nm.anio, nm.mes, nm.servicio, nm.cod_dane, m.nombre "
+            "ORDER BY nm.anio, nm.mes, nm.servicio, nm.cod_dane"),
             {"e": eid}).mappings().all()
         # Agua producida por APS (cod_dane); '' = conjunto. Se muestra el municipio del APS.
         agua = conn.execute(text(
