@@ -202,6 +202,34 @@ with db.engine_owner.connect() as cn:
         "WHERE empresa_id=:e AND anio=:a AND mes=11 AND servicio='acueducto'"), {"e": EID, "a": A}).scalars().all()
 check(danes3 == [""], f"cargar el conjunto borró las APS del mes ({danes3})")
 
+print("== Manual por APS y LUEGO el SUI del mismo mes: el SUI reemplaza (sin duplicar) ==")
+# 1) Cargo manual por APS (Neiva y Palermo) para may-A → filas por-APS en el resumen.
+for cd, su, m3v in (("41001", "100", "2000"), ("41524", "50", "1000")):
+    cli.post(f"/empresa/{EID}/carga", data={"csrf": tokc, "anio": A, "mes": 5, "servicio": "acueducto",
+             "cod_dane": cd, "suscriptores": su, "m3": m3v, "origen": "manual"}, follow_redirects=False)
+with db.engine_owner.connect() as cn:
+    antes = sorted(cn.execute(text("SELECT DISTINCT cod_dane FROM carga_mensual WHERE empresa_id=:e "
+        "AND anio=:a AND mes=5 AND servicio='acueducto'"), {"e": EID, "a": A}).scalars().all())
+check(antes == ["", "41001", "41524"], f"manual por APS dejó filas por-APS en el resumen ({antes})")
+# 2) Cargo el SUI del MISMO mes → debe borrar las filas por-APS manuales del resumen.
+sui = ("CLASEUSO_16,LECT_CONSUMO_26,CONS_SUB_27,DEPARTAMENTO_2,MUNICIPIO_3\n"
+       "1,20,20,41,001\n" "5,30,0,41,524\n")
+with db.scope_conn({"allow_all": True}) as cn:
+    ingesta.cargar_facturacion_sui(cn, EID, "acueducto", A, 5, sui)
+with db.engine_owner.connect() as cn:
+    res_cd = sorted(cn.execute(text("SELECT DISTINCT cod_dane FROM carga_mensual WHERE empresa_id=:e "
+        "AND anio=:a AND mes=5 AND servicio='acueducto'"), {"e": EID, "a": A}).scalars().all())
+    # La vista "Por APS" = detalle (SUI) + resumen por-APS (manual). Debe listar cada APS una sola vez.
+    vista = cn.execute(text(
+        "SELECT cod_dane, count(*) n FROM ("
+        "  SELECT DISTINCT d.cod_dane FROM carga_mensual_detalle d WHERE d.empresa_id=:e AND d.anio=:a AND d.mes=5 AND d.servicio='acueducto'"
+        "  UNION ALL "
+        "  SELECT cm.cod_dane FROM carga_mensual cm WHERE cm.empresa_id=:e AND cm.anio=:a AND cm.mes=5 AND cm.servicio='acueducto' AND cm.cod_dane<>''"
+        ") t GROUP BY cod_dane ORDER BY cod_dane"), {"e": EID, "a": A}).mappings().all()
+check(res_cd == [""], f"el SUI borró las filas por-APS manuales del resumen (queda solo '') ({res_cd})")
+check(all(r["n"] == 1 for r in vista) and {r["cod_dane"] for r in vista} == {"41001", "41524"},
+      f"la vista Por APS lista cada APS una sola vez, sin duplicar ({[dict(r) for r in vista]})")
+
 _clean()
 print("\n" + ("TODAS LAS PRUEBAS DE COMERCIAL/BALANCE POR APS PASARON" if not _fail else f"FALLARON {len(_fail)}: {_fail}"))
 raise SystemExit(1 if _fail else 0)

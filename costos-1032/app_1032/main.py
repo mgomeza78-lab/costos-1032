@@ -858,6 +858,10 @@ def cargar(request: Request, eid: int, anio: int = Form(...), mes: int = Form(..
 
     try:
         with db.scope_conn(scope_of(user)) as conn:
+            # Un cargue MANUAL reemplaza el mes: si antes se cargó el SUI de ese mes, borra su
+            # detalle por clase para que no quede duplicado (un mes es SUI o manual, no ambos).
+            conn.execute(text("DELETE FROM carga_mensual_detalle WHERE empresa_id=:e AND anio=:a "
+                              "AND mes=:m AND servicio=:s"), {"e": eid, "a": anio, "m": mes, "s": servicio})
             # Totales manuales del mes por APS: el conjunto ('') es el total que leen los cálculos;
             # las filas por-APS (cod_dane != '') son el desglose para la vista. Para que el total
             # cuadre, cargar el conjunto borra el desglose por APS del mes y, al cargar un APS, el

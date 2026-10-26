@@ -213,6 +213,8 @@ def cargar_comercial(conn, empresa_id, contenido):
         if a and m and s:
             conn.execute(text("DELETE FROM carga_mensual_detalle WHERE empresa_id=:e AND anio=:a "
                               "AND mes=:m AND servicio=:s"), {"e": empresa_id, "a": a, "m": m, "s": s})
+            conn.execute(text("DELETE FROM carga_mensual WHERE empresa_id=:e AND anio=:a AND mes=:m "
+                              "AND servicio=:s AND cod_dane<>''"), {"e": empresa_id, "a": a, "m": m, "s": s})
     ok, err = 0, []
     sql = ("INSERT INTO carga_mensual_detalle(empresa_id,anio,mes,servicio,clase,cod_dane,"
            "suscriptores,m3,m3_subsidiable,origen) VALUES (:e,:a,:m,:s,:c,:cd,:su,:m3,:ms,'SUI') "
@@ -375,10 +377,14 @@ def cargar_facturacion_sui(conn, empresa_id, servicio, anio, mes, contenido):
     sql_f = ("INSERT INTO factor_subsidio(empresa_id,vigencia,servicio,clase,factor_cargofijo,factor_consumo) "
              "VALUES (:e,:v,:s,:c,:fcf,:fc) ON CONFLICT (empresa_id,vigencia,servicio,clase) "
              "DO UPDATE SET factor_cargofijo=excluded.factor_cargofijo, factor_consumo=excluded.factor_consumo")
-    # Reemplazo limpio del mes/servicio: borra el detalle previo (cualquier APS) para que un
-    # re-cargue que cambie la granularidad por APS no deje filas huérfanas que dupliquen la suma.
+    # Reemplazo limpio del mes/servicio: el reporte del SUI es la fuente autoritativa del mes, así
+    # que borra TODO lo previo de ese mes/servicio antes de insertar —el detalle (cualquier APS) y
+    # las filas por-APS del resumen de un cargue MANUAL anterior— para que no quede duplicado ni
+    # filas huérfanas. El '' del resumen se reescribe con el gran total más abajo.
     conn.execute(text("DELETE FROM carga_mensual_detalle WHERE empresa_id=:e AND anio=:a "
                       "AND mes=:m AND servicio=:s"), {"e": empresa_id, "a": anio, "m": mes, "s": serv})
+    conn.execute(text("DELETE FROM carga_mensual WHERE empresa_id=:e AND anio=:a AND mes=:m "
+                      "AND servicio=:s AND cod_dane<>''"), {"e": empresa_id, "a": anio, "m": mes, "s": serv})
     # Detalle por (clase, APS). Si no hubo columna de municipio, todo queda en el conjunto ('').
     ok, err = 0, []
     for (clase, cod), a in sorted(agg_q.items()):
