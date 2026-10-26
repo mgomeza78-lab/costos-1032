@@ -224,6 +224,40 @@ def _chart(series, labels, fmt):
     return out
 
 
+# Geometría de las gráficas de BARRAS (comparación por año base).
+BW, BH, BML, BMR, BMT, BMB = 600.0, 150.0, 10.0, 8.0, 24.0, 22.0
+
+
+def _barras(grupos, series, fmt):
+    """Gráfica de barras agrupadas: un grupo por indicador (ICUF/IPUF/ISUF o AF/AP) y, dentro de
+    cada grupo, una barra por año base, para comparar 2024 vs 2025. `series`: [{name,color,vals}]."""
+    allv = [v for s in series for v in s["vals"] if v is not None]
+    vmax = max(allv) if allv else 1.0
+    if vmax <= 0:
+        vmax = 1.0
+    pw, ph = BW - BML - BMR, BH - BMT - BMB
+    ng, ns = max(len(grupos), 1), max(len(series), 1)
+    gw = pw / ng
+    bw = gw * 0.78 / ns
+    out = []
+    for gi, glab in enumerate(grupos):
+        gx = BML + gi * gw
+        bars = []
+        for si, s in enumerate(series):
+            v = s["vals"][gi] if gi < len(s["vals"]) else None
+            if v is None:
+                continue
+            x = gx + gw * 0.11 + si * bw
+            h = (max(v, 0.0) / vmax) * ph
+            bars.append({"x": round(x, 1), "y": round(BMT + ph - h, 1),
+                         "w": round(bw * 0.9, 1), "h": round(h, 1),
+                         "color": s["color"], "lbl": fmt(v), "name": s["name"]})
+        out.append({"label": glab, "cx": round(gx + gw / 2, 1), "bars": bars})
+    return {"W": BW, "H": BH, "x0": BML, "x1": BML + pw, "y0": BMT, "y1": BMT + ph,
+            "vmax_lbl": fmt(vmax), "grupos": out,
+            "leyenda": [{"name": s["name"], "color": s["color"]} for s in series]}
+
+
 def serie_mensual(conn, empresa_id, servicio, anios=None):
     """Serie mensual (cronológica) de AF, AP y los indicadores ICUF/IPUF/ISUF del servicio, sobre la
     ventana de años base `anios` (lista; para el período de inicio, [2024, 2025]). Los meses del eje
@@ -262,27 +296,66 @@ def serie_mensual(conn, empresa_id, servicio, anios=None):
     }
 
 
+def _ipuf_de_periodo(conn, empresa_id, sel):
+    """IPUF* del período seleccionado: en el inicio, el del segmento; en el año tarifario k, el de
+    la senda (SENDA_IPUF); si la senda no está declarada para el segmento, el del inicio."""
+    base = rc.ipuf_estrella(conn, empresa_id)
+    if sel.get("es_inicio"):
+        return base
+    seg = conn.execute(text("SELECT segmento_id FROM empresa WHERE id=:e"), {"e": empresa_id}).scalar()
+    s = SENDA_IPUF.get(seg)
+    k = sel.get("orden", 0)
+    if s and k >= 1:
+        return float(s[min(k, len(s)) - 1])
+    return base
+
+
 def resumen(conn, empresa_id, per_clave=None, servicio=None):
-    """Paquete completo para la vista CCP, por AÑO TARIFARIO. El período seleccionado define su
-    ventana de años base (el de inicio = 2024–2025) y toda la información se calcula sobre ella.
-    `servicio` (opcional) restringe la vista a un servicio para acortar el scroll (selector)."""
-    anios_data = set(anios_con_datos(conn, empresa_id))
-    # Años tarifarios ofrecidos: los que tienen algún año base con datos; siempre el de inicio.
-    con_datos = [p for p in per.PERIODOS if set(p["anios_base"]) & anios_data]
-    # Siempre se ofrece el período de inicio; además, los años tarifarios con datos.
-    opts = ([per.PERIODOS[0]] + [p for p in con_datos if p["clave"] != "inicio"]) if con_datos \
-        else [per.PERIODOS[0]]
-    default = con_datos[0] if con_datos else opts[0]
-    sel = next((p for p in opts if p["clave"] == per_clave), None) or default
+    """Paquete para la vista CCP. Se elige un AÑO TARIFARIO cualquiera (período de inicio o años 1–10)
+    y la información se muestra para los DOS años de su línea base POR SEPARADO, para compararlos
+    (no se agregan). En el período de inicio esos años son 2024 (base de CMA/CMO, i-2) y 2025 (base de
+    CMICT/CMI, i-1). `servicio` (opcional) restringe a un servicio (selector)."""
+    sel = per.POR_CLAVE.get(per_clave) or per.POR_CLAVE["inicio"]
     anios_base = sel["anios_base"]
-    lbl = "–".join(str(a) for a in anios_base)
-    ipuf_estrella = rc.ipuf_estrella(conn, empresa_id)
-    ind_full = indicadores(conn, empresa_id, anios_base, ipuf_estrella)
-    servicios = sorted(ind_full.keys())
-    serv_sel = servicio if servicio in ind_full else None
-    ind = {s: f for s, f in ind_full.items() if (not serv_sel or s == serv_sel)}
-    series = {s: serie_mensual(conn, empresa_id, s, anios_base) for s in ind.keys()}
-    return {"periodo": sel, "periodos": opts, "anios_base": anios_base, "anios_base_lbl": lbl,
-            "anio": lbl, "ipuf_estrella": ipuf_estrella, "indicadores": ind, "series": series,
-            "servicios": servicios, "servicio": serv_sel, "hay_datos": bool(ind_full),
-            "senda": senda(conn, empresa_id), "art": ART}
+    ipuf_sel = _ipuf_de_periodo(conn, empresa_id, sel)
+    # Indicadores de CADA año base por separado (reutiliza indicadores() con un solo año).
+    por_anio = {a: indicadores(conn, empresa_id, [a], ipuf_sel) for a in anios_base}
+    servicios = sorted({s for d in por_anio.values() for s in d})
+    serv_sel = servicio if servicio in servicios else None
+    serv_vista = [s for s in servicios if (not serv_sel or s == serv_sel)]
+    # Gráficas de BARRAS: comparan los dos años base por indicador (ICUF/IPUF/ISUF y AF/AP).
+    col_anio = ["#1f7a6b", "#b5651d"]
+    barras = {}
+    for s in serv_vista:
+        hay_ap = any((por_anio[a].get(s) or {}).get("ap", 0) > 0 for a in anios_base)
+        vol_grupos = ["AF (facturada)"] + (["AP (producida)"] if hay_ap else [])
+        vol_series = [{"name": str(a), "color": col_anio[i % len(col_anio)],
+                       "vals": [(por_anio[a].get(s) or {}).get("af")]
+                               + ([(por_anio[a].get(s) or {}).get("ap")] if hay_ap else [])}
+                      for i, a in enumerate(anios_base)]
+        ind_series = [{"name": str(a), "color": col_anio[i % len(col_anio)],
+                       "vals": [(por_anio[a].get(s) or {}).get("icuf"),
+                                (por_anio[a].get(s) or {}).get("ipuf_real"),
+                                (por_anio[a].get(s) or {}).get("isuf")]}
+                      for i, a in enumerate(anios_base)]
+        barras[s] = {"vol": _barras(vol_grupos, vol_series, _mil),
+                     "ind": _barras(["ICUF", "IPUF", "ISUF"], ind_series, _dec)}
+    hay = any((por_anio[a].get(s) or {}).get("af") for a in anios_base for s in servicios)
+    # Rol de cada año de la línea base: i-2 alimenta CMA/CMO; i-1 alimenta CMICT/CMI.
+    roles = ["base de CMA y CMO (i-2)", "base de CMICT y CMI (i-1)"]
+    anio_cols = [{"anio": a, "rol": roles[i] if i < len(roles) else ""} for i, a in enumerate(anios_base)]
+    # Metadatos por servicio (agregados sobre los años base) para simplificar la plantilla.
+    serv_meta = {}
+    for s in serv_vista:
+        est = any((por_anio[a].get(s) or {}).get("estimado") for a in anios_base)
+        falta = []
+        for a in anios_base:
+            for x in (por_anio[a].get(s) or {}).get("falta", []):
+                if x not in falta:
+                    falta.append(x)
+        serv_meta[s] = {"estimado": est, "falta": falta}
+    return {"periodo": sel, "periodos": per.PERIODOS, "anios_base": anios_base,
+            "anios_base_lbl": "–".join(str(a) for a in anios_base), "anio_cols": anio_cols,
+            "por_anio": por_anio, "servicios": servicios, "servicio": serv_sel,
+            "servicios_vista": serv_vista, "serv_meta": serv_meta, "barras": barras,
+            "ipuf_estrella": ipuf_sel, "hay_datos": hay, "senda": senda(conn, empresa_id), "art": ART}

@@ -94,9 +94,15 @@ m = re.search(r'name="csrf-token" content="([^"]+)"', c.get("/login").text)
 c.post("/login", data={"email": "mgomeza78@gmail.com", "password": PW, "csrf": m.group(1)},
        follow_redirects=False)
 check(c.get("/empresa/1/ccp").status_code == 200, "GET /empresa/1/ccp responde 200")
-html = c.get("/empresa/1/ccp").text
-check("Consumo Corregido por Pérdidas" in html and "ISUF" in html and "Nivel de castigo" in html,
-      "la página muestra CCP, ISUF y el nivel de castigo")
+# el selector ofrece TODOS los años tarifarios (inicio + 10), no solo los que tienen datos
+r0 = c.get("/empresa/1/ccp").text
+check("Período de inicio" in r0 and "Año tarifario 10" in r0,
+      "el selector ofrece todos los años tarifarios (inicio … año 10)")
+# un año tarifario con datos (a1 = 2025–2026; el seed tiene 2026) muestra la comparación por año
+html = c.get("/empresa/1/ccp?at=a1").text
+check("Consumo Corregido por Pérdidas" in html and "Comparación de los dos años" in html
+      and "Nivel de castigo" in html,
+      "la página compara los dos años base y muestra el nivel de castigo")
 
 limpiar()
 print()
