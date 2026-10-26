@@ -1223,6 +1223,15 @@ PLANTILLAS = {
     "indices": ("plantilla_ipc.csv",
         "anio,mes,ipc,ipcs",
         ["2026,7,112.34,110.20"]),
+    "bcr_serie": ("plantilla_agua_facturada_688.csv",
+        "servicio,anio,mes,agua_facturada_m3,cmi_cobrado,segmento688",
+        ["acueducto,1,1,2040000,980.50,2", "acueducto,1,2,1980000,980.50,2",
+         "acueducto,1,3,2010000,1010.30,2", "alcantarillado,1,1,1840000,640.00,2"]),
+    "balance": ("plantilla_balance_prueba.csv",
+        "cuenta,nombre,saldo",
+        ["511095,Gastos de personal administrativo,125000000",
+         "750505,Energía eléctrica,84000000",
+         "755005,Productos químicos,33000000"]),
 }
 
 
@@ -2494,7 +2503,7 @@ def bcr_param_guardar(request: Request, eid: int, servicio: str = Form(...), r68
 
 @app.post("/empresa/{eid}/bcr-serie")
 def bcr_serie_guardar(request: Request, eid: int, servicio: str = Form(...),
-                      anio_tarifario: int = Form(...), q_m3: str = Form(""),
+                      anio_tarifario: int = Form(...), mes: str = Form(""), q_m3: str = Form(""),
                       cmi_cobrado: str = Form(""), segmento: str = Form(""),
                       next: str = Form(""), csrf: str = Form("")):
     if (r := _need_login(request)):
@@ -2506,13 +2515,45 @@ def bcr_serie_guardar(request: Request, eid: int, servicio: str = Form(...),
     if not rbac.can(user, "cargar_mensual"):
         return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
     seg = "".join(ch for ch in (segmento or "") if ch.isdigit())
+    mnum = "".join(ch for ch in (mes or "") if ch.isdigit())
+    mnum = int(mnum) if mnum else 0
+    if not (1 <= mnum <= 12):
+        return RedirectResponse(_dest(next, dflt, "err=Indica+el+mes+(1-12)"), status_code=303)
     with db.scope_conn(scope_of(user)) as conn:
         if not _emp_or_redirect(conn, eid):
             return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
         bcr.serie_set(conn, eid, servicio, anio_tarifario, _fnum(q_m3), _fnum(cmi_cobrado),
-                      int(seg) if seg else None)
-    db.audit(scope_of(user), "bcr_serie", "empresa", eid, f"{servicio} año {anio_tarifario}")
+                      int(seg) if seg else None, mes=mnum)
+    db.audit(scope_of(user), "bcr_serie", "empresa", eid, f"{servicio} año {anio_tarifario} mes {mnum}")
     return RedirectResponse(_dest(next, dflt, "msg=Serie+688+guardada"), status_code=303)
+
+
+@app.post("/empresa/{eid}/bcr-serie-csv")
+def bcr_serie_csv(request: Request, eid: int,
+                  archivos: list[UploadFile] = File(..., alias="archivos"),
+                  next: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    dflt = f"/empresa/{eid}/inversiones?sec=agua"
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
+    tot_ok, errs, n_arch = 0, [], 0
+    with db.scope_conn(scope_of(user)) as conn:
+        if not _emp_or_redirect(conn, eid):
+            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        for arch in archivos:
+            if not getattr(arch, "filename", ""):
+                continue
+            ok, err = bcr.cargar_serie_csv(conn, eid, _leer_csv(arch))
+            tot_ok += ok; errs += (err or []); n_arch += 1
+    db.audit(scope_of(user), "bcr_serie_csv", "empresa", eid, f"{n_arch} archivos, {tot_ok} filas, {len(errs)} errores")
+    aviso = f"msg=Serie+688:+{n_arch}+archivo(s),+{tot_ok}+filas+cargadas"
+    if errs:
+        aviso += ";+" + ",+".join(errs[:3]).replace(" ", "+") + ("+…" if len(errs) > 3 else "")
+    return RedirectResponse(_dest(next, dflt, aviso), status_code=303)
 
 
 @app.post("/empresa/{eid}/bcr-poir-mods")

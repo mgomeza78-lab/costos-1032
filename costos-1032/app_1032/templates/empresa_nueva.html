@@ -30,6 +30,9 @@
     <b id="segOut">—</b> <span id="segHint" class="muted2"></span>
     <span id="tardiaHint" class="muted2"></span>
   </div>
+  <div class="seg-auto">Segmento 688 (tasa r de la BCR₀):
+    <b id="seg688Out">—</b> <span id="seg688Hint" class="muted2"></span>
+  </div>
 
   <h2 class="serv-h">Municipios atendidos (un APS por municipio)</h2>
   <p class="hint">Elige el departamento para ver sus municipios, agrégalos con <b>“Agregar →”</b> y, en el
@@ -107,6 +110,11 @@
     else if (n > 5000) { segOut.textContent = '—'; hint.textContent = 'sin segmento aplicable (verificar)'; }
     else if (n > 0) { segOut.textContent = '—'; hint.textContent = '≤ 5.000 suscriptores: fuera del ámbito (verificar)'; }
     else { segOut.textContent = '—'; hint.textContent = ''; }
+    // Segmento de la Res. 688 (define el r688 de la BCR₀): 1 (>100.000) · 2 (5.001–100.000)
+    var s688 = document.getElementById('seg688Out'), h688 = document.getElementById('seg688Hint');
+    if (n > 100000) { s688.textContent = 'Segmento 1'; h688.textContent = '· grandes (> 100.000 susc) · r688 = 12,28 %'; }
+    else if (n > 5000) { s688.textContent = 'Segmento 2'; h688.textContent = '· 5.001–100.000 susc · r688 = 12,76 %'; }
+    else { s688.textContent = '—'; h688.textContent = ''; }
   }
   susc.addEventListener('input', function(){ fmtSusc(); seg(); });
   fmtSusc(); if (soloDigitos(susc.value)) seg();

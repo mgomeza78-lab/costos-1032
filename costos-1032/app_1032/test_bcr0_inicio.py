@@ -51,7 +51,7 @@ adm.post(f"/empresa/{EID}/bcr-param", data={
     "ipc_dic_2014": "114.0", "ipc_dic_2025": "180.0", "fecha_inicio_688": "2016-07-01",
     "ccp_2025": "20000000"}, follow_redirects=False)
 adm.post(f"/empresa/{EID}/bcr-serie", data={
-    "csrf": tok, "next": N, "servicio": "acueducto", "anio_tarifario": "1",
+    "csrf": tok, "next": N, "servicio": "acueducto", "anio_tarifario": "1", "mes": "1",
     "q_m3": "19000000", "cmi_cobrado": "700"}, follow_redirects=False)
 with db.engine_owner.connect() as cn:
     p = bcr.param_get(cn, EID, "acueducto")
@@ -84,7 +84,7 @@ adm.post(f"/empresa/{EID}/bcr-param", data={
     "ipc_dic_2014": "100.0", "ipc_dic_2025": "150.0", "fecha_inicio_688": "2016-07-01",
     "ccp_2025": "12000000"}, follow_redirects=False)
 adm.post(f"/empresa/{EID}/bcr-serie", data={
-    "csrf": tok, "next": N, "servicio": "alcantarillado", "anio_tarifario": "1",
+    "csrf": tok, "next": N, "servicio": "alcantarillado", "anio_tarifario": "1", "mes": "1",
     "q_m3": "10000000", "cmi_cobrado": "500"}, follow_redirects=False)
 adm.post(f"/empresa/{EID}/bcr-activo", data={   # solo VIA688, sin VPR₀ → se deriva
     "csrf": tok, "next": N, "servicio": "alcantarillado", "componente": "1", "origen": "VIdif287",

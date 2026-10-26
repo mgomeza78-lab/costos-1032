@@ -24,10 +24,11 @@
 {# ============================ PASO 1 · AGUA FACTURADA 688 ============================ #}
 {% if sec=='agua' %}
 <h2 class="serv-h">Paso 1 · Agua facturada desde el inicio de la 688 y segmento</h2>
-<p class="muted2">Por cada año de aplicación de la 688 y por servicio: el <b>agua facturada</b> (Q), el
-<b>CMI688 cobrado</b> ($/m³) y el <b>segmento</b> al que pertenecía la empresa ese año (pudo cambiar en el
-tiempo). Con esto se calcula el <b>VP(CMI×Q)</b>, que se resta al VIA688 para obtener el VPR₀
-(art. 2.1.2.1.3.5.5): <b>VPR₀ = VIA688 − VP(CMI×Q)</b>.</p>
+<p class="muted2">Por cada <b>mes</b> de cada año de aplicación de la 688 y por servicio: el <b>agua
+facturada</b> (Q) y el <b>CMI688 cobrado</b> ($/m³) —que pudieron cambiar mes a mes— y el <b>segmento</b> al
+que pertenecía la empresa ese año. El ingreso de cada año = Σ de los meses (CMI·Q); al descontarlo por el
+año i se obtiene el <b>VP(CMI×Q)</b>, que se resta al VIA688 para el VPR₀ (art. 2.1.2.1.3.5.5):
+<b>VPR₀ = VIA688 − VP(CMI×Q)</b>.</p>
 
 {% for s in servicios %}
 <h3 style="font-family:var(--head);font-size:14.5px;color:var(--teal-deep);margin:16px 0 6px">{{ bcr_serv[s] }}</h3>
@@ -35,37 +36,77 @@ tiempo). Con esto se calcula el <b>VP(CMI×Q)</b>, que se resta al VIA688 para o
 {% set ing = bcr_ingresos.get(s) %}
 {% if ing and ing.filas %}
 <table class="tabla">
-  <thead><tr><th>Año 688</th><th class="r">Agua facturada (m³)</th><th class="r">CMI cobrado ($/m³)</th>
-    <th class="c">Segmento</th><th class="r">Ingreso (CMI·Q)</th><th class="r">Factor 1/(1+r688)^i</th><th class="r">VP del año</th></tr></thead>
+  <thead><tr><th>Año 688</th><th class="c">Segmento</th><th class="r">Ingreso anual Σ(CMI·Q)</th>
+    <th class="r">Factor 1/(1+r688)^i</th><th class="r">VP del año</th></tr></thead>
   <tbody>
     {% for x in ing.filas %}
-    {% set sg = (serie_s|selectattr('anio_tarifario','equalto',x.anio)|map(attribute='segmento')|list) %}
+    {% set sgs = serie_s|selectattr('anio_tarifario','equalto',x.anio)|map(attribute='segmento')|select|list %}
     <tr><td class="comp">{{ x.anio }}</td>
-      <td class="num">{{ x.q|valor if x.q is not none else '—' }}</td>
-      <td class="num">{{ x.cmi|valor('$') if x.cmi is not none else '—' }}</td>
-      <td class="c">{{ sg[0] if sg and sg[0] is not none else '—' }}</td>
+      <td class="c">{{ sgs[0] if sgs else '—' }}</td>
       <td class="num">{{ x.ingreso|valor('$') if x.ingreso is not none else '—' }}</td>
       <td class="num">{{ x.factor|round(4) if x.factor is not none else '—' }}</td>
       <td class="num">{{ x.vp|valor('$') if x.vp is not none else '—' }}</td></tr>{% endfor %}
-    <tr><td colspan="6" class="r"><b>VP de los ingresos — VP(CMI×Q)</b></td>
+    <tr><td colspan="4" class="r"><b>VP de los ingresos — VP(CMI×Q)</b></td>
       <td class="num"><b>{{ ing.total|valor('$') if ing.total is not none else 'falta r688' }}</b></td></tr>
   </tbody>
 </table>
-{% else %}<p class="muted2">Aún no hay serie de agua facturada / CMI cobrado para {{ bcr_serv[s] }}. Cárgala abajo (y el r688 en el paso 2 para el VP).</p>{% endif %}
-{% if puede_cargar %}
-<form method="post" action="/empresa/{{ emp.id }}/bcr-serie" class="form-grid">
-  <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
-  <input type="hidden" name="servicio" value="{{ s }}">
-  <label>Año de la 688 (1-10) <input name="anio_tarifario" inputmode="numeric" style="width:90px" required></label>
-  <label>Agua facturada (m³) <input name="q_m3" inputmode="decimal"></label>
-  <label>CMI cobrado ($/m³) <input name="cmi_cobrado" inputmode="decimal"></label>
-  <label>Segmento 688 de ese año <select name="segmento"><option value="">—</option>
-    <option value="1">1 · Grandes (&gt; 100.000 susc)</option>
-    <option value="2">2 · 5.001–100.000 susc</option></select></label>
-  <button class="btn" type="submit">Guardar año</button>
-</form>
+{% if ing.meses %}
+<details style="margin:4px 0 2px">
+  <summary class="muted2" style="cursor:pointer">Ver detalle mensual ({{ ing.meses|length }} registro(s))</summary>
+  <table class="tabla" style="margin-top:6px">
+    <thead><tr><th>Año</th><th class="c">Mes</th><th class="r">Agua facturada (m³)</th>
+      <th class="r">CMI cobrado ($/m³)</th><th class="r">Ingreso (CMI·Q)</th></tr></thead>
+    <tbody>
+      {% for m in ing.meses %}
+      <tr><td class="comp">{{ m.anio }}</td><td class="c">{{ m.mes if m.mes else '—' }}</td>
+        <td class="num">{{ m.q|valor if m.q is not none else '—' }}</td>
+        <td class="num">{{ m.cmi|valor('$') if m.cmi is not none else '—' }}</td>
+        <td class="num">{{ m.ingreso|valor('$') if m.ingreso is not none else '—' }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</details>
 {% endif %}
+{% else %}<p class="muted2">Aún no hay serie de agua facturada / CMI cobrado para {{ bcr_serv[s] }}. Cárgala abajo (y el r688 en el paso 2 para el VP).</p>{% endif %}
 {% endfor %}
+
+{% if puede_cargar %}
+<div class="carga-metodo">
+  <div class="metodo-tabs">
+    <button type="button" class="metodo-tab active" data-m="masivo">Cargue masivo</button>
+    <button type="button" class="metodo-tab" data-m="manual">Cargue manual</button>
+  </div>
+
+  <div class="metodo-panel" data-m="masivo">
+    <form method="post" action="/empresa/{{ emp.id }}/bcr-serie-csv" enctype="multipart/form-data" class="up-form">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+      <label>Serie 688 — CSV (columnas: <code>servicio, anio, mes, agua_facturada_m3, cmi_cobrado, segmento688</code>). Una fila por mes, año y servicio.
+        <input type="file" name="archivos" accept=".csv" multiple required></label>
+      <button class="btn primary" type="submit">Cargar archivo(s)</button>
+    </form>
+    <p class="muted2" style="margin:4px 0 0"><a href="/empresa/{{ emp.id }}/plantilla/bcr_serie">Descargar plantilla</a>
+     · acepta coma o «;», encabezados en mayúsculas; el segmento (1|2) puede ir vacío.</p>
+  </div>
+
+  <div class="metodo-panel" data-m="manual">
+    {% for s in servicios %}
+    <h4 style="font-family:var(--head);font-size:13.5px;color:var(--teal-deep);margin:10px 0 4px">{{ bcr_serv[s] }}</h4>
+    <form method="post" action="/empresa/{{ emp.id }}/bcr-serie" class="form-grid">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+      <input type="hidden" name="servicio" value="{{ s }}">
+      <label>Año de la 688 (1-10) <input name="anio_tarifario" inputmode="numeric" style="width:90px" required></label>
+      <label>Mes <select name="mes" required>{% for mm in range(1,13) %}<option value="{{ mm }}">{{ mm }}</option>{% endfor %}</select></label>
+      <label>Agua facturada (m³) <input name="q_m3" inputmode="decimal"></label>
+      <label>CMI cobrado ($/m³) <input name="cmi_cobrado" inputmode="decimal"></label>
+      <label>Segmento 688 de ese año <select name="segmento"><option value="">—</option>
+        <option value="1">1 · Grandes (&gt; 100.000 susc)</option>
+        <option value="2">2 · 5.001–100.000 susc</option></select></label>
+      <button class="btn" type="submit">Guardar año</button>
+    </form>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
 {% endif %}
 
 {# ============================ PASO 2 · BCR DE INICIO ============================ #}

@@ -111,6 +111,8 @@ de costos. Fuente esperada: balance de prueba a nivel de cuenta (Excel o CSV).</
   <label class="wide">Balance de prueba (Excel / CSV) <input type="file" name="archivo" required></label>
   <button class="btn primary" type="submit">Cargar balance</button>
 </form>
+<p class="muted2" style="margin:4px 0 0"><a href="/empresa/{{ emp.id }}/plantilla/balance">Descargar plantilla</a>
+ · columnas mínimas <code>cuenta, nombre, saldo</code> (también acepta débito/crédito); separador coma o «;».</p>
 <p class="hint">El balance que subas se <b>distribuye en partes iguales</b> entre los meses del rango elegido
 (p. ej. <b>ene–dic = 12 meses</b>, así cargas todo el año de una vez). Para un solo mes, elige el mismo
 mes de inicio y fin.</p>
@@ -156,26 +158,36 @@ Puedes subir el tuyo (tiene prioridad); las cuentas que no figuren quedan «sin 
 <p class="muted2">Volúmenes producidos y de bloque por punto de macromedición. Fuente esperada: reporte
 de macromedición (CSV) o el reporte del SUI.</p>
 {% if puede_cargar %}
-<form method="post" action="/empresa/{{ emp.id }}/cargar-csv" enctype="multipart/form-data" class="up-form">
-  <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
-  <input type="hidden" name="tipo" value="macromedicion">
-  <label>Macromedición — CSV (columnas: <code>anio, mes, servicio, punto, m3_producido</code>). Puedes seleccionar varios archivos.
-    <input type="file" name="archivos" accept=".csv" multiple required></label>
-  <button class="btn primary" type="submit">Cargar archivo(s)</button>
-</form>
-<p class="muted2" style="margin:4px 0 10px"><a href="/empresa/{{ emp.id }}/plantilla/macromedicion">Descargar plantilla</a>
- · el cargue acepta coma o «;» como separador, encabezados en mayúsculas y el mes por número o por nombre («Enero»).</p>
-<form method="post" action="/empresa/{{ emp.id }}/carga-agua" class="form-grid" style="margin-top:4px">
-  <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
-  {{ periodo_anio() }}
-  <label>Mes <select name="mes">{% for m in range(1,13) %}<option value="{{ m }}">{{ meses.get(m,m) }}</option>{% endfor %}</select></label>
-  <label>Servicio <select name="servicio">{{ servopts() }}</select></label>
-  <label>Punto de macromedición <input name="punto" required placeholder="p. ej. PTAP Norte"></label>
-  <label>m³ producidos <input name="m3_producido" inputmode="decimal"></label>
-  <label>m³ bloque entregado <input name="m3_bloque_entregado" inputmode="decimal"></label>
-  <label>m³ bloque recibido <input name="m3_bloque_recibido" inputmode="decimal"></label>
-  <button class="btn" type="submit">Registrar punto del mes</button>
-</form>
+<div class="carga-metodo">
+  <div class="metodo-tabs">
+    <button type="button" class="metodo-tab active" data-m="masivo">Cargue masivo</button>
+    <button type="button" class="metodo-tab" data-m="manual">Cargue manual</button>
+  </div>
+  <div class="metodo-panel" data-m="masivo">
+    <form method="post" action="/empresa/{{ emp.id }}/cargar-csv" enctype="multipart/form-data" class="up-form">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+      <input type="hidden" name="tipo" value="macromedicion">
+      <label>Macromedición — CSV (columnas: <code>anio, mes, servicio, punto, m3_producido</code>). Puedes seleccionar varios archivos.
+        <input type="file" name="archivos" accept=".csv" multiple required></label>
+      <button class="btn primary" type="submit">Cargar archivo(s)</button>
+    </form>
+    <p class="muted2" style="margin:4px 0 0"><a href="/empresa/{{ emp.id }}/plantilla/macromedicion">Descargar plantilla</a>
+     · el cargue acepta coma o «;» como separador, encabezados en mayúsculas y el mes por número o por nombre («Enero»).</p>
+  </div>
+  <div class="metodo-panel" data-m="manual">
+    <form method="post" action="/empresa/{{ emp.id }}/carga-agua" class="form-grid">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+      {{ periodo_anio() }}
+      <label>Mes <select name="mes">{% for m in range(1,13) %}<option value="{{ m }}">{{ meses.get(m,m) }}</option>{% endfor %}</select></label>
+      <label>Servicio <select name="servicio">{{ servopts() }}</select></label>
+      <label>Punto de macromedición <input name="punto" required placeholder="p. ej. PTAP Norte"></label>
+      <label>m³ producidos <input name="m3_producido" inputmode="decimal"></label>
+      <label>m³ bloque entregado <input name="m3_bloque_entregado" inputmode="decimal"></label>
+      <label>m³ bloque recibido <input name="m3_bloque_recibido" inputmode="decimal"></label>
+      <button class="btn" type="submit">Registrar punto del mes</button>
+    </form>
+  </div>
+</div>
 {% endif %}
 <h3 class="serv-h">Cargado</h3>
 {% if agua %}

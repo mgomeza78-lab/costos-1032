@@ -125,5 +125,30 @@
   {{ self.body() }}
 </div>
 {% endif %}
+
+<style>
+.carga-metodo{margin:6px 0 10px}
+.metodo-tabs{display:inline-flex;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;margin-bottom:12px}
+.metodo-tab{background:var(--paper);border:0;padding:6px 16px;font:inherit;font-size:13px;cursor:pointer;color:var(--ink)}
+.metodo-tab + .metodo-tab{border-left:1px solid var(--line)}
+.metodo-tab.active{background:var(--teal-deep);color:#fff}
+.metodo-panel{display:none}
+.metodo-panel.active{display:block}
+</style>
+<script>
+document.addEventListener('DOMContentLoaded', function(){
+  document.querySelectorAll('.carga-metodo').forEach(function(box){
+    var tabs = box.querySelectorAll('.metodo-tab');
+    var panels = box.querySelectorAll('.metodo-panel');
+    function show(m){
+      tabs.forEach(function(t){ t.classList.toggle('active', t.dataset.m===m); });
+      panels.forEach(function(p){ p.classList.toggle('active', p.dataset.m===m); });
+    }
+    tabs.forEach(function(t){ t.addEventListener('click', function(){ show(t.dataset.m); }); });
+    var def = box.querySelector('.metodo-tab.active') || tabs[0];
+    if (def) show(def.dataset.m);
+  });
+});
+</script>
 </body>
 </html>
