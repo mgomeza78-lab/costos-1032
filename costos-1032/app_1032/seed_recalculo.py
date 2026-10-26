@@ -117,7 +117,7 @@ def main():
                 c.execute(text(
                     "INSERT INTO macromedicion(empresa_id,anio,mes,servicio,punto,m3_producido,origen) "
                     "VALUES (:e,2026,:m,'acueducto','PTAP El Jardín (muestra)',2200000,'propio') "
-                    "ON CONFLICT (empresa_id,anio,mes,servicio,punto) DO UPDATE SET "
+                    "ON CONFLICT (empresa_id,anio,mes,servicio,punto,cod_dane) DO UPDATE SET "
                     "m3_producido=excluded.m3_producido"), {"e": eid_lc, "m": mes})
         print(f"base_calculo: {total} parámetros; macromedición de muestra sembrada.")
 

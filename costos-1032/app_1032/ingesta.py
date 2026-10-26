@@ -176,9 +176,9 @@ def cargar_comercial(conn, empresa_id, contenido):
     if (e := _faltan(rows, {"anio", "mes", "servicio", "clase", "suscriptores", "m3", "m3_subsidiable"})):
         return 0, e
     ok, err = 0, []
-    sql = ("INSERT INTO carga_mensual_detalle(empresa_id,anio,mes,servicio,clase,"
-           "suscriptores,m3,m3_subsidiable,origen) VALUES (:e,:a,:m,:s,:c,:su,:m3,:ms,'SUI') "
-           "ON CONFLICT (empresa_id,anio,mes,servicio,clase) DO UPDATE SET "
+    sql = ("INSERT INTO carga_mensual_detalle(empresa_id,anio,mes,servicio,clase,cod_dane,"
+           "suscriptores,m3,m3_subsidiable,origen) VALUES (:e,:a,:m,:s,:c,'',:su,:m3,:ms,'SUI') "
+           "ON CONFLICT (empresa_id,anio,mes,servicio,clase,cod_dane) DO UPDATE SET "
            "suscriptores=excluded.suscriptores, m3=excluded.m3, "
            "m3_subsidiable=excluded.m3_subsidiable, origen=excluded.origen")
     for i, r in enumerate(rows, 2):
@@ -308,9 +308,9 @@ def cargar_facturacion_sui(conn, empresa_id, servicio, anio, mes, contenido):
             a["fcf"][fcf] += 1
         if fcc is not None:
             a["fcc"][fcc] += 1
-    sql_d = ("INSERT INTO carga_mensual_detalle(empresa_id,anio,mes,servicio,clase,"
-             "suscriptores,m3,m3_subsidiable,origen) VALUES (:e,:a,:m,:s,:c,:su,:m3,:ms,'SUI') "
-             "ON CONFLICT (empresa_id,anio,mes,servicio,clase) DO UPDATE SET "
+    sql_d = ("INSERT INTO carga_mensual_detalle(empresa_id,anio,mes,servicio,clase,cod_dane,"
+             "suscriptores,m3,m3_subsidiable,origen) VALUES (:e,:a,:m,:s,:c,'',:su,:m3,:ms,'SUI') "
+             "ON CONFLICT (empresa_id,anio,mes,servicio,clase,cod_dane) DO UPDATE SET "
              "suscriptores=excluded.suscriptores, m3=excluded.m3, "
              "m3_subsidiable=excluded.m3_subsidiable, origen=excluded.origen")
     sql_f = ("INSERT INTO factor_subsidio(empresa_id,vigencia,servicio,clase,factor_cargofijo,factor_consumo) "
@@ -333,20 +333,59 @@ def cargar_facturacion_sui(conn, empresa_id, servicio, anio, mes, contenido):
         tot_susc = sum(a["n"] for a in agg.values())
         tot_m3 = sum(a["m3"] for a in agg.values())
         _ins(conn,
-             "INSERT INTO carga_mensual(empresa_id,anio,mes,servicio,suscriptores,m3_facturados,origen) "
-             "VALUES (:e,:a,:m,:s,:su,:m3,'SUI') "
-             "ON CONFLICT (empresa_id,anio,mes,servicio) DO UPDATE SET "
+             "INSERT INTO carga_mensual(empresa_id,anio,mes,servicio,cod_dane,suscriptores,m3_facturados,origen) "
+             "VALUES (:e,:a,:m,:s,'',:su,:m3,'SUI') "
+             "ON CONFLICT (empresa_id,anio,mes,servicio,cod_dane) DO UPDATE SET "
              "suscriptores=excluded.suscriptores, m3_facturados=excluded.m3_facturados, "
              "origen=excluded.origen, cargado_en=now()",
              {"e": empresa_id, "a": anio, "m": mes, "s": serv, "su": tot_susc, "m3": tot_m3})
     return ok, err
 
 
+# Columnas que, en un archivo de cargue, identifican el APS (municipio) de la fila.
+_APS_COLS = ("aps", "cod_dane", "codigo_dane", "coddane", "dane", "divipola", "municipio")
+
+
+def aps_mapa(conn, empresa_id):
+    """Resolvedor de APS de la empresa: dict {clave -> cod_dane} con el código DANE y el
+    nombre del municipio (en minúsculas) como claves. Permite que un archivo identifique el
+    APS por código DANE o por nombre del municipio atendido (art. 2.1.2.1.1.5)."""
+    m = {}
+    for cod, nom in conn.execute(text(
+            "SELECT m.cod_dane, m.nombre FROM empresa_municipio em "
+            "JOIN municipio m ON m.cod_dane = em.cod_dane WHERE em.empresa_id=:e"),
+            {"e": empresa_id}).all():
+        cod = (cod or "").strip()
+        if not cod:
+            continue
+        m[cod] = cod
+        m[cod.lstrip("0")] = cod            # por si el DANE viene sin ceros a la izquierda
+        if nom:
+            m[nom.strip().lower()] = cod
+    return m
+
+
+def _col_aps(cols):
+    return next((c for c in _APS_COLS if c in cols), None)
+
+
+def _resolver_aps(valor, mapa):
+    """(cod_dane, error). '' = conjunto/todas las APS cuando la celda viene vacía."""
+    v = (valor or "").strip()
+    if v == "":
+        return "", None
+    cod = mapa.get(v) or mapa.get(v.lower()) or mapa.get(v.lstrip("0"))
+    if cod:
+        return cod, None
+    return None, f"APS no reconocida '{v}' (use el código DANE o el nombre del municipio atendido)"
+
+
 def cargar_macromedicion(conn, empresa_id, contenido):
     """CSV de macromedición (agua producida por punto, mensual). Columnas:
-    anio, mes, servicio, punto, m3_producido [, m3_bloque_entregado, m3_bloque_recibido].
-    Tolera encabezados en mayúsculas, meses por nombre ('Enero') y variantes o erratas de la
-    columna de producción (cualquier columna m3_* que no sea de bloque)."""
+    anio, mes, servicio, punto, m3_producido [, m3_bloque_entregado, m3_bloque_recibido, aps].
+    `aps` (o cod_dane/municipio) es opcional: identifica el APS del punto (código DANE o nombre
+    del municipio); vacío = conjunto/todas las APS. Tolera encabezados en mayúsculas, meses por
+    nombre ('Enero') y variantes o erratas de la columna de producción (cualquier m3_* no bloque)."""
     rows = _rows(contenido)
     if (e := _faltan(rows, {"anio", "mes", "servicio", "punto"})):
         return 0, e
@@ -355,11 +394,13 @@ def cargar_macromedicion(conn, empresa_id, contenido):
                 else next((c for c in cols if c.startswith("m3") and "bloque" not in c), None))
     if not col_prod:
         return 0, ["faltan columnas: m3_producido"]
+    col_aps = _col_aps(cols)
+    mapa = aps_mapa(conn, empresa_id) if col_aps else {}
     ok, err = 0, []
-    sql = ("INSERT INTO macromedicion(empresa_id,anio,mes,servicio,punto,m3_producido,"
+    sql = ("INSERT INTO macromedicion(empresa_id,anio,mes,servicio,punto,cod_dane,m3_producido,"
            "m3_bloque_entregado,m3_bloque_recibido,origen) "
-           "VALUES (:e,:a,:m,:s,:p,:mp,:be,:br,'propio') "
-           "ON CONFLICT (empresa_id,anio,mes,servicio,punto) DO UPDATE SET "
+           "VALUES (:e,:a,:m,:s,:p,:cd,:mp,:be,:br,'propio') "
+           "ON CONFLICT (empresa_id,anio,mes,servicio,punto,cod_dane) DO UPDATE SET "
            "m3_producido=excluded.m3_producido, m3_bloque_entregado=excluded.m3_bloque_entregado, "
            "m3_bloque_recibido=excluded.m3_bloque_recibido")
     for i, r in enumerate(rows, 2):
@@ -371,8 +412,12 @@ def cargar_macromedicion(conn, empresa_id, contenido):
         if mes is None:
             err.append(f"fila {i}: mes inválido '{r.get('mes')}'")
             continue
+        cod_dane, eaps = (_resolver_aps(r.get(col_aps), mapa) if col_aps else ("", None))
+        if eaps:
+            err.append(f"fila {i}: {eaps}")
+            continue
         good, msg = _ins(conn, sql, {"e": empresa_id, "a": _int(r.get("anio")), "m": mes,
-                                     "s": serv, "p": (r.get("punto") or "").strip(),
+                                     "s": serv, "p": (r.get("punto") or "").strip(), "cd": cod_dane,
                                      "mp": _num(r.get(col_prod)),
                                      "be": _num(r.get("m3_bloque_entregado")),
                                      "br": _num(r.get("m3_bloque_recibido"))})

@@ -840,10 +840,10 @@ def cargar(request: Request, eid: int, anio: int = Form(...), mes: int = Form(..
     try:
         with db.scope_conn(scope_of(user)) as conn:
             conn.execute(text(
-                "INSERT INTO carga_mensual(empresa_id,anio,mes,servicio,suscriptores,m3_facturados,"
+                "INSERT INTO carga_mensual(empresa_id,anio,mes,servicio,cod_dane,suscriptores,m3_facturados,"
                 " facturacion,novedades,origen,cargado_por) "
-                "VALUES (:e,:a,:m,:s,:su,:m3,:fa,:nv,:og,:up) "
-                "ON CONFLICT (empresa_id,anio,mes,servicio) DO UPDATE SET "
+                "VALUES (:e,:a,:m,:s,'',:su,:m3,:fa,:nv,:og,:up) "
+                "ON CONFLICT (empresa_id,anio,mes,servicio,cod_dane) DO UPDATE SET "
                 " suscriptores=excluded.suscriptores, m3_facturados=excluded.m3_facturados, "
                 " facturacion=excluded.facturacion, novedades=excluded.novedades, "
                 " origen=excluded.origen, cargado_por=excluded.cargado_por, cargado_en=now()"),
@@ -862,6 +862,7 @@ def cargar(request: Request, eid: int, anio: int = Form(...), mes: int = Form(..
 def cargar_agua(request: Request, eid: int, anio: int = Form(...), mes: int = Form(...),
                 servicio: str = Form(...), punto: str = Form(...), m3_producido: str = Form(""),
                 m3_bloque_entregado: str = Form(""), m3_bloque_recibido: str = Form(""),
+                cod_dane: str = Form(""),
                 origen: str = Form("propio"), next: str = Form(""), csrf: str = Form("")):
     if (r := _need_login(request)):
         return r
@@ -884,14 +885,15 @@ def cargar_agua(request: Request, eid: int, anio: int = Form(...), mes: int = Fo
             if not emp:
                 return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
             conn.execute(text(
-                "INSERT INTO macromedicion(empresa_id,anio,mes,servicio,punto,m3_producido,"
+                "INSERT INTO macromedicion(empresa_id,anio,mes,servicio,punto,cod_dane,m3_producido,"
                 " m3_bloque_entregado,m3_bloque_recibido,origen,cargado_por) "
-                "VALUES (:e,:a,:m,:s,:p,:mp,:be,:br,:og,:up) "
-                "ON CONFLICT (empresa_id,anio,mes,servicio,punto) DO UPDATE SET "
+                "VALUES (:e,:a,:m,:s,:p,:cd,:mp,:be,:br,:og,:up) "
+                "ON CONFLICT (empresa_id,anio,mes,servicio,punto,cod_dane) DO UPDATE SET "
                 " m3_producido=excluded.m3_producido, m3_bloque_entregado=excluded.m3_bloque_entregado, "
                 " m3_bloque_recibido=excluded.m3_bloque_recibido, origen=excluded.origen, "
                 " cargado_por=excluded.cargado_por, cargado_en=now()"),
                 {"e": eid, "a": anio, "m": mes, "s": servicio, "p": punto.strip(),
+                 "cd": (cod_dane or "").strip(),
                  "mp": _num(m3_producido), "be": _num(m3_bloque_entregado),
                  "br": _num(m3_bloque_recibido), "og": origen.strip() or "propio", "up": user["user_id"]})
     except Exception as e:
@@ -1074,7 +1076,8 @@ def cargar_sui(request: Request, eid: int, servicio: str = Form(...), anio: int 
 
 @app.post("/empresa/{eid}/cargue-eliminar")
 def cargue_eliminar(request: Request, eid: int, concepto: str = Form(...), anio: int = Form(...),
-                    mes: int = Form(...), servicio: str = Form(...), next: str = Form(""), csrf: str = Form("")):
+                    mes: int = Form(...), servicio: str = Form(...), cod_dane: str = Form(""),
+                    next: str = Form(""), csrf: str = Form("")):
     """Elimina un cargue (un mes-servicio de un concepto). Comercial borra el detalle por clase y el
     agregado y re-deriva la factura; balance borra los numeradores; agua, la macromedición."""
     if (r := _need_login(request)):
@@ -1095,9 +1098,11 @@ def cargue_eliminar(request: Request, eid: int, concepto: str = Form(...), anio:
             return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
         n = 0
         for t in tablas[concepto]:
-            res = conn.execute(text(
-                f"DELETE FROM {t} WHERE empresa_id=:e AND anio=:a AND mes=:m AND servicio=:s"),
-                {"e": eid, "a": anio, "m": mes, "s": servicio})
+            sql = f"DELETE FROM {t} WHERE empresa_id=:e AND anio=:a AND mes=:m AND servicio=:s"
+            params = {"e": eid, "a": anio, "m": mes, "s": servicio}
+            if t == "macromedicion":        # el agua se guarda por APS: borra solo esa APS
+                sql += " AND cod_dane=:cd"; params["cd"] = (cod_dane or "").strip()
+            res = conn.execute(text(sql), params)
             n += res.rowcount or 0
         if concepto == "comercial":
             ops.derivar_factura(conn, eid)
@@ -1209,8 +1214,8 @@ def catalogo_plantilla(request: Request, eid: int):
 # mayúsculas en los encabezados y meses por número o nombre ('Enero').
 PLANTILLAS = {
     "macromedicion": ("plantilla_agua_producida.csv",
-        "anio,mes,servicio,punto,m3_producido,m3_bloque_entregado,m3_bloque_recibido",
-        ["2026,7,acueducto,P1,4285559,,", "2026,8,acueducto,P1,4227059,,"]),
+        "anio,mes,servicio,punto,m3_producido,m3_bloque_entregado,m3_bloque_recibido,aps",
+        ["2026,7,acueducto,P1,4285559,,,", "2026,8,acueducto,P1,4227059,,,"]),
     "comercial": ("plantilla_comercial.csv",
         "anio,mes,servicio,clase,suscriptores,m3,m3_subsidiable",
         ["2026,7,acueducto,1,1200,19200,19200", "2026,7,acueducto,5,900,21600,0"]),
@@ -1243,6 +1248,18 @@ def plantilla_csv(request: Request, eid: int, tipo: str):
     if not p:
         return RedirectResponse(f"/empresa/{eid}/cargar?err=Plantilla+no+disponible", status_code=303)
     nombre, header, ejemplos = p
+    # El agua producida se carga por APS: la columna `aps` admite el nombre del municipio
+    # atendido o su código DANE; dejarla vacía = conjunto (todas las APS). Pre-llenamos los
+    # ejemplos con los municipios reales de la empresa para que el usuario los reconozca.
+    if tipo == "macromedicion":
+        user = session_user(request)
+        with db.scope_conn(scope_of(user)) as conn:
+            munis = [m["municipio"] for m in aps.municipios_empresa(conn, eid)]
+        if munis:
+            ejemplos = []
+            for mnom in munis[:3]:
+                ejemplos.append(f"2026,7,acueducto,P1,4285559,,,{mnom}")
+                ejemplos.append(f"2026,8,acueducto,P1,4227059,,,{mnom}")
     txt = header + "\n" + "\n".join(ejemplos) + "\n"
     return Response(txt, media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": f"attachment; filename={nombre}"})
@@ -2347,17 +2364,24 @@ def cargar_info(request: Request, eid: int):
         emp = _emp_or_redirect(conn, eid)
         if not emp:
             return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        # Orden cronológico (ascendente) en toda la vista "Cargado".
         com = conn.execute(text(
             "SELECT anio, mes, servicio, suscriptores, m3_facturados, origen FROM carga_mensual "
-            "WHERE empresa_id=:e ORDER BY anio DESC, mes DESC, servicio"), {"e": eid}).mappings().all()
+            "WHERE empresa_id=:e ORDER BY anio, mes, servicio"), {"e": eid}).mappings().all()
         bal = conn.execute(text(
             "SELECT anio, mes, servicio, count(*) AS n, sum(valor) AS total FROM numerador_mensual "
-            "WHERE empresa_id=:e GROUP BY anio, mes, servicio ORDER BY anio DESC, mes DESC, servicio"),
+            "WHERE empresa_id=:e GROUP BY anio, mes, servicio ORDER BY anio, mes, servicio"),
             {"e": eid}).mappings().all()
+        # Agua producida por APS (cod_dane); '' = conjunto. Se muestra el municipio del APS.
         agua = conn.execute(text(
-            "SELECT anio, mes, servicio, count(*) AS puntos, sum(m3_producido) AS m3 FROM macromedicion "
-            "WHERE empresa_id=:e GROUP BY anio, mes, servicio ORDER BY anio DESC, mes DESC, servicio"),
+            "SELECT mm.anio, mm.mes, mm.servicio, mm.cod_dane, m.nombre AS municipio, "
+            "       count(*) AS puntos, sum(mm.m3_producido) AS m3 "
+            "FROM macromedicion mm LEFT JOIN municipio m ON m.cod_dane = mm.cod_dane "
+            "WHERE mm.empresa_id=:e "
+            "GROUP BY mm.anio, mm.mes, mm.servicio, mm.cod_dane, m.nombre "
+            "ORDER BY mm.anio, mm.mes, mm.servicio, mm.cod_dane"),
             {"e": eid}).mappings().all()
+        munis = aps.municipios_empresa(conn, eid)
         costos = cpart.lista(conn, eid)
         ajuste_coc = cpart.ajuste_coc(conn, eid)
         servicios_emp = [s for s, on in (("acueducto", emp["presta_ac"]), ("alcantarillado", emp["presta_al"])) if on] or ["acueducto"]
@@ -2370,7 +2394,7 @@ def cargar_info(request: Request, eid: int):
                   "nombre": cat_row["nombre_archivo"] if cat_row else None,
                   "n_default": len(clf.cargar_catalogo(_catalogo_default_texto() or ""))}
     return tpl.TemplateResponse(request, "cargar.html", _ctx(
-        request, emp=emp, fuente=fuente, com=com, bal=bal, agua=agua, costos=costos,
+        request, emp=emp, fuente=fuente, com=com, bal=bal, agua=agua, munis=munis, costos=costos,
         ajuste_coc=ajuste_coc, ccp_fap=ccp_fap, servicios_emp=servicios_emp, cat_estado=cat_estado,
         ivh_opc=ccp.IVH_OPC, met_opc=ccp.MET_OPC,
         meses=ops.MESES, anios_tar=ANIOS_TAR, cat_cp=cpart.CATEGORIAS,

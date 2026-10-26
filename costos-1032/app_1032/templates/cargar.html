@@ -24,6 +24,7 @@
   <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
   <input type="hidden" name="concepto" value="{{ concepto }}"><input type="hidden" name="anio" value="{{ x.anio }}">
   <input type="hidden" name="mes" value="{{ x.mes }}"><input type="hidden" name="servicio" value="{{ x.servicio }}">
+  <input type="hidden" name="cod_dane" value="{{ x.cod_dane|default('', true) }}">
   <button class="btn-link" type="submit">eliminar</button></form>{% endif %}
 {% endmacro %}
 
@@ -167,12 +168,14 @@ de macromedición (CSV) o el reporte del SUI.</p>
     <form method="post" action="/empresa/{{ emp.id }}/cargar-csv" enctype="multipart/form-data" class="up-form">
       <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
       <input type="hidden" name="tipo" value="macromedicion">
-      <label>Macromedición — CSV (columnas: <code>anio, mes, servicio, punto, m3_producido</code>). Puedes seleccionar varios archivos.
+      <label>Macromedición — CSV (columnas: <code>anio, mes, servicio, punto, m3_producido, aps</code>). Puedes seleccionar varios archivos.
         <input type="file" name="archivos" accept=".csv" multiple required></label>
       <button class="btn primary" type="submit">Cargar archivo(s)</button>
     </form>
     <p class="muted2" style="margin:4px 0 0"><a href="/empresa/{{ emp.id }}/plantilla/macromedicion">Descargar plantilla</a>
-     · el cargue acepta coma o «;» como separador, encabezados en mayúsculas y el mes por número o por nombre («Enero»).</p>
+     · el agua producida se carga <b>por APS</b>: la columna <code>aps</code> admite el nombre del municipio
+     o su código DANE; déjala vacía para el <b>conjunto</b> (todas las APS). Acepta coma o «;», encabezados en
+     mayúsculas y el mes por número o por nombre («Enero»).</p>
   </div>
   <div class="metodo-panel" data-m="manual">
     <form method="post" action="/empresa/{{ emp.id }}/carga-agua" class="form-grid">
@@ -180,6 +183,12 @@ de macromedición (CSV) o el reporte del SUI.</p>
       {{ periodo_anio() }}
       <label>Mes <select name="mes">{% for m in range(1,13) %}<option value="{{ m }}">{{ meses.get(m,m) }}</option>{% endfor %}</select></label>
       <label>Servicio <select name="servicio">{{ servopts() }}</select></label>
+      <label>APS (municipio)
+        <select name="cod_dane">
+          <option value="">Conjunto · todas las APS</option>
+          {% for m in munis %}<option value="{{ m.cod_dane }}">{{ m.municipio }}</option>{% endfor %}
+        </select>
+      </label>
       <label>Punto de macromedición <input name="punto" required placeholder="p. ej. PTAP Norte"></label>
       <label>m³ producidos <input name="m3_producido" inputmode="decimal"></label>
       <label>m³ bloque entregado <input name="m3_bloque_entregado" inputmode="decimal"></label>
@@ -192,10 +201,12 @@ de macromedición (CSV) o el reporte del SUI.</p>
 <h3 class="serv-h">Cargado</h3>
 {% if agua %}
 <table class="tabla">
-  <thead><tr><th>Período</th><th>Año tarifario</th><th>Servicio</th><th class="r">Puntos</th><th class="r">m³ producidos</th><th></th></tr></thead>
+  <thead><tr><th>Período</th><th>Año tarifario</th><th>Servicio</th><th>APS</th><th class="r">Puntos</th><th class="r">m³ producidos</th><th></th></tr></thead>
   <tbody>
     {% for x in agua %}<tr><td class="comp">{{ meses.get(x.mes,x.mes) }}-{{ x.anio }}</td><td>{{ aniotar(x.anio) }}</td>
-      <td>{{ x.servicio }}</td><td class="num">{{ x.puntos }}</td><td class="num">{{ x.m3|valor if x.m3 is not none else '—' }}</td>
+      <td>{{ x.servicio }}</td>
+      <td>{% if x.cod_dane %}{{ x.municipio or x.cod_dane }}{% else %}<span class="muted2">Conjunto</span>{% endif %}</td>
+      <td class="num">{{ x.puntos }}</td><td class="num">{{ x.m3|valor if x.m3 is not none else '—' }}</td>
       <td class="c">{{ delcargue('agua', x) }}</td></tr>{% endfor %}
   </tbody>
 </table>
