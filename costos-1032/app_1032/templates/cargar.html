@@ -163,6 +163,8 @@ de macromedición (CSV) o el reporte del SUI.</p>
     <input type="file" name="archivos" accept=".csv" multiple required></label>
   <button class="btn primary" type="submit">Cargar archivo(s)</button>
 </form>
+<p class="muted2" style="margin:4px 0 10px"><a href="/empresa/{{ emp.id }}/plantilla/macromedicion">Descargar plantilla</a>
+ · el cargue acepta coma o «;» como separador, encabezados en mayúsculas y el mes por número o por nombre («Enero»).</p>
 <form method="post" action="/empresa/{{ emp.id }}/carga-agua" class="form-grid" style="margin-top:4px">
   <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
   {{ periodo_anio() }}

@@ -94,9 +94,13 @@ def _es_binario(texto):
 
 def _rows(contenido):
     # Normaliza saltos de línea y BOM, detecta el separador (coma/;/tab) y materializa las filas
-    # (para archivos pequeños: IPC, factores, macromedición, etc.).
+    # (para archivos pequeños: IPC, factores, macromedición, etc.). Los encabezados se normalizan
+    # a minúsculas y sin espacios, de modo que 'Servicio', 'SERVICIO' y 'servicio' son equivalentes.
     texto, sep = _preparar(contenido)
-    return list(csv.DictReader(io.StringIO(texto), delimiter=sep))
+    out = []
+    for r in csv.DictReader(io.StringIO(texto), delimiter=sep):
+        out.append({(k.strip().lower() if k else k): v for k, v in r.items()})
+    return out
 
 
 def _num(x):
@@ -107,6 +111,25 @@ def _num(x):
 def _int(x):
     v = _num(x)
     return int(round(v)) if v is not None else None
+
+
+def _mes_cell(x):
+    """Mes (1..12) desde una celda: número ('1', '01', '1.0') o nombre en español
+    ('Enero', 'ENE', 'ene'). None si no se reconoce."""
+    s = str(x or "").strip()
+    if not s:
+        return None
+    try:
+        v = int(round(float(s.replace(",", "."))))
+        if 1 <= v <= 12:
+            return v
+    except ValueError:
+        pass
+    n = s.lower()
+    for i, nm in enumerate(_MESES_NOMBRE, 1):
+        if n == nm or (len(n) >= 3 and nm.startswith(n[:3])):
+            return i
+    return None
 
 
 def _faltan(rows, req):
@@ -139,7 +162,7 @@ def cargar_indices(conn, contenido):
     for i, r in enumerate(rows, 2):
         # ipc_sar = IPC sin alimentos ni regulados (alias aceptado de ipcs)
         sar = r.get("ipcs") or r.get("ipc_sar")
-        good, msg = _ins(conn, sql, {"a": _int(r["anio"]), "m": _int(r["mes"]),
+        good, msg = _ins(conn, sql, {"a": _int(r["anio"]), "m": _mes_cell(r.get("mes")),
                                      "ipc": _num(r["ipc"]),
                                      "ipcs": _num(sar) if sar else None})
         ok += 1 if good else 0
@@ -167,7 +190,7 @@ def cargar_comercial(conn, empresa_id, contenido):
         if m3 is not None and m3s is not None and m3s > m3 + 1e-6:
             err.append(f"fila {i}: m3_subsidiable > m3")
             continue
-        good, msg = _ins(conn, sql, {"e": empresa_id, "a": _int(r["anio"]), "m": _int(r["mes"]),
+        good, msg = _ins(conn, sql, {"e": empresa_id, "a": _int(r["anio"]), "m": _mes_cell(r.get("mes")),
                                      "s": serv, "c": _int(r["clase"]), "su": _int(r["suscriptores"]),
                                      "m3": m3, "ms": m3s})
         ok += 1 if good else 0
@@ -214,7 +237,7 @@ def cargar_indicadores(conn, empresa_id, contenido):
         if not serv:
             err.append(f"fila {i}: servicio inválido '{r['servicio']}'")
             continue
-        good, msg = _ins(conn, sql, {"e": empresa_id, "a": _int(r["anio"]), "m": _int(r["mes"]),
+        good, msg = _ins(conn, sql, {"e": empresa_id, "a": _int(r["anio"]), "m": _mes_cell(r.get("mes")),
                                      "s": serv, "ip": _num(r.get("ipuf_real")),
                                      "co": _num(r.get("continuidad_h")), "ir": _num(r.get("irca")),
                                      "re": _int(r.get("reclamaciones")), "ct": _int(r.get("cortes")),
@@ -321,10 +344,17 @@ def cargar_facturacion_sui(conn, empresa_id, servicio, anio, mes, contenido):
 
 def cargar_macromedicion(conn, empresa_id, contenido):
     """CSV de macromedición (agua producida por punto, mensual). Columnas:
-    anio, mes, servicio, punto, m3_producido [, m3_bloque_entregado, m3_bloque_recibido]."""
+    anio, mes, servicio, punto, m3_producido [, m3_bloque_entregado, m3_bloque_recibido].
+    Tolera encabezados en mayúsculas, meses por nombre ('Enero') y variantes o erratas de la
+    columna de producción (cualquier columna m3_* que no sea de bloque)."""
     rows = _rows(contenido)
-    if (e := _faltan(rows, {"anio", "mes", "servicio", "punto", "m3_producido"})):
+    if (e := _faltan(rows, {"anio", "mes", "servicio", "punto"})):
         return 0, e
+    cols = [h for h in rows[0].keys() if h]
+    col_prod = ("m3_producido" if "m3_producido" in cols
+                else next((c for c in cols if c.startswith("m3") and "bloque" not in c), None))
+    if not col_prod:
+        return 0, ["faltan columnas: m3_producido"]
     ok, err = 0, []
     sql = ("INSERT INTO macromedicion(empresa_id,anio,mes,servicio,punto,m3_producido,"
            "m3_bloque_entregado,m3_bloque_recibido,origen) "
@@ -333,13 +363,17 @@ def cargar_macromedicion(conn, empresa_id, contenido):
            "m3_producido=excluded.m3_producido, m3_bloque_entregado=excluded.m3_bloque_entregado, "
            "m3_bloque_recibido=excluded.m3_bloque_recibido")
     for i, r in enumerate(rows, 2):
-        serv = _norm_serv(r["servicio"])
+        serv = _norm_serv(r.get("servicio"))
         if not serv:
-            err.append(f"fila {i}: servicio inválido '{r['servicio']}'")
+            err.append(f"fila {i}: servicio inválido '{r.get('servicio')}'")
             continue
-        good, msg = _ins(conn, sql, {"e": empresa_id, "a": _int(r["anio"]), "m": _int(r["mes"]),
+        mes = _mes_cell(r.get("mes"))
+        if mes is None:
+            err.append(f"fila {i}: mes inválido '{r.get('mes')}'")
+            continue
+        good, msg = _ins(conn, sql, {"e": empresa_id, "a": _int(r.get("anio")), "m": mes,
                                      "s": serv, "p": (r.get("punto") or "").strip(),
-                                     "mp": _num(r["m3_producido"]),
+                                     "mp": _num(r.get(col_prod)),
                                      "be": _num(r.get("m3_bloque_entregado")),
                                      "br": _num(r.get("m3_bloque_recibido"))})
         ok += 1 if good else 0

@@ -1205,6 +1205,40 @@ def catalogo_plantilla(request: Request, eid: int):
                     headers={"Content-Disposition": "attachment; filename=plantilla_catalogo_cuentas.csv"})
 
 
+# Plantillas CSV de cargue (encabezado + filas de ejemplo). El cargue acepta coma o ';',
+# mayúsculas en los encabezados y meses por número o nombre ('Enero').
+PLANTILLAS = {
+    "macromedicion": ("plantilla_agua_producida.csv",
+        "anio,mes,servicio,punto,m3_producido,m3_bloque_entregado,m3_bloque_recibido",
+        ["2026,7,acueducto,P1,4285559,,", "2026,8,acueducto,P1,4227059,,"]),
+    "comercial": ("plantilla_comercial.csv",
+        "anio,mes,servicio,clase,suscriptores,m3,m3_subsidiable",
+        ["2026,7,acueducto,1,1200,19200,19200", "2026,7,acueducto,5,900,21600,0"]),
+    "factores": ("plantilla_factores_subsidio.csv",
+        "vigencia,servicio,clase,factor_cargofijo,factor_consumo",
+        ["2026-07,acueducto,1,-0.70,-0.70", "2026-07,acueducto,5,0.50,0.50"]),
+    "indicadores": ("plantilla_indicadores.csv",
+        "anio,mes,servicio,ipuf_real,continuidad_h,irca,reclamaciones,cortes,reconexiones",
+        ["2026,7,acueducto,6.0,24,0,,,"]),
+    "indices": ("plantilla_ipc.csv",
+        "anio,mes,ipc,ipcs",
+        ["2026,7,112.34,110.20"]),
+}
+
+
+@app.get("/empresa/{eid}/plantilla/{tipo}")
+def plantilla_csv(request: Request, eid: int, tipo: str):
+    if (r := _need_login(request)):
+        return r
+    p = PLANTILLAS.get(tipo)
+    if not p:
+        return RedirectResponse(f"/empresa/{eid}/cargar?err=Plantilla+no+disponible", status_code=303)
+    nombre, header, ejemplos = p
+    txt = header + "\n" + "\n".join(ejemplos) + "\n"
+    return Response(txt, media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f"attachment; filename={nombre}"})
+
+
 @app.post("/empresa/{eid}/catalogo-cuentas")
 def catalogo_subir(request: Request, eid: int, archivo: UploadFile = File(...),
                    next: str = Form(""), csrf: str = Form("")):
