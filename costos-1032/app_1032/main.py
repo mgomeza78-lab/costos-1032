@@ -379,12 +379,12 @@ def empresa_suscriptores(request: Request, eid: int):
     servicio = request.query_params.get("serv") or None
     cod = request.query_params.get("aps")
     cod_dane = cod if cod is not None and cod != "__all__" else None
-    periodo = request.query_params.get("per") or None
+    per_clave = request.query_params.get("per") or None
     with db.scope_conn(scope_of(user)) as conn:
         emp = conn.execute(text("SELECT * FROM empresa WHERE id=:e"), {"e": eid}).mappings().first()
         if not emp:
             return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
-        datos = sv.dashboard(conn, eid, servicio=servicio, cod_dane=cod_dane, periodo=periodo)
+        datos = sv.dashboard(conn, eid, servicio=servicio, cod_dane=cod_dane, per_clave=per_clave)
     return tpl.TemplateResponse(request, "suscriptores.html", _ctx(request, emp=emp, d=datos))
 
 
