@@ -1320,6 +1320,7 @@ def catalogo_reset(request: Request, eid: int, next: str = Form(""), csrf: str =
 @app.post("/empresa/{eid}/cargar-balance")
 def cargar_balance(request: Request, eid: int, anio: int = Form(...),
                    mes_ini: int = Form(1), mes_fin: int = Form(12), mes: int = Form(None),
+                   cod_dane: str = Form(""),
                    archivo: UploadFile = File(...), next: str = Form(""), csrf: str = Form("")):
     if (r := _need_login(request)):
         return r
@@ -1373,7 +1374,7 @@ def cargar_balance(request: Request, eid: int, anio: int = Form(...),
         nums_mes = {k: (float(v or 0.0) / n_meses) for k, v in nums.items()}
         n = 0
         for m in range(mes_ini, mes_fin + 1):
-            n += ingesta.persistir_numeradores_mensual(conn, eid, anio, m, nums_mes, split)
+            n += ingesta.persistir_numeradores_mensual(conn, eid, anio, m, nums_mes, split, cod_dane=cod_dane)
         rc.recalcular(conn, eid)
     rango = (ops.MESES.get(mes_ini, mes_ini) if n_meses == 1
              else f"{ops.MESES.get(mes_ini, mes_ini)}–{ops.MESES.get(mes_fin, mes_fin)}")
@@ -2255,7 +2256,7 @@ def suficiencia(request: Request, eid: int):
             "       cm.suscriptores, cm.m3_facturados "
             "FROM tarifa_vigente tv "
             "LEFT JOIN carga_mensual cm ON cm.empresa_id=tv.empresa_id AND cm.anio=tv.anio "
-            "     AND cm.mes=tv.mes AND cm.servicio=tv.servicio "
+            "     AND cm.mes=tv.mes AND cm.servicio=tv.servicio AND cm.cod_dane='' "
             "WHERE tv.empresa_id=:e AND (tv.anio,tv.mes) = ("
             "   SELECT anio,mes FROM tarifa_vigente WHERE empresa_id=:e ORDER BY anio DESC, mes DESC LIMIT 1) "
             "ORDER BY tv.servicio"), {"e": eid}).mappings().all()
@@ -2360,14 +2361,35 @@ def cargar_info(request: Request, eid: int):
         return r
     user = session_user(request)
     fuente = request.query_params.get("fuente") or "comercial"
+    # Vista comercial: "total" (conjunto, resumen) o "aps" (desglose por APS desde el detalle);
+    # y filtro opcional por año. Orden cronológico en toda la vista "Cargado".
+    cm_vista = request.query_params.get("cmvista") or "total"
+    try:
+        cm_anio = int(request.query_params.get("cmanio") or 0) or None
+    except ValueError:
+        cm_anio = None
     with db.scope_conn(scope_of(user)) as conn:
         emp = _emp_or_redirect(conn, eid)
         if not emp:
             return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
-        # Orden cronológico (ascendente) en toda la vista "Cargado".
+        _yf = " AND anio=:a" if cm_anio else ""
+        _yp = {"e": eid, "a": cm_anio} if cm_anio else {"e": eid}
+        # Totales (conjunto) — lo que ya existía; cubre cargue SUI y entradas manuales.
         com = conn.execute(text(
             "SELECT anio, mes, servicio, suscriptores, m3_facturados, origen FROM carga_mensual "
-            "WHERE empresa_id=:e ORDER BY anio, mes, servicio"), {"e": eid}).mappings().all()
+            "WHERE empresa_id=:e" + _yf + " ORDER BY anio, mes, servicio"), _yp).mappings().all()
+        # Desglose por APS (desde el detalle por clase, sumando clases). '' = conjunto.
+        com_aps = conn.execute(text(
+            "SELECT d.anio, d.mes, d.servicio, d.cod_dane, m.nombre AS municipio, "
+            "       SUM(d.suscriptores) AS suscriptores, SUM(d.m3) AS m3 "
+            "FROM carga_mensual_detalle d LEFT JOIN municipio m ON m.cod_dane = d.cod_dane "
+            "WHERE d.empresa_id=:e" + _yf + " "
+            "GROUP BY d.anio, d.mes, d.servicio, d.cod_dane, m.nombre "
+            "ORDER BY d.anio, d.mes, d.servicio, d.cod_dane"), _yp).mappings().all()
+        com_anios = conn.execute(text(
+            "SELECT DISTINCT anio FROM carga_mensual WHERE empresa_id=:e "
+            "UNION SELECT DISTINCT anio FROM carga_mensual_detalle WHERE empresa_id=:e "
+            "ORDER BY anio"), {"e": eid}).scalars().all()
         bal = conn.execute(text(
             "SELECT anio, mes, servicio, count(*) AS n, sum(valor) AS total FROM numerador_mensual "
             "WHERE empresa_id=:e GROUP BY anio, mes, servicio ORDER BY anio, mes, servicio"),
@@ -2394,7 +2416,8 @@ def cargar_info(request: Request, eid: int):
                   "nombre": cat_row["nombre_archivo"] if cat_row else None,
                   "n_default": len(clf.cargar_catalogo(_catalogo_default_texto() or ""))}
     return tpl.TemplateResponse(request, "cargar.html", _ctx(
-        request, emp=emp, fuente=fuente, com=com, bal=bal, agua=agua, munis=munis, costos=costos,
+        request, emp=emp, fuente=fuente, com=com, com_aps=com_aps, com_anios=com_anios,
+        cm_vista=cm_vista, cm_anio=cm_anio, bal=bal, agua=agua, munis=munis, costos=costos,
         ajuste_coc=ajuste_coc, ccp_fap=ccp_fap, servicios_emp=servicios_emp, cat_estado=cat_estado,
         ivh_opc=ccp.IVH_OPC, met_opc=ccp.MET_OPC,
         meses=ops.MESES, anios_tar=ANIOS_TAR, cat_cp=cpart.CATEGORIAS,

@@ -18,6 +18,11 @@ from sqlalchemy import text
 # y uno nuevo en camelCase (codigoClaseUso, consumoM3, …). Cada concepto lista sus alias EN
 # MAYÚSCULAS y sin el sufijo _NN (como los deja _mapa_base); se toma el primer alias presente.
 # Confirmados contra archivos reales de Las Ceibas (AC y ALC, años 2024–2026).
+# `muni` (opcional): columna del municipio/DANE del reporte, para desagregar por APS. Si el
+# reporte la trae, suscriptores y m³ se reparten por APS (la llave coincide con `divipola`).
+_MUNI_ALIASES = ["DIVIPOLA", "DANE", "CODDANE", "CODIGODANE", "CODMUNICIPIO", "CODIGOMUNICIPIO",
+                 "IDMUNICIPIO", "MUNICIPIO", "MUNICIPIODANE", "CODIGODIVIPOLA", "CODIGOMPIO", "MPIO",
+                 "CODMPIO", "CODIGOMUNICIPIODANE"]
 CAMPOS_SUI = {
     "acueducto": {
         "clase": ["CLASEUSO", "CODIGOCLASEUSO"],
@@ -25,6 +30,7 @@ CAMPOS_SUI = {
         "sub":   ["CONS_SUB", "CONSUMOSUBSIDIADOM3"],
         "fcf":   ["FACTORSUBSIDIOCARGOFIJO", "FACTORSUBSIDIOCONTRIBUCIONCARGOFIJO"],
         "fcc":   ["FACTORSUBSIDIOCONSUMO", "FACTORSUBSIDIOCONTRIBUCIONCONSUMO"],
+        "muni":  _MUNI_ALIASES,
     },
     "alcantarillado": {
         "clase": ["CLASEUSO", "CODIGOCLASEUSO"],
@@ -32,9 +38,10 @@ CAMPOS_SUI = {
         "sub":   ["VERTIMIENTOSUB", "VERTIMIENTOSUBSIDIADOM3"],
         "fcf":   ["FACTORSUBCONTCFIJO", "FACTORSUBSIDIOCONTRIBUCIONCARGOFIJO"],
         "fcc":   ["FACTORSUBSIDIOVERTIMIENTO", "FACTORSUBSIDIOCONTRIBUCIONCONSUMO"],
+        "muni":  _MUNI_ALIASES,
     },
 }
-# Conceptos imprescindibles para agregar por clase; los factores de subsidio son opcionales.
+# Conceptos imprescindibles para agregar por clase; factores de subsidio y municipio son opcionales.
 CAMPOS_SUI_REQ = {"clase", "cons", "sub"}
 _SUFIJO = re.compile(r"_\d+$")
 
@@ -172,12 +179,26 @@ def cargar_indices(conn, contenido):
 
 
 def cargar_comercial(conn, empresa_id, contenido):
+    """CSV comercial propio por clase. Columnas: anio, mes, servicio, clase, suscriptores, m3,
+    m3_subsidiable [, aps]. `aps` (opcional) reparte por APS (nombre del municipio o código DANE;
+    vacío = conjunto). La llave coincide con `divipola`."""
     rows = _rows(contenido)
     if (e := _faltan(rows, {"anio", "mes", "servicio", "clase", "suscriptores", "m3", "m3_subsidiable"})):
         return 0, e
+    cols = [h for h in rows[0].keys() if h]
+    col_aps = _col_aps(cols)
+    mapa = aps_mapa(conn, empresa_id) if col_aps else {}
+    # Reemplazo limpio: borra el detalle previo de cada (anio,mes,servicio) presente en el archivo,
+    # para que un re-cargue que cambie la granularidad por APS no deje filas huérfanas.
+    combos = {(_int(r.get("anio")), _mes_cell(r.get("mes")), _norm_serv(r.get("servicio")))
+              for r in rows}
+    for a, m, s in combos:
+        if a and m and s:
+            conn.execute(text("DELETE FROM carga_mensual_detalle WHERE empresa_id=:e AND anio=:a "
+                              "AND mes=:m AND servicio=:s"), {"e": empresa_id, "a": a, "m": m, "s": s})
     ok, err = 0, []
     sql = ("INSERT INTO carga_mensual_detalle(empresa_id,anio,mes,servicio,clase,cod_dane,"
-           "suscriptores,m3,m3_subsidiable,origen) VALUES (:e,:a,:m,:s,:c,'',:su,:m3,:ms,'SUI') "
+           "suscriptores,m3,m3_subsidiable,origen) VALUES (:e,:a,:m,:s,:c,:cd,:su,:m3,:ms,'SUI') "
            "ON CONFLICT (empresa_id,anio,mes,servicio,clase,cod_dane) DO UPDATE SET "
            "suscriptores=excluded.suscriptores, m3=excluded.m3, "
            "m3_subsidiable=excluded.m3_subsidiable, origen=excluded.origen")
@@ -190,8 +211,12 @@ def cargar_comercial(conn, empresa_id, contenido):
         if m3 is not None and m3s is not None and m3s > m3 + 1e-6:
             err.append(f"fila {i}: m3_subsidiable > m3")
             continue
+        cod, eaps = (_resolver_aps(r.get(col_aps), mapa) if col_aps else ("", None))
+        if eaps:
+            err.append(f"fila {i}: {eaps}")
+            continue
         good, msg = _ins(conn, sql, {"e": empresa_id, "a": _int(r["anio"]), "m": _mes_cell(r.get("mes")),
-                                     "s": serv, "c": _int(r["clase"]), "su": _int(r["suscriptores"]),
+                                     "s": serv, "c": _int(r["clase"]), "cd": cod, "su": _int(r["suscriptores"]),
                                      "m3": m3, "ms": m3s})
         ok += 1 if good else 0
         if not good:
@@ -292,46 +317,64 @@ def cargar_facturacion_sui(conn, empresa_id, servicio, anio, mes, contenido):
         det = ", ".join(etq.get(c, c) for c in faltan)
         return 0, [f"no se reconoció el reporte de {serv}: faltan columnas de {det}; "
                    f"verifica que sea el CSV original del SUI (no un Excel .xlsx)"]
+    # Si el reporte trae municipio/DANE, se reparte por APS (la llave coincide con `divipola`);
+    # el municipio que no corresponda a un APS de la empresa cae en el conjunto ('').
+    mapa = aps_mapa(conn, empresa_id) if campos.get("muni") else {}
     # Agregación en streaming (no materializa toda la lista): clave para los archivos de ~30 MB.
-    agg = defaultdict(lambda: {"n": 0, "m3": 0.0, "sub": 0.0, "fcf": Counter(), "fcc": Counter()})
+    #  · agg_q: cantidades por (clase, cod_dane) — alimenta el detalle por APS.
+    #  · agg_f: factores por clase (los factores no dependen del APS).
+    agg_q = defaultdict(lambda: {"n": 0, "m3": 0.0, "sub": 0.0})
+    agg_f = defaultdict(lambda: {"fcf": Counter(), "fcc": Counter()})
     for r in reader:
         clv = _int(r.get(campos["clase"]))
         if clv is None:
             continue
-        a = agg[clv]
+        cod = ""
+        if campos.get("muni"):
+            cod, _e = _resolver_aps(r.get(campos["muni"]), mapa)
+            cod = cod or ""          # municipio no reconocido -> conjunto (sin perder el dato)
+        a = agg_q[(clv, cod)]
         a["n"] += 1
         a["m3"] += _num(r.get(campos["cons"])) or 0.0
         a["sub"] += _num(r.get(campos["sub"])) or 0.0
+        f = agg_f[clv]
         fcf = _num(r.get(campos["fcf"])) if campos["fcf"] else None
         fcc = _num(r.get(campos["fcc"])) if campos["fcc"] else None
         if fcf is not None:
-            a["fcf"][fcf] += 1
+            f["fcf"][fcf] += 1
         if fcc is not None:
-            a["fcc"][fcc] += 1
+            f["fcc"][fcc] += 1
     sql_d = ("INSERT INTO carga_mensual_detalle(empresa_id,anio,mes,servicio,clase,cod_dane,"
-             "suscriptores,m3,m3_subsidiable,origen) VALUES (:e,:a,:m,:s,:c,'',:su,:m3,:ms,'SUI') "
+             "suscriptores,m3,m3_subsidiable,origen) VALUES (:e,:a,:m,:s,:c,:cd,:su,:m3,:ms,'SUI') "
              "ON CONFLICT (empresa_id,anio,mes,servicio,clase,cod_dane) DO UPDATE SET "
              "suscriptores=excluded.suscriptores, m3=excluded.m3, "
              "m3_subsidiable=excluded.m3_subsidiable, origen=excluded.origen")
     sql_f = ("INSERT INTO factor_subsidio(empresa_id,vigencia,servicio,clase,factor_cargofijo,factor_consumo) "
              "VALUES (:e,:v,:s,:c,:fcf,:fc) ON CONFLICT (empresa_id,vigencia,servicio,clase) "
              "DO UPDATE SET factor_cargofijo=excluded.factor_cargofijo, factor_consumo=excluded.factor_consumo")
+    # Reemplazo limpio del mes/servicio: borra el detalle previo (cualquier APS) para que un
+    # re-cargue que cambie la granularidad por APS no deje filas huérfanas que dupliquen la suma.
+    conn.execute(text("DELETE FROM carga_mensual_detalle WHERE empresa_id=:e AND anio=:a "
+                      "AND mes=:m AND servicio=:s"), {"e": empresa_id, "a": anio, "m": mes, "s": serv})
+    # Detalle por (clase, APS). Si no hubo columna de municipio, todo queda en el conjunto ('').
     ok, err = 0, []
-    for clase, a in sorted(agg.items()):
+    for (clase, cod), a in sorted(agg_q.items()):
         good, msg = _ins(conn, sql_d, {"e": empresa_id, "a": anio, "m": mes, "s": serv, "c": clase,
-                                       "su": a["n"], "m3": a["m3"], "ms": a["sub"]})
+                                       "cd": cod, "su": a["n"], "m3": a["m3"], "ms": a["sub"]})
         if not good:
-            err.append(f"clase {clase}: {msg}")
+            err.append(f"clase {clase}{(' · '+cod) if cod else ''}: {msg}")
             continue
-        fcf = a["fcf"].most_common(1)[0][0] if a["fcf"] else None
-        fcc = a["fcc"].most_common(1)[0][0] if a["fcc"] else None
-        _ins(conn, sql_f, {"e": empresa_id, "v": anio, "s": serv, "c": clase, "fcf": fcf, "fc": fcc})
         ok += 1
-    # Resumen del mes en carga_mensual (lo que leen Validación, Resultados y el listado de
-    # cargados): total de suscriptores y m³ facturados agregando todas las clases de uso.
+    # Factores de subsidio por clase (no dependen del APS).
+    for clase, f in sorted(agg_f.items()):
+        fcf = f["fcf"].most_common(1)[0][0] if f["fcf"] else None
+        fcc = f["fcc"].most_common(1)[0][0] if f["fcc"] else None
+        _ins(conn, sql_f, {"e": empresa_id, "v": anio, "s": serv, "c": clase, "fcf": fcf, "fc": fcc})
+    # Resumen del mes en carga_mensual (conjunto, cod_dane=''): total de suscriptores y m³
+    # agregando TODAS las clases y APS. Es lo que leen Validación, Resultados y el listado.
     if ok:
-        tot_susc = sum(a["n"] for a in agg.values())
-        tot_m3 = sum(a["m3"] for a in agg.values())
+        tot_susc = sum(a["n"] for a in agg_q.values())
+        tot_m3 = sum(a["m3"] for a in agg_q.values())
         _ins(conn,
              "INSERT INTO carga_mensual(empresa_id,anio,mes,servicio,cod_dane,suscriptores,m3_facturados,origen) "
              "VALUES (:e,:a,:m,:s,'',:su,:m3,'SUI') "
@@ -432,13 +475,25 @@ _CONCEPTO_NUM = {"CACe": "CACe", "COCe_comparables": "COCe", "CE_contable": "CE"
                  "CIQ_contable": "CIQ", "COIR": "COIR", "ICTA": "ICTA", "ICTO": "ITO", "TA": "TA"}
 
 
-def persistir_numeradores_mensual(conn, empresa_id, anio, mes, numeradores, split_ac):
+def persistir_numeradores_mensual(conn, empresa_id, anio, mes, numeradores, split_ac, cod_dane=""):
     """Guarda los numeradores del balance del mes en numerador_mensual, repartidos por
     servicio con `split_ac` (concepto -> participación de acueducto, 0..1). El resto va a
-    alcantarillado. `numeradores` = salida de clasificador.numeradores()."""
-    sql = ("INSERT INTO numerador_mensual(empresa_id,anio,mes,servicio,concepto,valor,origen) "
-           "VALUES (:e,:a,:m,:s,:c,:v,'balance') "
-           "ON CONFLICT (empresa_id,anio,mes,servicio,concepto) DO UPDATE SET "
+    alcantarillado. `numeradores` = salida de clasificador.numeradores().
+
+    `cod_dane` identifica el APS del balance: '' = conjunto / todas las APS (lo normal).
+    Para mantener la coherencia del total (que es la SUMA sobre cod_dane), un mes es conjunto
+    O está repartido por APS, nunca ambos: al cargar el conjunto se borra cualquier reparto por
+    APS del mes; al cargar un APS se borra el conjunto de ese mes (y se reemplaza ese APS)."""
+    cod_dane = (cod_dane or "").strip()
+    if cod_dane == "":
+        conn.execute(text("DELETE FROM numerador_mensual WHERE empresa_id=:e AND anio=:a AND mes=:m"),
+                     {"e": empresa_id, "a": anio, "m": mes})
+    else:
+        conn.execute(text("DELETE FROM numerador_mensual WHERE empresa_id=:e AND anio=:a AND mes=:m "
+                          "AND cod_dane IN ('', :cd)"), {"e": empresa_id, "a": anio, "m": mes, "cd": cod_dane})
+    sql = ("INSERT INTO numerador_mensual(empresa_id,anio,mes,servicio,concepto,cod_dane,valor,origen) "
+           "VALUES (:e,:a,:m,:s,:c,:cd,:v,'balance') "
+           "ON CONFLICT (empresa_id,anio,mes,servicio,concepto,cod_dane) DO UPDATE SET "
            "valor=excluded.valor, origen=excluded.origen")
     n = 0
     for k_cl, concepto in _CONCEPTO_NUM.items():
@@ -448,7 +503,7 @@ def persistir_numeradores_mensual(conn, empresa_id, anio, mes, numeradores, spli
         sa = split_ac.get(concepto, 1.0)
         for serv, val in (("acueducto", total * sa), ("alcantarillado", total * (1 - sa))):
             good, _ = _ins(conn, sql, {"e": empresa_id, "a": anio, "m": mes, "s": serv,
-                                       "c": concepto, "v": val})
+                                       "c": concepto, "cd": cod_dane, "v": val})
             n += 1 if good else 0
     return n
 

@@ -81,8 +81,11 @@ def ccp_mes(af, ap, n, ipuf):
 
 def _num_mes(conn, empresa_id):
     """numerador_mensual -> {(servicio,anio,mes): {concepto: valor}} (del balance clasificado)."""
+    # SUM sobre cod_dane: el balance puede venir conjunto ('') o repartido por APS; el total
+    # del mes es la suma. Con balance conjunto (lo normal) hay una sola fila por clave.
     rows = conn.execute(text(
-        "SELECT servicio, anio, mes, concepto, valor FROM numerador_mensual WHERE empresa_id=:e"),
+        "SELECT servicio, anio, mes, concepto, SUM(valor) AS valor FROM numerador_mensual "
+        "WHERE empresa_id=:e GROUP BY servicio, anio, mes, concepto"),
         {"e": empresa_id}).mappings().all()
     d = {}
     for r in rows:

@@ -100,15 +100,20 @@ def procesar_empresa(conn, empresa_id, gatillo=GATILLO):
 
 def derivar_factura(conn, empresa_id):
     """Factura teórica por clase = tarifa vigente × cantidades, con subsidios/contribuciones."""
+    # El detalle puede venir repartido por APS (cod_dane); la factura es a nivel total, así que
+    # se agregan las cantidades por clase (suma sobre las APS) antes de calcular.
     rows = conn.execute(text(
-        "SELECT d.anio, d.mes, d.servicio, d.clase, d.suscriptores, d.m3, d.m3_subsidiable, "
+        "SELECT d.anio, d.mes, d.servicio, d.clase, "
+        "       SUM(d.suscriptores) AS suscriptores, SUM(d.m3) AS m3, SUM(d.m3_subsidiable) AS m3_subsidiable, "
         "       tv.cargo_fijo, tv.cargo_consumo, fs.factor_cargofijo, fs.factor_consumo "
         "FROM carga_mensual_detalle d "
         "JOIN tarifa_vigente tv ON tv.empresa_id=d.empresa_id AND tv.anio=d.anio "
         "     AND tv.mes=d.mes AND tv.servicio=d.servicio "
         "LEFT JOIN factor_subsidio fs ON fs.empresa_id=d.empresa_id AND fs.vigencia=d.anio "
         "     AND fs.servicio=d.servicio AND fs.clase=d.clase "
-        "WHERE d.empresa_id=:e"), {"e": empresa_id}).mappings().all()
+        "WHERE d.empresa_id=:e "
+        "GROUP BY d.anio, d.mes, d.servicio, d.clase, tv.cargo_fijo, tv.cargo_consumo, "
+        "         fs.factor_cargofijo, fs.factor_consumo"), {"e": empresa_id}).mappings().all()
     filas = 0
     for r in rows:
         CF = r["cargo_fijo"] or 0.0
@@ -146,7 +151,7 @@ def tablero(conn, empresa_id):
         "FROM tarifa_vigente tv "
         "LEFT JOIN indice_ipc ip ON ip.anio=tv.anio AND ip.mes=tv.mes "
         "LEFT JOIN carga_mensual cm ON cm.empresa_id=tv.empresa_id AND cm.anio=tv.anio "
-        "     AND cm.mes=tv.mes AND cm.servicio=tv.servicio "
+        "     AND cm.mes=tv.mes AND cm.servicio=tv.servicio AND cm.cod_dane='' "
         "WHERE tv.empresa_id=:e ORDER BY tv.servicio, tv.anio, tv.mes"),
         {"e": empresa_id}).mappings().all()
     por = {}

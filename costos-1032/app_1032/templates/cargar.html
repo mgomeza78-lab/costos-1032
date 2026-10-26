@@ -85,17 +85,47 @@ el nombre de cada archivo y lo puedes corregir antes de cargar. Reconoce los <b>
 </details>
 {% endif %}
 <h3 class="serv-h">Cargado</h3>
-{% if com %}
-<table class="tabla">
-  <thead><tr><th>Período</th><th>Año tarifario</th><th>Servicio</th><th class="r">Suscriptores</th><th class="r">m³ facturados</th><th>Origen</th><th></th></tr></thead>
-  <tbody>
-    {% for x in com %}<tr><td class="comp">{{ meses.get(x.mes,x.mes) }}-{{ x.anio }}</td><td>{{ aniotar(x.anio) }}</td>
-      <td>{{ x.servicio }}</td><td class="num">{{ x.suscriptores|valor if x.suscriptores is not none else '—' }}</td>
-      <td class="num">{{ x.m3_facturados|valor if x.m3_facturados is not none else '—' }}</td><td>{{ x.origen or '—' }}</td>
-      <td class="c">{{ delcargue('comercial', x) }}</td></tr>{% endfor %}
-  </tbody>
-</table>
-{% else %}<p class="empty">Aún no hay información comercial cargada.</p>{% endif %}
+<p class="muted2" style="margin:-4px 0 8px">El reporte del SUI trae <b>todas las APS</b>; si incluye la
+columna de municipio/DANE, los suscriptores y m³ se <b>desagregan por APS</b> automáticamente (la llave
+coincide con <code>divipola</code>). Elige la vista y el año:</p>
+{% set cmbase = '/empresa/' ~ emp.id ~ '/cargar?fuente=comercial' %}
+<div class="cm-filtros">
+  <span class="muted2">Vista:</span>
+  <a class="chip {{ 'on' if cm_vista!='aps' }}" href="{{ cmbase }}&cmvista=total{{ '&cmanio=' ~ cm_anio if cm_anio }}">Total</a>
+  <a class="chip {{ 'on' if cm_vista=='aps' }}" href="{{ cmbase }}&cmvista=aps{{ '&cmanio=' ~ cm_anio if cm_anio }}">Por APS</a>
+  {% if com_anios %}
+  <span class="muted2" style="margin-left:10px">Año:</span>
+  <a class="chip {{ 'on' if not cm_anio }}" href="{{ cmbase }}&cmvista={{ cm_vista }}">Todos</a>
+  {% for y in com_anios %}<a class="chip {{ 'on' if cm_anio==y }}" href="{{ cmbase }}&cmvista={{ cm_vista }}&cmanio={{ y }}">{{ y }}</a>{% endfor %}
+  {% endif %}
+</div>
+{% if cm_vista=='aps' %}
+  {% if com_aps %}
+  <table class="tabla">
+    <thead><tr><th>Período</th><th>Año tarifario</th><th>Servicio</th><th>APS</th><th class="r">Suscriptores</th><th class="r">m³ facturados</th></tr></thead>
+    <tbody>
+      {% for x in com_aps %}<tr><td class="comp">{{ meses.get(x.mes,x.mes) }}-{{ x.anio }}</td><td>{{ aniotar(x.anio) }}</td>
+        <td>{{ x.servicio }}</td>
+        <td>{% if x.cod_dane %}{{ x.municipio or x.cod_dane }}{% else %}<span class="muted2">Conjunto</span>{% endif %}</td>
+        <td class="num">{{ x.suscriptores|valor if x.suscriptores is not none else '—' }}</td>
+        <td class="num">{{ x.m3|valor if x.m3 is not none else '—' }}</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  <p class="muted2">El desglose por APS sale del detalle por clase. La eliminación de un mes se hace en la vista <b>Total</b>.</p>
+  {% else %}<p class="empty">No hay detalle por clase para desagregar por APS en este filtro.</p>{% endif %}
+{% else %}
+  {% if com %}
+  <table class="tabla">
+    <thead><tr><th>Período</th><th>Año tarifario</th><th>Servicio</th><th class="r">Suscriptores</th><th class="r">m³ facturados</th><th>Origen</th><th></th></tr></thead>
+    <tbody>
+      {% for x in com %}<tr><td class="comp">{{ meses.get(x.mes,x.mes) }}-{{ x.anio }}</td><td>{{ aniotar(x.anio) }}</td>
+        <td>{{ x.servicio }}</td><td class="num">{{ x.suscriptores|valor if x.suscriptores is not none else '—' }}</td>
+        <td class="num">{{ x.m3_facturados|valor if x.m3_facturados is not none else '—' }}</td><td>{{ x.origen or '—' }}</td>
+        <td class="c">{{ delcargue('comercial', x) }}</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="empty">Aún no hay información comercial cargada{{ ' en este año' if cm_anio }}.</p>{% endif %}
+{% endif %}
 {% endif %}
 
 {# ---------------- BALANCE DE PRUEBA ---------------- #}
@@ -109,6 +139,12 @@ de costos. Fuente esperada: balance de prueba a nivel de cuenta (Excel o CSV).</
   {{ periodo_anio() }}
   <label>Mes inicio <select name="mes_ini">{% for m in range(1,13) %}<option value="{{ m }}"{{ ' selected' if m==1 }}>{{ meses.get(m,m) }}</option>{% endfor %}</select></label>
   <label>Mes fin <select name="mes_fin">{% for m in range(1,13) %}<option value="{{ m }}"{{ ' selected' if m==12 }}>{{ meses.get(m,m) }}</option>{% endfor %}</select></label>
+  <label>Ámbito (APS)
+    <select name="cod_dane">
+      <option value="">Conjunto · todas las APS</option>
+      {% for m in munis %}<option value="{{ m.cod_dane }}">{{ m.municipio }}</option>{% endfor %}
+    </select>
+  </label>
   <label class="wide">Balance de prueba (Excel / CSV) <input type="file" name="archivo" required></label>
   <button class="btn primary" type="submit">Cargar balance</button>
 </form>
@@ -116,7 +152,9 @@ de costos. Fuente esperada: balance de prueba a nivel de cuenta (Excel o CSV).</
  · columnas mínimas <code>cuenta, nombre, saldo</code> (también acepta débito/crédito); separador coma o «;».</p>
 <p class="hint">El balance que subas se <b>distribuye en partes iguales</b> entre los meses del rango elegido
 (p. ej. <b>ene–dic = 12 meses</b>, así cargas todo el año de una vez). Para un solo mes, elige el mismo
-mes de inicio y fin.</p>
+mes de inicio y fin. <b>Ámbito:</b> por defecto el balance es <b>conjunto</b> (toda la empresa, lo normal);
+si tu contabilidad está separada por APS, elige el municipio y sube un balance por cada APS (el total del
+mes será la suma). Cargar el conjunto reemplaza cualquier balance por APS de ese mes, y viceversa.</p>
 
 <h3 class="serv-h">Catálogo de clasificación de cuentas</h3>
 <p class="muted2">El balance se clasifica en CMA/CMO/CMI/CMICT con un <b>catálogo</b> que asigna cada cuenta
@@ -361,4 +399,10 @@ generando continuidad con las señales regulatorias de la Res. 688.</p>
   });
 })();
 </script>
+<style>
+.cm-filtros{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:6px 0 10px}
+.cm-filtros .chip{display:inline-block;padding:3px 10px;border:1px solid var(--line,#d8d2c4);
+  border-radius:999px;font-size:12.5px;text-decoration:none;color:inherit;background:var(--paper,#fff)}
+.cm-filtros .chip.on{background:var(--teal,#1f7a6b);border-color:var(--teal,#1f7a6b);color:#fff}
+</style>
 {% endblock %}
