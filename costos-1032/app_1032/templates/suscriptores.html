@@ -3,13 +3,16 @@
 {% block body %}
 {% macro n0(x) %}{% if x is none %}<span class="mut">—</span>{% else %}{{ x|valor }}{% endif %}{% endmacro %}
 {% macro pct(x) %}{% if x is none %}<span class="mut">—</span>{% else %}{{ ('%+.1f'|format(x))|replace('.',',') }}%{% endif %}{% endmacro %}
+{% macro p1(x) %}{% if x is none %}<span class="mut">—</span>{% else %}{{ ('%.1f'|format(x))|replace('.',',') }}%{% endif %}{% endmacro %}
+{% macro n2(x) %}{% if x is none %}<span class="mut">—</span>{% else %}{{ ('%.2f'|format(x))|replace('.',',') }}{% endif %}{% endmacro %}
 
 <div class="page-head">
   <a class="back" href="/empresa/{{ emp.id }}">← {{ emp.nombre }}</a>
   <h1>Suscriptores</h1>
   <p class="sub">Análisis de la base de suscriptores a partir del detalle comercial cargado: evolución
   mensual, composición por clase de uso, distribución por APS y tasa de crecimiento anual. El número de
-  suscriptores de un mes es un <b>stock</b> (se suma por clases y APS del mes, no entre meses).</p>
+  suscriptores de un mes es un <b>stock</b> (se suma por clases y APS del mes, no entre meses). El
+  <b>ICUF</b> = m³ facturados ÷ suscriptores (consumo por unidad de facturación, m³/susc·mes).</p>
 </div>
 
 {% if not d.hay_datos %}
@@ -32,57 +35,72 @@
     </select>
   </label>
   {% endif %}
+  <label>Período (composición)
+    <select name="per" onchange="this.form.submit()">
+      {% for pp in d.periodos_disp %}<option value="{{ pp.val }}" {{ 'selected' if d.periodo==pp.val }}>{{ pp.label }}</option>{% endfor %}
+    </select>
+  </label>
 </form>
+<p class="muted2" style="margin:-2px 0 10px">Mostrando <b>{{ d.aps_lbl }}</b>. La <b>evolución</b> abarca
+todos los meses cargados; las <b>tarjetas</b>, la <b>composición</b> y el <b>APS</b> son del período
+<b>{{ d.per_lbl }}</b> (cámbialo arriba).</p>
 
 <div class="ix-cards">
   {% for k in d.kpis %}
   <div class="ix-card"><div class="ix-top"><span class="ix-name">{{ k.servicio|capitalize }}</span></div>
     <div class="ix-val">{{ n0(k.ultimo) }}</div>
-    <div class="ix-cap">suscriptores · {{ k.periodo }}{% if k.crecimiento is not none %} · crecim. anual {{ pct(k.crecimiento) }}{% endif %}</div></div>
+    <div class="ix-cap">suscriptores · {{ k.periodo }}{% if k.icuf is not none %} · ICUF {{ n2(k.icuf) }}{% endif %}{% if k.crecimiento is not none %} · crecim. anual {{ pct(k.crecimiento) }}{% endif %}</div></div>
   {% endfor %}
 </div>
 
 <h2 class="serv-h">Evolución mensual del número de suscriptores</h2>
 <div class="sus-graf">
-  <svg viewBox="0 0 100 36" preserveAspectRatio="none" class="sus-svg">
-    <line x1="0" y1="35" x2="100" y2="35" class="sus-axis"/>
+  <svg viewBox="0 0 {{ d.graf.W }} {{ d.graf.H }}" class="sus-svg" role="img">
+    <line x1="{{ d.graf.x0 }}" y1="{{ d.graf.y0 }}" x2="{{ d.graf.x1 }}" y2="{{ d.graf.y0 }}" class="sus-grid"/>
+    <line x1="{{ d.graf.x0 }}" y1="{{ d.graf.y1 }}" x2="{{ d.graf.x1 }}" y2="{{ d.graf.y1 }}" class="sus-axis"/>
+    <text x="{{ d.graf.x0 - 3 }}" y="{{ d.graf.y0 + 3 }}" class="sus-ytxt">{{ d.graf.vmax_lbl }}</text>
+    <text x="{{ d.graf.x0 - 3 }}" y="{{ d.graf.y1 }}" class="sus-ytxt">{{ d.graf.vmin_lbl }}</text>
     {% for s in d.graf.series %}
-    <polyline points="{{ s.points }}" fill="none" stroke="{{ s.color }}" stroke-width="0.7"
-      vector-effect="non-scaling-stroke" stroke-linejoin="round"/>
+    <polyline points="{{ s.poly }}" fill="none" stroke="{{ s.color }}" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>
+    {% for dot in s.dots %}<circle cx="{{ dot[0] }}" cy="{{ dot[1] }}" r="2" fill="{{ s.color }}"/>{% endfor %}
     {% endfor %}
   </svg>
-  <div class="sus-xlab">
+  <div class="sus-xlab" style="margin-left:{{ (d.graf.ML/d.graf.W*100)|round(1) }}%">
     {% if d.graf.labels %}<span>{{ d.graf.labels[0] }}</span>
     {% if d.graf.labels|length > 2 %}<span>{{ d.graf.labels[(d.graf.labels|length)//2] }}</span>{% endif %}
     <span>{{ d.graf.labels[-1] }}</span>{% endif %}
   </div>
   <div class="sus-leg">
     {% for s in d.graf.series %}<span class="sus-leg-it"><i style="background:{{ s.color }}"></i>{{ s.servicio|capitalize }} ({{ n0(s.ultimo) }})</span>{% endfor %}
-    <span class="mut" style="margin-left:auto">máx. eje: {{ n0(d.graf.vmax) }}</span>
+    <span class="mut" style="margin-left:auto">eje: {{ d.graf.vmin_lbl }} – {{ d.graf.vmax_lbl }}</span>
   </div>
 </div>
 
-{% for s in d.servicios if (not d.servicio or d.servicio==s) %}
-<h2 class="serv-h">{{ s|capitalize }} · composición del último período</h2>
+{% for s in d.servicios_vista %}
 {% set comp = d.composicion.get(s) %}
-{% if comp %}
-<div class="ccp-bars">
-  {% set cmax = (comp|map(attribute='susc')|max) or 1 %}
-  {% for c in comp %}
-  <div class="ccp-row"><span class="ccp-lab">{{ c.nombre }}</span>
-    <span class="ccp-track"><span class="ccp-fill real" style="width:{{ (c.susc/cmax*100)|round(1) }}%"></span></span>
-    <span class="ccp-num">{{ n0(c.susc) }} · {{ (c.pct)|round(1)|replace('.',',') }}%</span></div>
-  {% endfor %}
-</div>
-{% else %}<p class="mut">Sin datos de composición para este servicio.</p>{% endif %}
+<h2 class="serv-h">{{ s|capitalize }} · composición por clase de uso · {{ d.per_lbl }}</h2>
+{% if comp and comp.filas %}
+<table class="tabla compact">
+  <thead><tr><th>Clase de uso</th><th class="r">Suscriptores</th><th class="r">Participación</th><th class="r">ICUF (m³/susc)</th></tr></thead>
+  <tbody>
+    {% for c in comp.filas %}<tr><td>{{ c.nombre }}</td>
+      <td class="num">{{ n0(c.susc) }}</td><td class="num">{{ p1(c.pct) }}</td><td class="num">{{ n2(c.icuf) }}</td></tr>{% endfor %}
+    {% if comp.total %}<tr class="fila-total"><td><b>Total</b></td>
+      <td class="num"><b>{{ n0(comp.total.susc) }}</b></td><td class="num"><b>{{ p1(comp.total.pct) }}</b></td>
+      <td class="num"><b>{{ n2(comp.total.icuf) }}</b></td></tr>{% endif %}
+  </tbody>
+</table>
+{% else %}<p class="mut">Sin datos de composición para {{ s }} en {{ d.per_lbl }}.</p>{% endif %}
 
 {% if d.hay_aps and d.por_aps.get(s) %}
-<h3 class="ccp-h">Distribución por APS (último período)</h3>
+<h3 class="ccp-h">Distribución por APS · {{ d.per_lbl }}</h3>
 <table class="tabla compact">
-  <thead><tr><th>APS</th><th class="r">Suscriptores</th><th class="r">Participación</th></tr></thead>
+  <thead><tr><th>APS</th><th class="r">Suscriptores</th><th class="r">Participación</th><th class="r">ICUF (m³/susc)</th></tr></thead>
   <tbody>
-    {% for a in d.por_aps.get(s) %}<tr><td>{{ a.municipio }}</td>
-      <td class="num">{{ n0(a.susc) }}</td><td class="num">{{ (a.pct)|round(1)|replace('.',',') }}%</td></tr>{% endfor %}
+    {% for a in d.por_aps.get(s) %}<tr {{ 'class="fila-total"' if a.total }}><td>{% if a.total %}<b>{{ a.municipio }}</b>{% else %}{{ a.municipio }}{% endif %}</td>
+      <td class="num">{% if a.total %}<b>{{ n0(a.susc) }}</b>{% else %}{{ n0(a.susc) }}{% endif %}</td>
+      <td class="num">{% if a.total %}<b>{{ p1(a.pct) }}</b>{% else %}{{ p1(a.pct) }}{% endif %}</td>
+      <td class="num">{% if a.total %}<b>{{ n2(a.icuf) }}</b>{% else %}{{ n2(a.icuf) }}{% endif %}</td></tr>{% endfor %}
   </tbody>
 </table>
 {% endif %}
@@ -92,7 +110,7 @@
   <thead><tr><th>Año</th><th class="r">Prom. mensual</th><th class="r">Crecimiento anual</th></tr></thead>
   <tbody>
     {% for g in d.crecimiento.get(s, []) %}<tr><td>{{ g.anio }}</td>
-      <td class="num">{{ g.prom|round|int|valor }}</td><td class="num">{{ pct(g.crecimiento) }}</td></tr>{% endfor %}
+      <td class="num">{{ n0(g.prom|round|int) }}</td><td class="num">{{ pct(g.crecimiento) }}</td></tr>{% endfor %}
   </tbody>
 </table>
 {% endfor %}
@@ -103,11 +121,14 @@ municipio) y, en contingencia, de las entradas manuales. La clase de uso sigue l
 
 <style>
 .sus-graf{margin:6px 0 14px}
-.sus-svg{width:100%;height:190px;display:block;background:var(--paper,#fff);border:1px solid var(--line,#e5e0d2);border-radius:var(--r,8px)}
-.sus-axis{stroke:var(--line,#d8d2c4);stroke-width:0.3;vector-effect:non-scaling-stroke}
+.sus-svg{width:100%;height:auto;max-height:240px;display:block;background:var(--paper,#fff);border:1px solid var(--line,#e5e0d2);border-radius:var(--r,8px)}
+.sus-grid{stroke:var(--line,#e5e0d2);stroke-width:0.4;vector-effect:non-scaling-stroke}
+.sus-axis{stroke:var(--line,#d8d2c4);stroke-width:0.6;vector-effect:non-scaling-stroke}
+.sus-ytxt{font-size:7px;fill:var(--muted,#8a8578);text-anchor:end;dominant-baseline:middle}
 .sus-xlab{display:flex;justify-content:space-between;font-size:11px;color:var(--muted,#8a8578);margin-top:2px}
 .sus-leg{display:flex;gap:14px;align-items:center;flex-wrap:wrap;font-size:12.5px;margin-top:6px}
 .sus-leg-it{display:inline-flex;align-items:center;gap:5px}
 .sus-leg-it i{width:11px;height:11px;border-radius:2px;display:inline-block}
+.fila-total td{border-top:2px solid var(--line,#d8d2c4);background:var(--paper,#faf8f2)}
 </style>
 {% endblock %}

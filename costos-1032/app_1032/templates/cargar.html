@@ -80,7 +80,7 @@ fuente y un solo formato: no se resume ni se digita nada, <b>todo sale del archi
     Resultados, pero <b>no genera el detalle por estrato</b> (sin desagregación por clase ni subsidios).
     Puedes cargar el <b>conjunto</b> (toda la empresa) o un <b>APS</b> (municipio): al cargar por APS, el
     total del mes es la suma de las APS. Cuando consigas el archivo del SUI, cárgalo y reemplazará al manual.</p>
-    <form method="post" action="/empresa/{{ emp.id }}/carga" class="form-grid">
+    <form method="post" action="/empresa/{{ emp.id }}/carga" class="form-grid" id="formManual">
       <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
       <input type="hidden" name="origen" value="manual">
       {{ periodo_anio() }}
@@ -136,9 +136,12 @@ coincide con <code>divipola</code>). Elige la vista y el año:</p>
       {% for x in com %}<tr><td class="comp">{{ meses.get(x.mes,x.mes) }}-{{ x.anio }}</td><td>{{ aniotar(x.anio) }}</td>
         <td>{{ x.servicio }}</td><td class="num">{{ x.suscriptores|valor if x.suscriptores is not none else '—' }}</td>
         <td class="num">{{ x.m3_facturados|valor if x.m3_facturados is not none else '—' }}</td><td>{{ x.origen or '—' }}</td>
-        <td class="c">{{ delcargue('comercial', x) }}</td></tr>{% endfor %}
+        <td class="c nowrap">{% if x.origen and 'manual' in x.origen %}<button type="button" class="btn-link" onclick="editarManual({anio:{{ x.anio }},mes:{{ x.mes }},serv:'{{ x.servicio }}',susc:{{ x.suscriptores or 0 }},m3:{{ x.m3_facturados or 0 }}})">editar</button> {% endif %}{{ delcargue('comercial', x) }}</td></tr>{% endfor %}
     </tbody>
   </table>
+  <p class="muted2">Para <b>corregir</b> un mes: si es <b>manual</b>, pulsa «editar» (rellena el formulario de
+  cargue manual con el valor actual; al guardar lo reemplaza). Si viene del <b>SUI</b>, vuelve a cargar el
+  archivo de ese mes (reemplaza el anterior). Los meses <b>manual</b> se pueden editar solo como conjunto.</p>
   {% else %}<p class="empty">Aún no hay información comercial cargada{{ ' en este año' if cm_anio }}.</p>{% endif %}
 {% endif %}
 {% endif %}
@@ -382,6 +385,26 @@ generando continuidad con las señales regulatorias de la Res. 688.</p>
 {% endif %}
 
 <script>
+// Editar un cargue manual: abre la pestaña de cargue manual y rellena el formulario con el
+// valor actual (al guardar, reemplaza el mes). El ámbito se fija en Conjunto (vista Total).
+function editarManual(d) {
+  var box = document.querySelector('.carga-metodo');
+  if (box) { var t = box.querySelector('.metodo-tab[data-m="manual"]'); if (t) t.click(); }
+  var f = document.getElementById('formManual'); if (!f) return;
+  var per = f.querySelector('.periodoSel');
+  if (per) {
+    for (var i = 0; i < per.options.length; i++) {
+      var ys = (per.options[i].getAttribute('data-anios') || '').split(',');
+      if (ys.indexOf(String(d.anio)) >= 0) { per.selectedIndex = i; break; }
+    }
+    per.dispatchEvent(new Event('change'));
+  }
+  var set = function (sel, v) { var el = f.querySelector(sel); if (el) el.value = v; };
+  set('.anioSel', d.anio); set('[name=mes]', d.mes); set('[name=servicio]', d.serv);
+  set('[name=cod_dane]', ''); set('[name=suscriptores]', d.susc); set('[name=m3]', d.m3);
+  f.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
 // Llena el "Año de línea base" según el período elegido (el inicio ofrece los dos años).
 (function () {
   function fill(sel) {
@@ -430,5 +453,6 @@ generando continuidad con las señales regulatorias de la Res. 688.</p>
 .cm-filtros .chip{display:inline-block;padding:3px 10px;border:1px solid var(--line,#d8d2c4);
   border-radius:999px;font-size:12.5px;text-decoration:none;color:inherit;background:var(--paper,#fff)}
 .cm-filtros .chip.on{background:var(--teal,#1f7a6b);border-color:var(--teal,#1f7a6b);color:#fff}
+.tabla td.nowrap{white-space:nowrap}
 </style>
 {% endblock %}

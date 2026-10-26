@@ -92,6 +92,24 @@ with db.engine_owner.connect() as cn:
         {"e": EID, "a": A}).scalars().all()
 check(danes == [""], f"tras re-cargar sin municipio solo queda el conjunto '' (sin 41001/41524) ({danes})")
 
+print("== SUI formato NUEVO (camelCase): codigoDaneDepartamento + codigoDaneMunicipio ==")
+# El esquema nuevo del SUI usa camelCase y municipio sin ceros ('1' en vez de '001').
+sui_camel = (
+    "NUIS,codigoDaneDepartamento,codigoDaneMunicipio,codigoDaneCentroPoblado,codigoClaseUso,consumoM3,consumoSubsidiadoM3\n"
+    "1,41,1,1,1,20,20\n"          # 41+1 -> 41001 Neiva
+    "2,41,524,1,5,30,0\n"          # 41+524 -> 41524 Palermo
+    "3,25,1,1,5,30,0\n"            # 25+1 -> 25001 (ajeno) -> conjunto, sin perderse
+)
+with db.scope_conn({"allow_all": True}) as cn:
+    ingesta.cargar_facturacion_sui(cn, EID, "acueducto", A, 10, sui_camel)
+with db.engine_owner.connect() as cn:
+    dc = {r["cod_dane"]: r["s"] for r in cn.execute(text(
+        "SELECT cod_dane, SUM(suscriptores) s FROM carga_mensual_detalle "
+        "WHERE empresa_id=:e AND anio=:a AND mes=10 AND servicio='acueducto' GROUP BY cod_dane"),
+        {"e": EID, "a": A}).mappings()}
+check(dc.get("41001") == 1 and dc.get("41524") == 1 and dc.get("") == 1,
+      f"camelCase repartió Neiva/Palermo y el ajeno al conjunto ({dc})")
+
 print("== CSV comercial propio con columna aps ==")
 csv_aps = ("anio,mes,servicio,clase,suscriptores,m3,m3_subsidiable,aps\n"
            f"{A},8,acueducto,1,100,2000,2000,Neiva\n"

@@ -22,10 +22,13 @@ from sqlalchemy import text
 # y MUNICIPIO (3 díg.); se combinan → cod_dane de 5 díg. (p. ej. 41 + 001 = 41001 Neiva, 41 + 524 =
 # 41524 Palermo). `muni` cubre el caso de un solo campo con el DANE completo (fallback). La llave
 # coincide con `divipola`. (Se ignora CENTROPOBLADO.)
-_DEPTO_ALIASES = ["DEPARTAMENTO", "CODDEPARTAMENTO", "CODIGODEPARTAMENTO", "DEPTO", "CODDEPTO",
-                  "IDDEPARTAMENTO", "CODDANEDEPARTAMENTO", "DPTO", "CODDPTO"]
-_MUN_ALIASES = ["MUNICIPIO", "CODMUNICIPIO", "CODIGOMUNICIPIO", "MPIO", "CODMPIO", "IDMUNICIPIO",
-                "CODIGOMPIO"]
+# Incluye el esquema NUEVO del SUI (camelCase → mayúsculas): codigoDaneDepartamento /
+# codigoDaneMunicipio, y el CLÁSICO: DEPARTAMENTO_2 / MUNICIPIO_3 (sufijo _NN que _mapa_base quita).
+_DEPTO_ALIASES = ["DEPARTAMENTO", "CODIGODANEDEPARTAMENTO", "DANEDEPARTAMENTO", "CODDANEDEPARTAMENTO",
+                  "CODIGODEPARTAMENTO", "CODDEPARTAMENTO", "DEPTO", "CODDEPTO", "IDDEPARTAMENTO",
+                  "DPTO", "CODDPTO"]
+_MUN_ALIASES = ["MUNICIPIO", "CODIGODANEMUNICIPIO", "DANEMUNICIPIO", "CODDANEMUNICIPIO",
+                "CODIGOMUNICIPIO", "CODMUNICIPIO", "MPIO", "CODMPIO", "IDMUNICIPIO", "CODIGOMPIO"]
 _DANE_FULL_ALIASES = ["DIVIPOLA", "DANE", "CODDANE", "CODIGODANE", "CODIGODIVIPOLA",
                       "MUNICIPIODANE", "CODIGOMUNICIPIODANE"]
 CAMPOS_SUI = {
