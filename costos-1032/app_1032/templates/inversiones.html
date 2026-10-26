@@ -16,9 +16,10 @@
 <div class="paso-nav">
   <a class="paso {{ 'on' if sec=='agua' }}" href="/empresa/{{ emp.id }}/inversiones?sec=agua">1 · Agua facturada (688) y segmento</a>
   <a class="paso {{ 'on' if sec=='bcr' }}" href="/empresa/{{ emp.id }}/inversiones?sec=bcr">2 · BCR de inicio</a>
-  <a class="paso {{ 'on' if sec=='poir' }}" href="/empresa/{{ emp.id }}/inversiones?sec=poir">3 · POIR 688</a>
-  <a class="paso {{ 'on' if sec=='activos' }}" href="/empresa/{{ emp.id }}/inversiones?sec=activos">4 · Activos admin. y operativos</a>
-  <a class="paso {{ 'on' if sec=='provision' }}" href="/empresa/{{ emp.id }}/inversiones?sec=provision">5 · Provisión POIR</a>
+  <a class="paso {{ 'on' if sec=='poir' }}" href="/empresa/{{ emp.id }}/inversiones?sec=poir">3 · POIR planeado</a>
+  <a class="paso {{ 'on' if sec=='poir_ejec' }}" href="/empresa/{{ emp.id }}/inversiones?sec=poir_ejec">4 · POIR ejecutado</a>
+  <a class="paso {{ 'on' if sec=='activos' }}" href="/empresa/{{ emp.id }}/inversiones?sec=activos">5 · Activos admin. y operativos</a>
+  <a class="paso {{ 'on' if sec=='provision' }}" href="/empresa/{{ emp.id }}/inversiones?sec=provision">6 · Provisión POIR</a>
 </div>
 
 {# ============================ PASO 1 · AGUA FACTURADA 688 ============================ #}
@@ -188,10 +189,11 @@ de lo facturado o del CCP cargado.</p>
 
 {# ============================ PASO 3 · POIR 688 ============================ #}
 {% if sec=='poir' %}
-<h2 class="serv-h">Paso 3 · POIR 688 · CMI por proyecto, plan y ejecución</h2>
+<h2 class="serv-h">Paso 3 · POIR planeado · CMI por proyecto y plan de inversiones</h2>
 <p class="muted2">El CMI es <b>por activo</b> y pudo cambiar con cada <b>modificación del POIR</b>. Indica las
 fechas de las modificaciones y sube un Excel por cada una (incluida la 0 = original). El sistema calcula el
-VIA y el VP(CMI×Q) por activo usando el CMI vigente en cada año.
+VIA y el VP(CMI×Q) por activo usando el CMI vigente en cada año. La <b>ejecución real</b> se registra en el
+paso 4 · POIR ejecutado.
 <a href="/empresa/{{ emp.id }}/bcr-poir-plantilla">Descargar plantilla Excel</a>.</p>
 
 {% for s in servicios %}{% set mods = bcr_mods.get(s) %}{% set cmis = bcr_cmi.get(s) %}
@@ -246,8 +248,8 @@ VIA y el VP(CMI×Q) por activo usando el CMI vigente en cada año.
 </table>
 {% else %}<p class="empty">Aún no hay proyectos del POIR.</p>{% endif %}
 
-<h2 class="serv-h">Ejecución real por año tarifario</h2>
 {% if puede_cargar %}
+<h3 class="serv-h" style="margin-top:16px">Registrar / actualizar un proyecto del POIR (plan)</h3>
 <form method="post" action="/empresa/{{ emp.id }}/inversion-nueva" class="form-grid">
   <input type="hidden" name="csrf" value="{{ csrf_token }}">
   <label>Código POIR <input name="codigo_poir" required></label>
@@ -259,7 +261,32 @@ VIA y el VP(CMI×Q) por activo usando el CMI vigente en cada año.
   <label>Vida útil (años) <input name="vida_util" inputmode="decimal"></label>
   <button class="btn" type="submit">Crear / actualizar proyecto</button>
 </form>
-<form method="post" action="/empresa/{{ emp.id }}/inversion-avance" class="form-grid" style="margin-top:4px">
+{% endif %}
+{% endif %}{# fin sec=poir (planeado) #}
+
+{# ============================ PASO 4 · POIR EJECUTADO ============================ #}
+{% if sec=='poir_ejec' %}
+<h2 class="serv-h">Paso 4 · POIR ejecutado · avance y cumplimiento</h2>
+<p class="muted2">Registra la <b>ejecución real</b> de los proyectos del POIR y revisa el nivel de cumplimiento
+por año tarifario. Al superar el <b>80 %</b> de ejecución y entrar en operación, el valor incurrido se
+incorpora a la BCR del año siguiente (art. 2.1.2.1.3.5.14). Los proyectos se definen primero en
+<a href="/empresa/{{ emp.id }}/inversiones?sec=poir">POIR planeado</a>.</p>
+
+{% if proyectos %}
+<table class="tabla">
+  <thead><tr><th>Código</th><th>Proyecto</th><th>Servicio</th><th>Año planeado</th><th class="r">Valor planeado</th><th>Estado</th></tr></thead>
+  <tbody>
+    {% for p in proyectos %}<tr><td class="comp">{{ p.codigo_poir }}</td><td>{{ p.nombre }}</td><td>{{ p.servicio }}</td>
+      <td class="c">{{ p.fecha_planeada_operacion.year if p.fecha_planeada_operacion else '—' }}</td>
+      <td class="num">{{ p.valor_planeado|valor('$') if p.valor_planeado is not none else '—' }}</td>
+      <td><span class="tag {{ {'en_operacion':'ac','en_ejecucion':'al','suspendido':'neg'}.get(p.estado,'') }}">{{ estados[p.estado] }}</span></td></tr>{% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="empty">Aún no hay proyectos del POIR. Créalos en POIR planeado.</p>{% endif %}
+
+{% if puede_cargar %}
+<h3 class="serv-h" style="margin-top:14px">Registrar ejecución / avance</h3>
+<form method="post" action="/empresa/{{ emp.id }}/inversion-avance" class="form-grid">
   <input type="hidden" name="csrf" value="{{ csrf_token }}">
   <label>Proyecto <select name="proyecto_id" required>{% for p in proyectos %}<option value="{{ p.id }}">{{ p.codigo_poir }} — {{ p.nombre }}</option>{% endfor %}</select></label>
   <label>Año tarifario <input type="number" name="anio" value="2027" style="width:100px"></label>
@@ -287,7 +314,7 @@ VIA y el VP(CMI×Q) por activo usando el CMI vigente en cada año.
 BCR del año siguiente; la no ejecución activa el mecanismo de provisión que la metodología evalúa al cierre
 del quinto año tarifario.</p>
 {% else %}<p class="empty">Aún no hay plan ni ejecución para evaluar el cumplimiento.</p>{% endif %}
-{% endif %}
+{% endif %}{# fin sec=poir_ejec #}
 
 {# ============================ PASO 4 · ACTIVOS ADMIN. Y OPERATIVOS ============================ #}
 {% if sec=='activos' %}

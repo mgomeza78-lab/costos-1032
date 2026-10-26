@@ -41,6 +41,30 @@
   </tbody>
 </table>
 
+{% if bcr_val %}
+<h2 class="serv-h">Base de capital regulado (BCR₀) y POIR 688</h2>
+<p class="hint">Insumos que debe tener cargados la <a href="/empresa/{{ emp.id }}/inversiones?sec=bcr">Base de capital
+regulado</a> para reconstruir la BCR₀ del marco 688 (art. 2.1.2.1.5 y ss. de la Res. CRA 1032 de 2026). En el
+<b>período de inicio</b> la <b>ejecución</b> del POIR es opcional: basta con el plan para soportar el CMI.</p>
+{% for b in bcr_val %}
+<table class="tabla compact">
+  <thead><tr><th>{{ b.servicio|capitalize }}</th><th class="c">Estado</th><th>Detalle</th><th>Fundamento</th></tr></thead>
+  <tbody>
+    {% for it in b.checks %}
+    <tr><td class="comp">{{ it.nombre }}</td>
+      <td class="c">
+        {% if it.ok %}<span class="tag ac">✓ cargado</span>
+        {% elif it.opcional %}<span class="tag" style="background:#f0ead7;color:#8a6d1f">opcional</span>
+        {% else %}<span class="tag neg">falta</span>{% endif %}
+      </td>
+      <td>{{ it.detalle }}</td>
+      <td class="muted2" style="font-size:12px">{{ it.articulo }}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endfor %}
+{% endif %}
+
 <p class="hint">✓ = ese mes está cargado para el servicio. Para corregir cargues erróneos, usa el botón
 «eliminar» en cada fila cargada de <a href="/empresa/{{ emp.id }}/cargar">Cargar información</a>. Los costos
 particulares y las metas se desarrollan en el primer recálculo, con la línea base al cierre de 2026.</p>

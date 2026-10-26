@@ -1375,7 +1375,7 @@ def inversiones(request: Request, eid: int):
         return r
     user = session_user(request)
     sec = request.query_params.get("sec") or "agua"
-    if sec not in ("agua", "bcr", "poir", "activos", "provision"):
+    if sec not in ("agua", "bcr", "poir", "poir_ejec", "activos", "provision"):
         sec = "agua"
     with db.scope_conn(scope_of(user)) as conn:
         emp = conn.execute(text("SELECT * FROM empresa WHERE id=:e"), {"e": eid}).mappings().first()
@@ -1720,6 +1720,21 @@ def validacion(request: Request, eid: int):
         fsub = dict(conn.execute(text(
             "SELECT vigencia, count(*) FROM factor_subsidio WHERE empresa_id=:e GROUP BY vigencia"),
             {"e": eid}).all())
+        # --- insumos de la base de capital regulado (BCR₀) y del POIR 688, por servicio ---
+        bparams = bcr.params(conn, eid)
+        bserie_f, bserie_m = {}, {}
+        for s, nf, nm in conn.execute(text(
+                "SELECT servicio, count(*), count(DISTINCT mes) FROM bcr_serie WHERE empresa_id=:e GROUP BY servicio"),
+                {"e": eid}).all():
+            bserie_f[s] = nf; bserie_m[s] = nm
+        bact = dict(conn.execute(text(
+            "SELECT servicio, count(*) FROM bcr_activo WHERE empresa_id=:e GROUP BY servicio"), {"e": eid}).all())
+        bproy = dict(conn.execute(text(
+            "SELECT servicio, count(*) FROM proyecto_inversion WHERE empresa_id=:e GROUP BY servicio"), {"e": eid}).all())
+        bav = dict(conn.execute(text(
+            "SELECT p.servicio, count(a.id) FROM proyecto_inversion p "
+            "JOIN avance_inversion a ON a.proyecto_id=p.id WHERE p.empresa_id=:e GROUP BY p.servicio"),
+            {"e": eid}).all())
     servicios = [s for s, on in (("acueducto", emp["presta_ac"]), ("alcantarillado", emp["presta_al"])) if on] or ["acueducto"]
     # El agua producida (macromedición) solo aplica a acueducto; el alcantarillado no la carga.
     serv_agua = [s for s in servicios if s == "acueducto"]
@@ -1736,8 +1751,35 @@ def validacion(request: Request, eid: int):
         {"nombre": "Factores de subsidio y contribución", "datos": fsub},
         {"nombre": "Costos particulares (art. Res. 1032)", "pendiente": True},
     ]
+    # Checklist de insumos de la BCR₀ / POIR 688 por servicio (art. 2.1.2.1.5 y ss.).
+    _pkeys = ("r688", "ipc_dic_2014", "ipc_dic_2025", "fecha_inicio_688")
+    _plabel = {"r688": "r688", "ipc_dic_2014": "IPC dic‑2014",
+               "ipc_dic_2025": "IPC dic‑2025", "fecha_inicio_688": "inicio 688"}
+    bcr_val = []
+    for s in servicios:
+        p = bparams.get(s) or {}
+        faltan = [_plabel[k] for k in _pkeys if p.get(k) in (None, "")]
+        nf, nm = bserie_f.get(s, 0), bserie_m.get(s, 0)
+        na, np_, nav = bact.get(s, 0), bproy.get(s, 0), bav.get(s, 0)
+        bcr_val.append({"servicio": s, "checks": [
+            {"nombre": "Parámetros 688 (r688, IPC dic‑2014/2025, inicio 688)",
+             "ok": not faltan, "articulo": "art. 2.1.2.1.5.2",
+             "detalle": "completos" if not faltan else "faltan: " + ", ".join(faltan)},
+            {"nombre": "Serie de agua facturada 688 / CMI cobrado (mensual)",
+             "ok": nf > 0, "articulo": "art. 2.1.2.1.5.2.1",
+             "detalle": (f"{nf} registro(s) · {nm} mes(es) con dato" if nf else "sin datos cargados")},
+            {"nombre": "Activos de la BCR₀ (VPR₀ / VA₀)",
+             "ok": na > 0, "articulo": "art. 2.1.2.1.5.2.1.1",
+             "detalle": (f"{na} activo(s)" if na else "sin activos registrados")},
+            {"nombre": "POIR 688 planeado",
+             "ok": np_ > 0, "articulo": "art. 2.1.2.1.5.3",
+             "detalle": (f"{np_} proyecto(s)" if np_ else "sin proyectos registrados")},
+            {"nombre": "POIR 688 ejecutado (avances)",
+             "ok": nav > 0, "opcional": True, "articulo": "art. 2.1.2.1.5.3",
+             "detalle": (f"{nav} avance(s)" if nav else "sin avances · opcional en el período de inicio")},
+        ]})
     return tpl.TemplateResponse(request, "validacion.html", _ctx(
-        request, emp=emp, matriz=matriz, resumen=resumen, servicios=servicios,
+        request, emp=emp, matriz=matriz, resumen=resumen, servicios=servicios, bcr_val=bcr_val,
         anios=anios, meses_num=list(range(1, 13)), meses=ops.MESES))
 
 

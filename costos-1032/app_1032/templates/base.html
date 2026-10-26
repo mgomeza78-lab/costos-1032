@@ -26,13 +26,12 @@
       <div class="sublabel">Estudio de costos · período de inicio</div>
       {% if rbac.can(user,'editar_empresa') %}<a class="rail-edit" href="/empresa/{{ emp.id }}/editar">✎ Editar empresa / áreas</a>{% endif %}
 
-      {% set en_gi = '/aps' in p or '/cargar' in p or '/mensual' in p or '/validacion' in p %}
+      {% set en_gi = '/aps' in p or '/cargar' in p or '/mensual' in p %}
       <details class="rail-group" {{ 'open' if en_gi }}>
         <summary>Gestión de información</summary>
         <ol class="rail-nav">
           <li><a class="link {{ 'active' if '/aps' in p }}" href="/empresa/{{ emp.id }}/aps">Configuración del APS</a></li>
           <li><a class="link {{ 'active' if '/cargar' in p or '/mensual' in p }}" href="/empresa/{{ emp.id }}/cargar">Cargar información</a></li>
-          <li><a class="link {{ 'active' if '/validacion' in p }}" href="/empresa/{{ emp.id }}/validacion">Validación de información</a></li>
         </ol>
       </details>
 
@@ -42,9 +41,18 @@
         <ol class="rail-nav">
           <li><a class="link {{ 'active' if en_bcr and sec|default('')=='agua' }}" href="/empresa/{{ emp.id }}/inversiones?sec=agua">Agua facturada (688) y segmento</a></li>
           <li><a class="link {{ 'active' if en_bcr and sec|default('')=='bcr' }}" href="/empresa/{{ emp.id }}/inversiones?sec=bcr">BCR de inicio</a></li>
-          <li><a class="link {{ 'active' if en_bcr and sec|default('')=='poir' }}" href="/empresa/{{ emp.id }}/inversiones?sec=poir">POIR 688</a></li>
+          <li><a class="link {{ 'active' if en_bcr and sec|default('')=='poir' }}" href="/empresa/{{ emp.id }}/inversiones?sec=poir">POIR 688 · planeado</a></li>
+          <li><a class="link {{ 'active' if en_bcr and sec|default('')=='poir_ejec' }}" href="/empresa/{{ emp.id }}/inversiones?sec=poir_ejec">POIR 688 · ejecutado</a></li>
           <li><a class="link {{ 'active' if en_bcr and sec|default('')=='activos' }}" href="/empresa/{{ emp.id }}/inversiones?sec=activos">Activos administrativos y operativos</a></li>
           <li><a class="link {{ 'active' if en_bcr and sec|default('')=='provision' }}" href="/empresa/{{ emp.id }}/inversiones?sec=provision">Provisión POIR (Res. 950)</a></li>
+        </ol>
+      </details>
+
+      {% set en_val = '/validacion' in p %}
+      <details class="rail-group" {{ 'open' if en_val }}>
+        <summary>Validación de información</summary>
+        <ol class="rail-nav nonum">
+          <li><a class="link {{ 'active' if '/validacion' in p }}" href="/empresa/{{ emp.id }}/validacion">Validar cargues y BCR</a></li>
         </ol>
       </details>
 
