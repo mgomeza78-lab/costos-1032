@@ -2,6 +2,24 @@
 {% block title %}CCP · {{ emp.nombre }}{% endblock %}
 {% block body %}
 {% macro n2(x) %}{% if x is none %}<span class="mut">—</span>{% else %}{{ ('%.2f'|format(x))|replace('.',',') }}{% endif %}{% endmacro %}
+{% macro gchart(titulo, ch, g, labels, dec) %}
+<div class="ccp-gcard">
+  <div class="ccp-gtit">{{ titulo }}</div>
+  <svg viewBox="0 0 {{ g.W }} {{ g.H }}" class="ccp-svg" role="img">
+    <line x1="{{ g.x0 }}" y1="{{ g.y0 }}" x2="{{ g.x1 }}" y2="{{ g.y0 }}" class="ccp-gridln"/>
+    <line x1="{{ g.x0 }}" y1="{{ g.y1 }}" x2="{{ g.x1 }}" y2="{{ g.y1 }}" class="ccp-axisln"/>
+    <text x="{{ g.x0 - 3 }}" y="{{ g.y0 + 3 }}" class="ccp-ytxt">{{ ch.vmax_lbl }}</text>
+    <text x="{{ g.x0 - 3 }}" y="{{ g.y1 }}" class="ccp-ytxt">{{ ch.vmin_lbl }}</text>
+    {% for sr in ch.series %}
+    <polyline points="{{ sr.poly }}" fill="none" stroke="{{ sr.color }}" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>
+    {% for d in sr.dots %}<circle cx="{{ d[0] }}" cy="{{ d[1] }}" r="1.8" fill="{{ sr.color }}"/>{% endfor %}
+    {% endfor %}
+  </svg>
+  <div class="ccp-xlab" style="margin-left:{{ (g.x0 / g.W * 100)|round(1) }}%">
+    <span>{{ labels[0] }}</span>{% if labels|length > 2 %}<span>{{ labels[(labels|length)//2] }}</span>{% endif %}<span>{{ labels[-1] }}</span></div>
+  <div class="ccp-leg">{% for sr in ch.series %}<span><i style="background:{{ sr.color }}"></i>{{ sr.name }} ({{ n2(sr.ult) if dec else sr.ult|valor }})</span>{% endfor %}</div>
+</div>
+{% endmacro %}
 
 <div class="page-head">
   <a class="back" href="/empresa/{{ emp.id }}">← {{ emp.nombre }}</a>
@@ -9,26 +27,27 @@
   <p class="sub">Todo lo que entra al cálculo del CCP (art. {{ ccp.art.ccp }} y ss., Res. CRA 1032):
   datos base, los indicadores por unidad de facturación (ICUF, IPUF, ISUF), la comparación entre el
   <b>IPUF real</b> y el <b>IPUF aplicado</b> (con el tope IPUF*), el ajuste <b>Fap</b> y el CCP resultante.
-  El CCP se mide sobre el <b>año base</b>; para el período de inicio es el año anterior (i−1).</p>
+  El CCP se mide sobre la <b>línea base</b> del año tarifario; el <b>período de inicio</b> usa los
+  <b>dos años</b> 2024 y 2025 (toda la información corresponde a esa ventana).</p>
 </div>
 
-{% if not ccp.anio %}
-  <p class="empty">Aún no hay información comercial cargada para calcular el CCP. Cárguela en
-  <a href="/empresa/{{ emp.id }}/cargar?fuente=comercial">Cargar información</a>.</p>
+{% if not ccp.indicadores %}
+  <p class="empty">Aún no hay información comercial cargada para calcular el CCP en este año tarifario.
+  Cárgala en <a href="/empresa/{{ emp.id }}/cargar?fuente=comercial">Cargar información</a>.</p>
 {% else %}
 
 <form method="get" action="/empresa/{{ emp.id }}/ccp" class="graf-ctrl">
-  <label>Año base
-    <select name="anio" onchange="this.form.submit()">
-      {% for a in ccp.anios %}<option value="{{ a }}" {{ 'selected' if a == ccp.anio }}>{{ a }}</option>{% endfor %}
+  <label>Año tarifario
+    <select name="at" onchange="this.form.submit()">
+      {% for p in ccp.periodos %}<option value="{{ p.clave }}" {{ 'selected' if p.clave == ccp.periodo.clave }}>{{ p.etiqueta }}</option>{% endfor %}
     </select>
   </label>
-  <span class="hint" style="align-self:center">IPUF* del segmento (tope del período de inicio):
-    <b>{{ n2(ccp.ipuf_estrella) }}</b> m³/susc·mes · art. {{ ccp.art.ipuf_estrella }}</span>
+  <span class="hint" style="align-self:center">Línea base: <b>{{ ccp.anios_base_lbl }}</b> ·
+    IPUF* del segmento: <b>{{ n2(ccp.ipuf_estrella) }}</b> m³/susc·mes · art. {{ ccp.art.ipuf_estrella }}</span>
 </form>
 
 {% for s, f in ccp.indicadores.items() %}
-<h2 class="serv-h">{{ s|capitalize }} · año base {{ f.anio }} ({{ f.meses }} meses)</h2>
+<h2 class="serv-h">{{ s|capitalize }} · {{ ccp.periodo.etiqueta }} · línea base {{ ccp.anios_base_lbl }} ({{ f.meses }} meses con dato)</h2>
 
 {% if f.falta %}
 <div class="flash warn" style="margin:6px 0 10px">Falta información para este servicio:
@@ -37,32 +56,13 @@
 
 {% set sm = ccp.series.get(s) %}
 {% if sm and sm.labels %}
-<h3 class="ccp-h">Gráficas mensuales</h3>
+<h3 class="ccp-h">Gráficas mensuales · línea base {{ ccp.anios_base_lbl }}</h3>
+<p class="muted2" style="margin:-2px 0 6px">Meses de la ventana de línea base del año tarifario
+({{ ccp.anios_base_lbl }}); el eje se ajusta al rango de los datos (no arranca en cero) para que se vea
+la variación. Cambia el año tarifario arriba.</p>
 <div class="ccp-graf2">
-  <div class="ccp-gcard">
-    <div class="ccp-gtit">Agua producida vs. facturada (m³/mes)</div>
-    <svg viewBox="0 0 100 36" preserveAspectRatio="none" class="ccp-svg">
-      <line x1="0" y1="35" x2="100" y2="35" class="ccp-axisln"/>
-      {% if sm.hay_ap %}<polyline points="{{ sm.vol.ap }}" fill="none" stroke="#3b6ea5" stroke-width="0.7" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>{% endif %}
-      <polyline points="{{ sm.vol.af }}" fill="none" stroke="#1f7a6b" stroke-width="0.7" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>
-    </svg>
-    <div class="ccp-xlab"><span>{{ sm.labels[0] }}</span>{% if sm.labels|length>2 %}<span>{{ sm.labels[(sm.labels|length)//2] }}</span>{% endif %}<span>{{ sm.labels[-1] }}</span></div>
-    <div class="ccp-leg">{% if sm.hay_ap %}<span><i style="background:#3b6ea5"></i>Producida ({{ sm.vol.ap_ult|valor }})</span>{% endif %}
-      <span><i style="background:#1f7a6b"></i>Facturada ({{ sm.vol.af_ult|valor }})</span></div>
-  </div>
-  <div class="ccp-gcard">
-    <div class="ccp-gtit">Indicadores por unidad (m³/susc·mes)</div>
-    <svg viewBox="0 0 100 36" preserveAspectRatio="none" class="ccp-svg">
-      <line x1="0" y1="35" x2="100" y2="35" class="ccp-axisln"/>
-      {% if sm.hay_ap %}<polyline points="{{ sm.ind.isuf }}" fill="none" stroke="#7a4fa0" stroke-width="0.7" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>
-      <polyline points="{{ sm.ind.ipuf }}" fill="none" stroke="#b5651d" stroke-width="0.7" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>{% endif %}
-      <polyline points="{{ sm.ind.icuf }}" fill="none" stroke="#1f7a6b" stroke-width="0.7" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>
-    </svg>
-    <div class="ccp-xlab"><span>{{ sm.labels[0] }}</span>{% if sm.labels|length>2 %}<span>{{ sm.labels[(sm.labels|length)//2] }}</span>{% endif %}<span>{{ sm.labels[-1] }}</span></div>
-    <div class="ccp-leg"><span><i style="background:#1f7a6b"></i>ICUF ({{ n2(sm.ind.icuf_ult) }})</span>
-      {% if sm.hay_ap %}<span><i style="background:#b5651d"></i>IPUF ({{ n2(sm.ind.ipuf_ult) }})</span>
-      <span><i style="background:#7a4fa0"></i>ISUF ({{ n2(sm.ind.isuf_ult) }})</span>{% endif %}</div>
-  </div>
+  {{ gchart('Agua producida vs. facturada (m³/mes)', sm.vol, sm, sm.labels, false) }}
+  {{ gchart('Indicadores por unidad (m³/susc·mes)', sm.ind, sm, sm.labels, true) }}
 </div>
 {% endif %}
 
@@ -163,8 +163,10 @@ IPUF* debe tomarse del art. {{ ccp.art.senda }}. En el período de inicio el top
 @media(max-width:720px){.ccp-graf2{grid-template-columns:1fr}}
 .ccp-gcard{min-width:0}
 .ccp-gtit{font-size:12.5px;color:var(--muted,#8a8578);margin-bottom:3px}
-.ccp-svg{width:100%;height:150px;display:block;background:var(--paper,#fff);border:1px solid var(--line,#e5e0d2);border-radius:var(--r,8px)}
-.ccp-axisln{stroke:var(--line,#d8d2c4);stroke-width:0.3;vector-effect:non-scaling-stroke}
+.ccp-svg{width:100%;height:auto;max-height:200px;display:block;background:var(--paper,#fff);border:1px solid var(--line,#e5e0d2);border-radius:var(--r,8px)}
+.ccp-gridln{stroke:var(--line,#e5e0d2);stroke-width:0.4;vector-effect:non-scaling-stroke}
+.ccp-axisln{stroke:var(--line,#d8d2c4);stroke-width:0.6;vector-effect:non-scaling-stroke}
+.ccp-ytxt{font-size:7px;fill:var(--muted,#8a8578);text-anchor:end;dominant-baseline:middle}
 .ccp-xlab{display:flex;justify-content:space-between;font-size:11px;color:var(--muted,#8a8578);margin-top:2px}
 .ccp-leg{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;margin-top:5px}
 .ccp-leg span{display:inline-flex;align-items:center;gap:5px}

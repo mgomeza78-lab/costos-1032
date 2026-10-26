@@ -14,6 +14,7 @@ No inventa datos: lo que no esté cargado se reporta como faltante.
 from sqlalchemy import text
 import recalculo_service as rc
 import ccp_service as ccp
+import periodos as per
 
 MESES = {1: "ene", 2: "feb", 3: "mar", 4: "abr", 5: "may", 6: "jun",
          7: "jul", 8: "ago", 9: "sep", 10: "oct", 11: "nov", 12: "dic"}
@@ -37,16 +38,22 @@ def anios_con_datos(conn, empresa_id):
         {"e": empresa_id}).all()]
 
 
-def _agg(conn, empresa_id, anio):
-    """Por servicio: N (Σ suscriptores-mes), AF (Σ m³ facturados), meses, y AP (Σ m³ producidos)."""
+def _agg(conn, empresa_id, anios):
+    """Por servicio, agregando sobre la VENTANA de años base `anios` (lista): N (Σ suscriptores-mes),
+    AF (Σ m³ facturados), meses con dato, y AP (Σ m³ producidos). Para el período de inicio la ventana
+    es [2024, 2025], así que se suma sobre los dos años (art. de la línea base, Res. 1032)."""
+    anios = list(anios or [])
+    if not anios:
+        return {}
     com = conn.execute(text(
         "SELECT servicio, COALESCE(SUM(suscriptores),0) n, COALESCE(SUM(m3_facturados),0) af, "
         "       COUNT(*) meses "
-        "FROM carga_mensual WHERE empresa_id=:e AND anio=:a AND cod_dane='' GROUP BY servicio"),
-        {"e": empresa_id, "a": anio}).mappings().all()
+        "FROM carga_mensual WHERE empresa_id=:e AND anio = ANY(:aa) AND cod_dane='' GROUP BY servicio"),
+        {"e": empresa_id, "aa": anios}).mappings().all()
     mm = {r["servicio"]: float(r["ap"]) for r in conn.execute(text(
         "SELECT servicio, COALESCE(SUM(m3_producido),0) ap FROM macromedicion "
-        "WHERE empresa_id=:e AND anio=:a GROUP BY servicio"), {"e": empresa_id, "a": anio}).mappings().all()}
+        "WHERE empresa_id=:e AND anio = ANY(:aa) GROUP BY servicio"),
+        {"e": empresa_id, "aa": anios}).mappings().all()}
     out = {}
     for r in com:
         s = r["servicio"]
@@ -55,13 +62,13 @@ def _agg(conn, empresa_id, anio):
     return out
 
 
-def indicadores(conn, empresa_id, anio, ipuf_estrella):
-    """Indicadores y CCP por servicio para el año base dado."""
-    datos = _agg(conn, empresa_id, anio)
+def indicadores(conn, empresa_id, anios, ipuf_estrella):
+    """Indicadores y CCP por servicio para la ventana de años base dada (lista)."""
+    datos = _agg(conn, empresa_id, anios)
     res = {}
     for s, d in datos.items():
         n, af, ap = d["n"], d["af"], d["ap"]
-        fila = {"anio": anio, "meses": d["meses"], "n": n, "af": af, "ap": ap,
+        fila = {"anios": anios, "meses": d["meses"], "n": n, "af": af, "ap": ap,
                 "icuf": None, "ipuf_real": None, "isuf": None,
                 "perdidas_reales": None, "estandar": None, "reconocidas": None,
                 "ipuf_aplicado": None, "ccp": None, "fap": None, "isuf_ajustado": None,
@@ -118,35 +125,80 @@ def senda(conn, empresa_id):
             "estandar": ESTANDAR_IPUF, "ipuf_inicio": ipuf_ini}
 
 
-def _poly(valores, vmin, vmax, w=100.0, h=36.0, pad=3.0):
-    """Puntos 'x,y …' para una polilínea SVG (viewBox w×h, y invertido)."""
-    n = len(valores)
-    if n == 0:
-        return ""
+# Geometría de las gráficas (escala uniforme, sin distorsión).
+GW, GH, GML, GMR, GMT, GMB = 600.0, 110.0, 50.0, 8.0, 8.0, 8.0
+
+
+def _mil(v):
+    try:
+        return f"{int(round(v)):,}".replace(",", ".")
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _dec(v):
+    try:
+        return f"{v:.1f}".replace(".", ",")
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _rango(vals):
+    """Rango del eje Y ajustado a los datos (no arranca en 0, para ver la variación)."""
+    vals = [v for v in vals if v is not None]
+    if not vals:
+        return 0.0, 1.0
+    lo, hi = min(vals), max(vals)
+    if hi <= lo:
+        return (lo * 0.97, lo * 1.03) if lo else (0.0, 1.0)
+    pad = (hi - lo) * 0.18
+    return max(0.0, lo - pad), hi + pad
+
+
+def _coords(vals, vmin, vmax, n):
     span = (vmax - vmin) or 1.0
-    if n == 1:
-        y = h - pad - (valores[0] - vmin) / span * (h - 2 * pad)
-        return f"0,{y:.2f} {w:.2f},{y:.2f}"
+    pw, ph = GW - GML - GMR, GH - GMT - GMB
     out = []
-    for i, v in enumerate(valores):
-        x = i / (n - 1) * w
-        y = h - pad - (v - vmin) / span * (h - 2 * pad)
-        out.append(f"{x:.2f},{y:.2f}")
-    return " ".join(out)
+    for i, v in enumerate(vals):
+        x = GML + (i / (n - 1) if n > 1 else 0.5) * pw
+        y = GMT + (1 - (v - vmin) / span) * ph
+        out.append((round(x, 1), round(y, 1)))
+    return out
 
 
-def serie_mensual(conn, empresa_id, servicio):
-    """Serie mensual (cronológica) de AF, AP y los indicadores ICUF/IPUF/ISUF del servicio,
-    con las polilíneas SVG listas para graficar. El total/N usa el conjunto (cod_dane='')."""
+def _chart(series, labels, fmt):
+    """Arma una gráfica de líneas (eje ajustado). `series`: [{name,color,vals,show}]."""
+    allv = [v for s in series if s["show"] for v in s["vals"]]
+    vmin, vmax = _rango(allv)
+    out = {"vmin": vmin, "vmax": vmax, "vmin_lbl": fmt(vmin), "vmax_lbl": fmt(vmax), "series": []}
+    for s in series:
+        if not s["show"]:
+            continue
+        xy = _coords(s["vals"], vmin, vmax, len(labels))
+        out["series"].append({"name": s["name"], "color": s["color"],
+                              "poly": " ".join(f"{x},{y}" for x, y in xy),
+                              "dots": [[x, y] for x, y in xy],
+                              "ult": s["vals"][-1] if s["vals"] else 0})
+    return out
+
+
+def serie_mensual(conn, empresa_id, servicio, anios=None):
+    """Serie mensual (cronológica) de AF, AP y los indicadores ICUF/IPUF/ISUF del servicio, sobre la
+    ventana de años base `anios` (lista; para el período de inicio, [2024, 2025]). Los meses del eje
+    los define el comercial (N/AF), así que un mes con producción pero sin comercial no aparece como
+    cero. El total/N usa el conjunto (cod_dane='')."""
+    anios = list(anios or [])
+    fa = " AND anio = ANY(:aa)" if anios else ""
+    pp = {"e": empresa_id, "s": servicio}
+    if anios:
+        pp["aa"] = anios
     com = {(r["anio"], r["mes"]): (float(r["n"] or 0), float(r["af"] or 0)) for r in conn.execute(text(
         "SELECT anio, mes, COALESCE(suscriptores,0) n, COALESCE(m3_facturados,0) af "
-        "FROM carga_mensual WHERE empresa_id=:e AND servicio=:s AND cod_dane=''"),
-        {"e": empresa_id, "s": servicio}).mappings().all()}
+        "FROM carga_mensual WHERE empresa_id=:e AND servicio=:s AND cod_dane=''" + fa), pp).mappings().all()}
     mm = {(r["anio"], r["mes"]): float(r["ap"] or 0) for r in conn.execute(text(
         "SELECT anio, mes, COALESCE(SUM(m3_producido),0) ap FROM macromedicion "
-        "WHERE empresa_id=:e AND servicio=:s GROUP BY anio, mes"),
-        {"e": empresa_id, "s": servicio}).mappings().all()}
-    pers = sorted(set(com) | set(mm))
+        "WHERE empresa_id=:e AND servicio=:s" + fa + " GROUP BY anio, mes"), pp).mappings().all()}
+    pers = sorted(com)        # el eje lo define el comercial (evita meses fantasma en cero)
     if not pers:
         return None
     af = [com.get(k, (0, 0))[1] for k in pers]
@@ -156,28 +208,34 @@ def serie_mensual(conn, empresa_id, servicio):
     ipuf = [((ap[i] - af[i]) / n[i]) if (n[i] and ap[i] > 0) else 0.0 for i in range(len(pers))]
     isuf = [(ap[i] / n[i]) if (n[i] and ap[i] > 0) else 0.0 for i in range(len(pers))]
     hay_ap = any(v > 0 for v in ap)
-    vmax_vol = max(max(af or [0]), max(ap or [0]), 1)
-    vmax_ind = max(max(icuf or [0]), max(ipuf or [0]), max(isuf or [0]), 1)
     labels = [f"{MESES.get(m, m)}·{str(a)[2:]}" for (a, m) in pers]
     return {
         "labels": labels, "hay_ap": hay_ap,
-        "vol": {"vmax": vmax_vol,
-                "af": _poly(af, 0, vmax_vol), "ap": _poly(ap, 0, vmax_vol),
-                "af_ult": af[-1], "ap_ult": ap[-1]},
-        "ind": {"vmax": vmax_ind,
-                "icuf": _poly(icuf, 0, vmax_ind), "ipuf": _poly(ipuf, 0, vmax_ind),
-                "isuf": _poly(isuf, 0, vmax_ind),
-                "icuf_ult": icuf[-1], "ipuf_ult": ipuf[-1], "isuf_ult": isuf[-1]},
+        "W": GW, "H": GH, "x0": GML, "x1": GW - GMR, "y0": GMT, "y1": GH - GMB,
+        "vol": _chart([{"name": "Producida", "color": "#3b6ea5", "vals": ap, "show": hay_ap},
+                       {"name": "Facturada", "color": "#1f7a6b", "vals": af, "show": True}], labels, _mil),
+        "ind": _chart([{"name": "ICUF", "color": "#1f7a6b", "vals": icuf, "show": True},
+                       {"name": "IPUF", "color": "#b5651d", "vals": ipuf, "show": hay_ap},
+                       {"name": "ISUF", "color": "#7a4fa0", "vals": isuf, "show": hay_ap}], labels, _dec),
     }
 
 
-def resumen(conn, empresa_id, anio=None):
-    """Paquete completo para la vista CCP."""
-    anios = anios_con_datos(conn, empresa_id)
-    if anio is None:
-        anio = anios[0] if anios else None
+def resumen(conn, empresa_id, per_clave=None):
+    """Paquete completo para la vista CCP, por AÑO TARIFARIO. El período seleccionado define su
+    ventana de años base (el de inicio = 2024–2025) y toda la información se calcula sobre ella."""
+    anios_data = set(anios_con_datos(conn, empresa_id))
+    # Años tarifarios ofrecidos: los que tienen algún año base con datos; siempre el de inicio.
+    con_datos = [p for p in per.PERIODOS if set(p["anios_base"]) & anios_data]
+    # Siempre se ofrece el período de inicio; además, los años tarifarios con datos.
+    opts = ([per.PERIODOS[0]] + [p for p in con_datos if p["clave"] != "inicio"]) if con_datos \
+        else [per.PERIODOS[0]]
+    default = con_datos[0] if con_datos else opts[0]
+    sel = next((p for p in opts if p["clave"] == per_clave), None) or default
+    anios_base = sel["anios_base"]
+    lbl = "–".join(str(a) for a in anios_base)
     ipuf_estrella = rc.ipuf_estrella(conn, empresa_id)
-    ind = indicadores(conn, empresa_id, anio, ipuf_estrella) if anio else {}
-    series = {s: serie_mensual(conn, empresa_id, s) for s in ind.keys()}
-    return {"anio": anio, "anios": anios, "ipuf_estrella": ipuf_estrella,
-            "indicadores": ind, "series": series, "senda": senda(conn, empresa_id), "art": ART}
+    ind = indicadores(conn, empresa_id, anios_base, ipuf_estrella)
+    series = {s: serie_mensual(conn, empresa_id, s, anios_base) for s in ind.keys()}
+    return {"periodo": sel, "periodos": opts, "anios_base": anios_base, "anios_base_lbl": lbl,
+            "anio": lbl, "ipuf_estrella": ipuf_estrella, "indicadores": ind, "series": series,
+            "senda": senda(conn, empresa_id), "art": ART}

@@ -50,7 +50,10 @@ ex("INSERT INTO carga_mensual(empresa_id,anio,mes,servicio,suscriptores,m3_factu
 
 print("== Indicadores y CCP (acueducto, tope activo) ==")
 with db.scope_conn({"allow_all": True, "empresa_ids": [], "user_id": 1}) as conn:
-    r = cv.resumen(conn, 1, 2097)
+    # Se calcula directamente sobre la ventana de años base [2097] (API por año tarifario).
+    ipuf_e = cv.rc.ipuf_estrella(conn, 1)
+    r = {"indicadores": cv.indicadores(conn, 1, [2097], ipuf_e),
+         "ipuf_estrella": ipuf_e, "senda": cv.senda(conn, 1)}
     ac = r["indicadores"]["acueducto"]
     check(near(ac["icuf"], 15.0), f"ICUF = AF/N = 15,0 (obtenido {ac['icuf']})")
     check(near(ac["ipuf_real"], 9.0), f"IPUF real = (AP−AF)/N = 9,0 (obtenido {ac['ipuf_real']})")
@@ -79,8 +82,8 @@ c = TestClient(main.app)
 m = re.search(r'name="csrf-token" content="([^"]+)"', c.get("/login").text)
 c.post("/login", data={"email": "mgomeza78@gmail.com", "password": PW, "csrf": m.group(1)},
        follow_redirects=False)
-check(c.get("/empresa/1/ccp?anio=2097").status_code == 200, "GET /empresa/1/ccp responde 200")
-html = c.get("/empresa/1/ccp?anio=2097").text
+check(c.get("/empresa/1/ccp").status_code == 200, "GET /empresa/1/ccp responde 200")
+html = c.get("/empresa/1/ccp").text
 check("Consumo Corregido por Pérdidas" in html and "ISUF" in html and "IPUF aplicado" in html,
       "la página muestra CCP, ISUF e IPUF aplicado")
 

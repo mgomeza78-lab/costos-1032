@@ -164,22 +164,36 @@ def dashboard(conn, empresa_id, servicio=None, cod_dane=None, periodo=None):
                                 "icuf": (tma / tsa if tsa else None), "total": True})
                 por_aps[s] = lst
         composicion[s] = {"filas": comp, "total": comp_tot}
-        # Crecimiento anual: promedio mensual de suscriptores por año, YoY.
-        pts = series_mes.get(s, [])
+        # Crecimiento: promedio ANUAL (media mensual del año) + crecimiento YoY, y el crecimiento
+        # PROMEDIO MENSUAL (media de las variaciones mes a mes), global y por año.
+        pts = sorted(series_mes.get(s, []))            # (anio, mes, susc) cronológico
         poraño = {}
         for (a, m, v) in pts:
             poraño.setdefault(a, []).append(v)
         prom = {a: (sum(vs) / len(vs)) for a, vs in poraño.items()}
+        mom_all, mom_year = [], {}
+        for i in range(1, len(pts)):
+            prev, cur, yr = pts[i - 1][2], pts[i][2], pts[i][0]
+            if prev:
+                g = (cur - prev) / prev * 100.0
+                mom_all.append(g)
+                mom_year.setdefault(yr, []).append(g)
+        cre_mes_s = (sum(mom_all) / len(mom_all)) if mom_all else None
         cre, aa = [], sorted(prom)
         for j, a in enumerate(aa):
             g = None
             if j > 0 and prom[aa[j - 1]]:
                 g = (prom[a] - prom[aa[j - 1]]) / prom[aa[j - 1]] * 100.0
-            cre.append({"anio": a, "prom": prom[a], "crecimiento": g})
-        crecimiento[s] = cre
-        # KPI: total del período activo + último crecimiento anual.
+            my = mom_year.get(a)
+            cre.append({"anio": a, "prom": prom[a], "crecimiento": g,
+                        "mom": (sum(my) / len(my)) if my else None})
+        crecimiento[s] = {"filas": cre, "mom_prom": cre_mes_s,
+                          "prom_ult": (prom[aa[-1]] if aa else None)}
+        # KPI: total del período activo + último crecimiento anual + crecimiento promedio mensual.
         susc_act = (comp_tot["susc"] if comp_tot else 0)
-        kpis.append({"servicio": s, "ultimo": susc_act, "periodo": per_lbl,
+        kpis.append({"servicio": s, "ultimo": susc_act, "periodo": per_lbl, "cre_mes": cre_mes_s,
+                     "prom_anual": (prom[aa[-1]] if aa else None),
+                     "anio_prom": (aa[-1] if aa else None),
                      "icuf": (comp_tot["icuf"] if comp_tot else None),
                      "crecimiento": (cre[-1]["crecimiento"] if cre else None)})
 

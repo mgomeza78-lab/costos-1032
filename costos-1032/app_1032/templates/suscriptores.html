@@ -48,8 +48,9 @@ todos los meses cargados; las <b>tarjetas</b>, la <b>composición</b> y el <b>AP
 <div class="ix-cards">
   {% for k in d.kpis %}
   <div class="ix-card"><div class="ix-top"><span class="ix-name">{{ k.servicio|capitalize }}</span></div>
-    <div class="ix-val">{{ n0(k.ultimo) }}</div>
-    <div class="ix-cap">suscriptores · {{ k.periodo }}{% if k.icuf is not none %} · ICUF {{ n2(k.icuf) }}{% endif %}{% if k.crecimiento is not none %} · crecim. anual {{ pct(k.crecimiento) }}{% endif %}</div></div>
+    <div class="ix-val">{{ n0(k.prom_anual|round|int) if k.prom_anual is not none else n0(k.ultimo) }}</div>
+    <div class="ix-cap">suscriptores · <b>promedio año {{ k.anio_prom or '' }}</b> · crecim. prom. mensual {{ pct(k.cre_mes) }}</div>
+    <div class="ix-cap">{{ k.periodo }}: {{ n0(k.ultimo) }}{% if k.icuf is not none %} · ICUF {{ n2(k.icuf) }}{% endif %}{% if k.crecimiento is not none %} · crecim. anual {{ pct(k.crecimiento) }}{% endif %}</div></div>
   {% endfor %}
 </div>
 
@@ -76,7 +77,9 @@ todos los meses cargados; las <b>tarjetas</b>, la <b>composición</b> y el <b>AP
   </div>
 </div>
 
+<div class="sus-cols">
 {% for s in d.servicios_vista %}
+<div class="sus-col">
 {% set comp = d.composicion.get(s) %}
 <h2 class="serv-h">{{ s|capitalize }} · composición por clase de uso · {{ d.per_lbl }}</h2>
 {% if comp and comp.filas %}
@@ -105,15 +108,22 @@ todos los meses cargados; las <b>tarjetas</b>, la <b>composición</b> y el <b>AP
 </table>
 {% endif %}
 
-<h3 class="ccp-h">Crecimiento anual (promedio mensual de suscriptores)</h3>
+{% set cr = d.crecimiento.get(s) %}
+<h3 class="ccp-h">Crecimiento de suscriptores</h3>
 <table class="tabla compact">
-  <thead><tr><th>Año</th><th class="r">Prom. mensual</th><th class="r">Crecimiento anual</th></tr></thead>
+  <thead><tr><th>Año</th><th class="r">Promedio anual</th><th class="r">Crecim. anual</th><th class="r">Crecim. prom. mensual</th></tr></thead>
   <tbody>
-    {% for g in d.crecimiento.get(s, []) %}<tr><td>{{ g.anio }}</td>
-      <td class="num">{{ n0(g.prom|round|int) }}</td><td class="num">{{ pct(g.crecimiento) }}</td></tr>{% endfor %}
+    {% for g in (cr.filas if cr else []) %}<tr><td>{{ g.anio }}</td>
+      <td class="num">{{ n0(g.prom|round|int) }}</td><td class="num">{{ pct(g.crecimiento) }}</td>
+      <td class="num">{{ pct(g.mom) }}</td></tr>{% endfor %}
   </tbody>
 </table>
+<p class="muted2" style="margin:-2px 0 10px">El <b>promedio anual</b> es la media mensual de suscriptores de
+cada año; el <b>crecimiento promedio mensual</b> es la media de las variaciones mes a mes
+{% if cr and cr.mom_prom is not none %}(global: <b>{{ pct(cr.mom_prom) }}</b>){% endif %}.</p>
+</div>
 {% endfor %}
+</div>
 
 <p class="hint">El detalle comercial proviene del reporte del SUI (desagregado por APS con el código DANE del
 municipio) y, en contingencia, de las entradas manuales. La clase de uso sigue los códigos CLASEUSO del SUI.</p>
@@ -130,5 +140,8 @@ municipio) y, en contingencia, de las entradas manuales. La clase de uso sigue l
 .sus-leg-it{display:inline-flex;align-items:center;gap:5px}
 .sus-leg-it i{width:11px;height:11px;border-radius:2px;display:inline-block}
 .fila-total td{border-top:2px solid var(--line,#d8d2c4);background:var(--paper,#faf8f2)}
+.sus-cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:20px;align-items:start}
+.sus-col{min-width:0}
+.sus-col .serv-h:first-child{margin-top:4px}
 </style>
 {% endblock %}

@@ -389,15 +389,16 @@ def empresa_suscriptores(request: Request, eid: int):
 
 
 @app.get("/empresa/{eid}/ccp", response_class=HTMLResponse)
-def empresa_ccp(request: Request, eid: int, anio: int = None):
+def empresa_ccp(request: Request, eid: int):
     if (r := _need_login(request)):
         return r
     user = session_user(request)
+    per_clave = request.query_params.get("at") or None
     with db.scope_conn(scope_of(user)) as conn:
         emp = conn.execute(text("SELECT * FROM empresa WHERE id=:e"), {"e": eid}).mappings().first()
         if not emp:
             return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
-        datos = cv.resumen(conn, eid, anio)
+        datos = cv.resumen(conn, eid, per_clave)
     return tpl.TemplateResponse(request, "ccp.html", _ctx(request, emp=emp, ccp=datos, meses=ops.MESES))
 
 
