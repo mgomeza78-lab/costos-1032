@@ -27,6 +27,7 @@ import operacion_service as ops
 import indices_service as ix
 import ccp_view as cv
 import suscriptores_view as sv
+import balance_view as bv
 import recalculo_service as rc
 import inversiones_service as inv
 import subsidios_service as subs
@@ -1371,7 +1372,7 @@ def cargar_balance(request: Request, eid: int, anio: int = Form(...),
     if (bad := _bad_csrf(request, csrf)):
         return bad
     user = session_user(request)
-    dflt = f"/empresa/{eid}/recalculo"
+    dflt = f"/empresa/{eid}/balance"
     if not rbac.can(user, "cargar_mensual"):
         return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
     # compatibilidad: si llega 'mes' suelto, es un solo mes
@@ -1411,24 +1412,81 @@ def cargar_balance(request: Request, eid: int, anio: int = Form(...),
                 _dest(next, dflt, "err=Falta+el+catálogo+de+clasificación+de+esta+empresa"),
                 status_code=303)
         sub, comp, sin = clf.clasificar(filas, catalogo)
-        nums = clf.numeradores(sub)
-        split = rc.split_servicio(conn, eid)
-        # El balance subido corresponde al rango elegido; se reparte por igual entre sus meses,
-        # de modo que la suma del período reproduce el balance cargado.
-        nums_mes = {k: (float(v or 0.0) / n_meses) for k, v in nums.items()}
-        n = 0
-        for m in range(mes_ini, mes_fin + 1):
-            n += ingesta.persistir_numeradores_mensual(conn, eid, anio, m, nums_mes, split, cod_dane=cod_dane)
-        rc.recalcular(conn, eid)
+        buckets, _s2 = clf.clasificar_buckets(filas, catalogo)
+        pct_ac = ingesta.get_pct_ac(conn, eid)
+        # Desglose por subcomponente y AÑO (fuente de la pantalla de balance). Período = año.
+        n = ingesta.persistir_subcomp(conn, eid, anio, buckets, cod_dane=cod_dane)
+        # Para un año de SEGUIMIENTO (período de inicio en adelante, ≥ 2026) el balance también
+        # alimenta el motor mensual (numerador_mensual + recálculo); el split por servicio se deriva
+        # de las cubetas + el % de la clase 5. Para los años BASE (2024/2025) solo se guarda el
+        # desglose para la pantalla (no son meses tarifarios).
+        if anio >= per.ANIO_INICIO:
+            nps = clf.numeradores_por_servicio(clf.aplicar_pct(buckets, pct_ac))
+
+            def _share(k):
+                a = nps.get("acueducto", {}).get(k, 0.0)
+                b = nps.get("alcantarillado", {}).get(k, 0.0)
+                return (a / (a + b)) if (a + b) else 1.0
+            split = {"CACe": _share("CACe"), "COCe": _share("COCe_comparables"),
+                     "CE": _share("CE_contable"), "COIR": _share("COIR"), "ICTA": _share("ICTA"),
+                     "ITO": _share("ICTO"), "TA": _share("TA"), "CIQ": 1.0}
+            nums = clf.numeradores(sub)
+            # El balance del rango se reparte por igual entre sus meses (su suma reproduce el balance).
+            nums_mes = {k: (float(v or 0.0) / n_meses) for k, v in nums.items()}
+            for m in range(mes_ini, mes_fin + 1):
+                ingesta.persistir_numeradores_mensual(conn, eid, anio, m, nums_mes, split, cod_dane=cod_dane)
+            rc.recalcular(conn, eid)
     rango = (ops.MESES.get(mes_ini, mes_ini) if n_meses == 1
              else f"{ops.MESES.get(mes_ini, mes_ini)}–{ops.MESES.get(mes_fin, mes_fin)}")
     db.audit(scope_of(user), "cargar_balance", "empresa", eid,
-             f"{rango}-{anio} ({n_meses} mes/es): {n} numeradores, {len(sin)} cuentas sin clasificar")
-    aviso = (f"msg=Balance+{rango}-{anio}:+distribuido+en+{n_meses}+mes(es),+"
-             f"numeradores+clasificados+y+recálculo+hecho")
+             f"{rango}-{anio}: {n} subcomponentes, {len(sin)} cuentas sin clasificar")
+    if anio >= per.ANIO_INICIO:
+        aviso = f"msg=Balance+{rango}-{anio}+clasificado+({n}+subcomponentes)+y+recálculo+hecho"
+    else:
+        aviso = f"msg=Balance+{anio}+clasificado+por+componente+({n}+subcomponentes)"
     if sin:
         aviso += f";+{len(sin)}+cuentas+sin+clasificar"
     return RedirectResponse(_dest(next, dflt, aviso), status_code=303)
+
+
+@app.get("/empresa/{eid}/balance", response_class=HTMLResponse)
+def empresa_balance(request: Request, eid: int):
+    if (r := _need_login(request)):
+        return r
+    user = session_user(request)
+    comp = request.query_params.get("comp") or None
+    serv = request.query_params.get("serv") or None
+    with db.scope_conn(scope_of(user)) as conn:
+        emp = conn.execute(text("SELECT * FROM empresa WHERE id=:e"), {"e": eid}).mappings().first()
+        if not emp:
+            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        datos = bv.resumen(conn, eid, comp, serv)
+    return tpl.TemplateResponse(request, "balance.html", _ctx(
+        request, emp=emp, b=datos, puede_cargar=rbac.can(user, "cargar_mensual")))
+
+
+@app.post("/empresa/{eid}/balance-reparto")
+def balance_reparto_set(request: Request, eid: int, pct_ac: str = Form("52"),
+                        comp: str = Form("CMA"), serv: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(f"/empresa/{eid}/balance?err=No+autorizado", status_code=303)
+    try:
+        p = float(str(pct_ac).replace(",", "."))
+    except ValueError:
+        p = 52.0
+    if p > 1:
+        p = p / 100.0
+    with db.scope_conn(scope_of(user)) as conn:
+        ingesta.set_pct_ac(conn, eid, p)
+    dest = f"/empresa/{eid}/balance?comp={comp or 'CMA'}"
+    if serv:
+        dest += f"&serv={serv}"
+    return RedirectResponse(dest + "&msg=Porcentaje+de+reparto+actualizado", status_code=303)
 
 
 @app.get("/empresa/{eid}/inversiones", response_class=HTMLResponse)

@@ -537,5 +537,42 @@ def persistir_numeradores_mensual(conn, empresa_id, anio, mes, numeradores, spli
     return n
 
 
+def persistir_subcomp(conn, empresa_id, anio, buckets, cod_dane=""):
+    """Guarda las cubetas del balance por (año, componente, subcomponente); reemplaza ese año/APS.
+    El período de la línea base es el AÑO, así que la granularidad es anual."""
+    cod_dane = (cod_dane or "").strip()
+    conn.execute(text("DELETE FROM numerador_subcomp WHERE empresa_id=:e AND anio=:a AND cod_dane=:cd"),
+                 {"e": empresa_id, "a": anio, "cd": cod_dane})
+    sql = ("INSERT INTO numerador_subcomp(empresa_id,anio,componente,subcomponente,cod_dane,"
+           " ac_dir,al_dir,repartir,origen) VALUES (:e,:a,:cp,:sc,:cd,:ad,:ld,:rp,'balance') "
+           "ON CONFLICT (empresa_id,anio,componente,subcomponente,cod_dane) DO UPDATE SET "
+           "ac_dir=excluded.ac_dir, al_dir=excluded.al_dir, repartir=excluded.repartir, "
+           "origen=excluded.origen, actualizado_en=now()")
+    n = 0
+    for (cp, sc), b in buckets.items():
+        if not cp or not sc:
+            continue
+        conn.execute(text(sql), {"e": empresa_id, "a": anio, "cp": cp, "sc": sc, "cd": cod_dane,
+                                 "ad": b.get("ac_dir", 0.0), "ld": b.get("al_dir", 0.0),
+                                 "rp": b.get("repartir", 0.0)})
+        n += 1
+    return n
+
+
+def get_pct_ac(conn, empresa_id, default=0.52):
+    """Participación de acueducto de la clase 5 (CMA e impuestos admin.), editable por empresa."""
+    v = conn.execute(text("SELECT pct_ac FROM balance_reparto WHERE empresa_id=:e"),
+                     {"e": empresa_id}).scalar()
+    return float(v) if v is not None else default
+
+
+def set_pct_ac(conn, empresa_id, pct_ac):
+    pct_ac = max(0.0, min(1.0, float(pct_ac)))
+    conn.execute(text("INSERT INTO balance_reparto(empresa_id,pct_ac) VALUES (:e,:p) "
+                      "ON CONFLICT (empresa_id) DO UPDATE SET pct_ac=excluded.pct_ac, actualizado_en=now()"),
+                 {"e": empresa_id, "p": pct_ac})
+    return pct_ac
+
+
 TIPOS = {"comercial": cargar_comercial, "factores": cargar_factores,
          "indicadores": cargar_indicadores, "macromedicion": cargar_macromedicion}

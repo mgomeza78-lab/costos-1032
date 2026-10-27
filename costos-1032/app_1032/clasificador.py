@@ -19,8 +19,10 @@ COMPARABLES_COC = ("COC-1", "COC-2", "COC-3", "COC-4", "COC-5")
 
 
 def cargar_catalogo(contenido):
-    """CSV del catálogo -> dict codigo_norm -> (subcomponente, componente, traslado).
-    Tolera BOM y encabezados en mayúsculas/espacios; si falta 'codigo_norm' lo deriva de 'codigo'."""
+    """CSV del catálogo -> dict codigo_norm -> (subcomponente, componente, traslado, servicio).
+    `servicio` ('acueducto'/'alcantarillado' o vacío) es la asignación por cuenta de la clase 7;
+    vacío = la cuenta se reparte por el % de la clase 5. Tolera BOM y encabezados en
+    mayúsculas/espacios; si falta 'codigo_norm' lo deriva de 'codigo'."""
     cat = {}
     for raw in csv.DictReader(io.StringIO((contenido or "").lstrip("﻿"))):
         r = {(k or "").strip().lstrip("﻿").lower(): (v or "") for k, v in raw.items()}
@@ -29,7 +31,8 @@ def cargar_catalogo(contenido):
             continue
         cat[cn] = (r.get("subcomponente", "").strip(),
                    r.get("componente", "").strip(),
-                   r.get("traslado", "").strip())
+                   r.get("traslado", "").strip(),
+                   (r.get("servicio", "").strip().lower() or ""))
     return cat
 
 
@@ -74,7 +77,7 @@ def clasificar(balance_filas, catalogo, valor="saldo_final"):
             continue
         key = cn if cn in catalogo else next((c for c in cat_codes if cn.startswith(c)), None)
         if key:
-            sc, cp, _ = catalogo[key]
+            sc, cp, _tr, _sv = catalogo[key]
             sub[sc] += val
             comp[cp] += val
         elif cn[:1] in ("5", "7"):
@@ -111,3 +114,91 @@ def numeradores(por_subcomponente):
         "ICTO": s.get("ICTO", 0.0),
         "TA": s.get("TA", 0.0),
     }
+
+
+def clasificar_buckets(balance_filas, catalogo, valor="saldo_final"):
+    """Clasifica el balance por (componente, subcomponente) en TRES cubetas, para que el reparto
+    por servicio se pueda recomputar luego con cualquier %:
+
+      - `ac_dir`  : cuentas con servicio 'acueducto' en el catálogo (clase 7, cont. separada);
+      - `al_dir`  : cuentas con servicio 'alcantarillado';
+      - `repartir`: cuentas sin servicio (clase 5: CMA e impuestos admin.), que se reparten por %.
+
+    Devuelve (buckets, sin): `buckets` = {(componente, subcomponente): {ac_dir, al_dir, repartir}}
+    (solo cuentas hoja, por el prefijo más largo del catálogo); `sin` = cuentas clase 5/7 sin mapear.
+    """
+    hojas = _hojas(balance_filas)
+    cat_codes = sorted(catalogo.keys(), key=len, reverse=True)
+    buckets = defaultdict(lambda: {"ac_dir": 0.0, "al_dir": 0.0, "repartir": 0.0})
+    sin = []
+    for f in balance_filas:
+        cn = f.get("codigo_norm", "")
+        if not cn or cn not in hojas:
+            continue
+        val = f.get(valor)
+        if val is None:
+            val = f.get("saldo_final") or f.get("debito") or 0.0
+        if not val:
+            continue
+        key = cn if cn in catalogo else next((c for c in cat_codes if cn.startswith(c)), None)
+        if not key:
+            if cn[:1] in ("5", "7"):
+                sin.append((cn, f.get("nombre"), val))
+            continue
+        sc, cp, _tr, serv = catalogo[key]
+        # Clase 7 sin servicio en el catálogo: inferir por el código de la cuenta
+        # (7503… = alcantarillado; 7501/7502/7504… = acueducto). Robustez si el catálogo
+        # cargado aún no trae la columna 'servicio'.
+        if not serv and cn[:1] == "7":
+            if cn.startswith("7503"):
+                serv = "alcantarillado"
+            elif cn.startswith(("7501", "7502", "7504")):
+                serv = "acueducto"
+        b = buckets[(cp, sc)]
+        if serv == "acueducto":
+            b["ac_dir"] += val
+        elif serv == "alcantarillado":
+            b["al_dir"] += val
+        else:
+            b["repartir"] += val
+    return {k: dict(v) for k, v in buckets.items()}, sin
+
+
+def aplicar_pct(buckets, pct_ac=0.52):
+    """Reparte las cubetas por servicio con `pct_ac`: devuelve {(componente, subcomponente, servicio): valor}.
+    ac = ac_dir + repartir·pct_ac ; al = al_dir + repartir·(1−pct_ac)."""
+    agg = {}
+    for (cp, sc), b in buckets.items():
+        ac = b.get("ac_dir", 0.0) + b.get("repartir", 0.0) * pct_ac
+        al = b.get("al_dir", 0.0) + b.get("repartir", 0.0) * (1.0 - pct_ac)
+        if ac:
+            agg[(cp, sc, "acueducto")] = ac
+        if al:
+            agg[(cp, sc, "alcantarillado")] = al
+    return agg
+
+
+def clasificar_servicio(balance_filas, catalogo, pct_ac=0.52, valor="saldo_final"):
+    """Compatibilidad: clasifica y reparte por servicio en un paso (buckets + pct)."""
+    buckets, sin = clasificar_buckets(balance_filas, catalogo, valor)
+    return aplicar_pct(buckets, pct_ac), sin
+
+
+def numeradores_por_servicio(agg):
+    """A partir de `clasificar_servicio`, arma los numeradores de costo POR SERVICIO:
+    {servicio: {CACe, COCe_comparables, CE_contable, COIR, ICTA, ICTO, TA}}. Mismo criterio que
+    `numeradores()` pero separado por servicio (para el reparto del balance en el motor)."""
+    out = {}
+    for (cp, sc, serv), v in agg.items():
+        d = out.setdefault(serv, defaultdict(float))
+        if sc.startswith("CAC-") and not sc.endswith("-X"):
+            d["CACe"] += v
+        if sc in COMPARABLES_COC:
+            d["COCe_comparables"] += v
+        if sc == "CE":
+            d["CE_contable"] += v
+        if sc == "COIR":
+            d["COIR"] += v
+        if sc in ("ICTA", "ICTO", "TA"):
+            d[sc] += v
+    return {s: dict(d) for s, d in out.items()}

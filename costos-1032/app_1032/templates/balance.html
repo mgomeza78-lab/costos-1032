@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}Balance clasificado · {{ emp.nombre }}{% endblock %}
+{% block body %}
+{% macro m(x) %}{% if x is none %}<span class="mut">—</span>{% else %}{{ x|valor }}{% endif %}{% endmacro %}
+
+<div class="page-head">
+  <a class="back" href="/empresa/{{ emp.id }}/cargar?fuente=balance">← Cargar balance</a>
+  <h1>Balance de prueba clasificado</h1>
+  <p class="sub">El balance de prueba, clasificado según la Res. CRA 1032 por <b>componente</b>
+  (CMA, CMO, CMICT) y <b>subcomponente</b>, con el valor por <b>año base</b> cargado (el saldo del
+  balance ya es acumulado). El reparto por servicio: la <b>clase 5</b> (CMA e impuestos administrativos)
+  se reparte por un <b>% Ac/Al</b> editable; la <b>clase 7</b> (CMO) va al servicio de cada cuenta
+  (contabilidad separada).</p>
+</div>
+
+{% if not b.hay_datos %}
+  <p class="empty">Aún no hay ningún balance de prueba cargado. Cárgalo en
+  <a href="/empresa/{{ emp.id }}/cargar?fuente=balance">Cargar información → Balance de prueba</a>;
+  aquí verás el desglose por componente, subcomponente y año.</p>
+{% else %}
+
+<p class="muted2" style="margin:-4px 0 8px">Años cargados:
+  {% for a in b.anios %}<b>{{ a }}</b>{{ ", " if not loop.last }}{% endfor %}.</p>
+
+<form method="get" action="/empresa/{{ emp.id }}/balance" class="graf-ctrl">
+  <label>Componente
+    <select name="comp" onchange="this.form.submit()">
+      {% for c in b.componentes %}<option value="{{ c }}" {{ 'selected' if c==b.componente }}>{{ c }} · {{ b.comp_nombre[c] }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Servicio
+    <select name="serv" onchange="this.form.submit()">
+      <option value="" {{ 'selected' if b.servicio=='conjunto' }}>Conjunto (Ac + Al)</option>
+      <option value="acueducto" {{ 'selected' if b.servicio=='acueducto' }}>Acueducto</option>
+      <option value="alcantarillado" {{ 'selected' if b.servicio=='alcantarillado' }}>Alcantarillado</option>
+    </select>
+  </label>
+  <span class="hint" style="align-self:center">Art. {{ b.art }} · Res. CRA 1032</span>
+</form>
+
+{% if b.usa_pct %}
+<form method="post" action="/empresa/{{ emp.id }}/balance-reparto" class="rep-form">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <input type="hidden" name="comp" value="{{ b.componente }}">
+  <input type="hidden" name="serv" value="{{ b.servicio if b.servicio!='conjunto' else '' }}">
+  <span class="rep-lab">Reparto de la clase 5 (sin contabilidad separada):</span>
+  <label>% Acueducto <input type="number" name="pct_ac" min="0" max="100" step="0.1" value="{{ (b.pct_ac*100)|round(1) }}"></label>
+  <span class="rep-al">% Alcantarillado = <b>{{ (b.pct_al*100)|round(1) }}</b></span>
+  {% if puede_cargar %}<button type="submit" class="btn-sm">Aplicar</button>{% endif %}
+</form>
+<p class="muted2" style="margin:2px 0 8px">El % se aplica a los subcomponentes de clase 5 de este
+componente (la clase 7, si la hay, se reparte por cuenta). Cambiar el % recalcula la vista al instante.</p>
+{% else %}
+<p class="muted2" style="margin:2px 0 8px">El CMO es clase 7: cada cuenta va a su servicio según la
+contabilidad separada (no usa el % de reparto).</p>
+{% endif %}
+
+<h2 class="serv-h">{{ b.componente }} · {{ b.comp_nombre[b.componente] }} ·
+  {{ 'Conjunto' if b.servicio=='conjunto' else b.servicio|capitalize }}</h2>
+<div class="tbl-wrap">
+<table class="tabla compact ccp-cmp">
+  <thead><tr><th>Subcomponente</th>
+    {% for a in b.anios %}<th class="r">{{ a }}</th>{% endfor %}
+    {% if b.anios|length > 1 %}<th class="r">Σ años cargados</th>{% endif %}
+  </tr></thead>
+  <tbody>
+    {% for f in b.filas %}
+    <tr><td><b>{{ f.sub }}</b> · {{ f.nombre }}</td>
+      {% for a in b.anios %}<td class="num">{{ m(f.cols[a]) }}</td>{% endfor %}
+      {% if b.anios|length > 1 %}<td class="num">{{ m(f.suma) }}</td>{% endif %}</tr>
+    {% endfor %}
+    <tr class="ccp-total"><td><b>Total {{ b.componente }}</b></td>
+      {% for a in b.anios %}<td class="num"><b>{{ m(b.total[a]) }}</b></td>{% endfor %}
+      {% if b.anios|length > 1 %}<td class="num"><b>{{ m(b.total_suma) }}</b></td>{% endif %}</tr>
+  </tbody>
+</table>
+</div>
+<p class="hint">Valores en pesos (COP), saldo del balance de prueba. El <b>Total {{ b.componente }}</b> es
+el numerador que, dividido por su denominador (N·12 para el CMA; CCP para CMO/CMICT) e indexado, produce
+el componente tarifario. Las cuentas no reconocidas quedan en «Excluido» y no se muestran aquí.</p>
+
+{% endif %}
+<style>
+.ccp-cmp .num{white-space:nowrap}
+.tbl-wrap{overflow-x:auto;margin-bottom:10px}
+.ccp-total td{border-top:2px solid var(--line,#d8d2c4);background:var(--paper,#faf8f2)}
+.rep-form{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:6px 0 2px;padding:8px 10px;
+  background:var(--paper,#faf8f2);border:1px solid var(--line,#e5e0d2);border-radius:var(--r,8px)}
+.rep-form label{display:inline-flex;align-items:center;gap:5px;font-size:13px}
+.rep-form input[type=number]{width:72px;padding:3px 6px}
+.rep-lab{font-weight:600;font-size:13px}
+.rep-al{font-size:13px;color:var(--muted,#8a8578)}
+.btn-sm{padding:4px 12px;font-size:13px;cursor:pointer}
+</style>
+{% endblock %}

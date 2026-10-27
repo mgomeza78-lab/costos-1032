@@ -109,7 +109,7 @@ tok = csrf(admin, f"/empresa/{LAS_CEIBAS}/recalculo")
 r = admin.post(f"/empresa/{LAS_CEIBAS}/cargar-balance",
                data={"anio": 2026, "mes": 7, "csrf": tok},
                files={"archivo": ("balance jul.csv", balance, "text/csv")}, follow_redirects=False)
-check("clasificados" in r.headers.get("location", ""), f"balance clasificado y recálculo ({r.headers.get('location')})")
+check("clasificado" in r.headers.get("location", ""), f"balance clasificado y recálculo ({r.headers.get('location')})")
 with db.engine_owner.connect() as cn:
     nbal = cn.execute(text("SELECT count(*) FROM numerador_mensual WHERE empresa_id=:e AND mes=7 "
                            "AND origen='balance'"), {"e": LAS_CEIBAS}).scalar_one()

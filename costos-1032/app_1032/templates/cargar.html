@@ -197,12 +197,12 @@ Puedes subir el tuyo (tiene prioridad); las cuentas que no figuren quedan «sin 
 </div>
 {% endif %}
 <h3 class="serv-h">Cargado · resultado de la clasificación (Res. 1032)</h3>
-<p class="muted2" style="margin:-4px 0 8px">Numeradores de costo que resultan de clasificar las cuentas del
+<p style="margin:-4px 0 8px"><a class="btn-sm" href="/empresa/{{ emp.id }}/balance">Ver desglose por componente y subcomponente, por año →</a></p>
+<p class="muted2" style="margin:0 0 8px">Numeradores de costo que resultan de clasificar las cuentas del
 balance con los criterios de la Res. CRA 1032, por período y servicio: <b>numerador del CMA</b> (costos
 administrativos, CACe), <b>del CMO</b> (operativos: COCe + energía + insumos químicos + otros) y <b>del
-CMICT</b> (inversiones y tasas: ICTA + ITO + TA). Si cargaste un balance para un rango de meses, el valor se
-<b>reparte por igual</b> entre esos meses (por eso se repite); para variación mensual, carga el balance de
-cada mes por separado.</p>
+CMICT</b> (inversiones y tasas: ICTA + ITO + TA). En la pantalla <b>Balance clasificado</b> ves el detalle por
+subcomponente (CAC-1, CAC-2…) y por año base, con el reparto por servicio (% editable para la clase 5).</p>
 {% if bal %}
 <table class="tabla">
   <thead><tr><th>Período</th><th>Año tarifario</th><th>Servicio</th><th>Ámbito</th>
