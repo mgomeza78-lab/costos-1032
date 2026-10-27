@@ -5,8 +5,9 @@
   <a class="back" href="/empresa/{{ emp.id }}">← {{ emp.nombre }}</a>
   <h1>Validación de información</h1>
   <p class="sub">Cobertura de la información de <b>línea base</b> del <b>período de inicio</b> (jul–dic 2026),
-  que se calcula con los años <b>2024 y 2025</b>. Cada celda indica si ese <b>mes</b> está cargado para el
-  servicio; la meta es los 12 meses de cada año, por servicio.</p>
+  que se calcula con los años <b>2024 y 2025</b>. La información <b>comercial</b> y de <b>agua</b> se carga por
+  <b>mes</b> (la meta son los 12 meses de cada año, por servicio); el <b>balance de prueba</b> se carga por
+  <b>año</b> y se valida por año base.</p>
 </div>
 
 {% set MM = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'] %}
@@ -26,6 +27,25 @@
   </tbody>
 </table>
 {% endfor %}
+
+<h2 class="serv-h">Balance de prueba (numeradores del CMO / CMI / CMICT)</h2>
+<p class="muted2" style="margin:-4px 0 6px">El balance se carga por <b>año</b> y cubre ambos servicios (el reparto
+—clase 5 por % y clase 7 por cuenta— se ve en <a href="/empresa/{{ emp.id }}/balance">Balance clasificado</a>).
+Para el período de inicio se validan los dos años base. Totales de control por clase: cuenta 5 (administración) y
+cuenta 7 (operación).</p>
+<table class="tabla compact">
+  <thead><tr><th>Año base</th><th class="c">Estado</th><th class="r">Total cuenta 5</th>
+    <th class="r">Total cuenta 7</th><th>Archivo(s)</th></tr></thead>
+  <tbody>
+    {% for b in bal_anual %}
+    <tr><td class="comp">{{ b.anio }}</td>
+      <td class="c">{% if b.cargado %}<span class="tag ac">✓ cargado</span>{% else %}<span class="tag neg">falta</span>{% endif %}</td>
+      <td class="num">{% if b.cargado %}{{ b.total5|valor('$') }}{% else %}—{% endif %}</td>
+      <td class="num">{% if b.cargado %}{{ b.total7|valor('$') }}{% else %}—{% endif %}</td>
+      <td class="muted2" style="font-size:12px">{% if b.archivos %}{{ b.archivos|join(', ') }}{% elif b.cargado %}— (cargado antes){% else %}—{% endif %}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
 
 <h2 class="serv-h">Otros insumos</h2>
 <table class="tabla">

@@ -1910,8 +1910,11 @@ def validacion(request: Request, eid: int):
                 d.setdefault(a, {}).setdefault(s, set()).add(m)
             return d
         com_m = _celdas("SELECT DISTINCT anio, mes, servicio FROM carga_mensual WHERE empresa_id=:e")
-        bal_m = _celdas("SELECT DISTINCT anio, mes, servicio FROM numerador_mensual WHERE empresa_id=:e")
         agua_m = _celdas("SELECT DISTINCT anio, mes, servicio FROM macromedicion WHERE empresa_id=:e")
+        # El balance se carga por AÑO (no por mes): se valida por año base con el registro de cargues.
+        bal_cargues = bv.cargues(conn, eid)
+        bal_mens_anios = {a for (a,) in conn.execute(text(
+            "SELECT DISTINCT anio FROM numerador_mensual WHERE empresa_id=:e"), {"e": eid}).all()}
         fsub = dict(conn.execute(text(
             "SELECT vigencia, count(*) FROM factor_subsidio WHERE empresa_id=:e GROUP BY vigencia"),
             {"e": eid}).all())
@@ -1937,9 +1940,17 @@ def validacion(request: Request, eid: int):
     anios = per.PERIODOS[0]["anios_base"]              # [2024, 2025]
     matriz = [
         {"clave": "comercial", "nombre": "Comercial (suscriptores y consumos)", "cel": com_m, "serv": servicios},
-        {"clave": "balance", "nombre": "Balance de prueba (numeradores CMO/CMI/CMICT)", "cel": bal_m, "serv": servicios},
         {"clave": "agua", "nombre": "Agua producida / macromedición (solo acueducto)", "cel": agua_m, "serv": serv_agua},
     ]
+    # Balance de prueba: cobertura por AÑO base (el balance es anual y cubre ambos servicios).
+    bal_anual = []
+    for an in anios:
+        rows = [c for c in bal_cargues if c["anio"] == an]
+        archivos = [c["archivo"] for c in rows if c.get("archivo")]
+        bal_anual.append({"anio": an, "cargado": bool(rows) or (an in bal_mens_anios), "n": len(rows),
+                          "total5": sum(c["total5"] for c in rows),
+                          "total7": sum(c["total7"] for c in rows),
+                          "archivos": archivos})
     resumen = [
         {"nombre": "Configuración del APS", "valor": f"{apsres['n_completos']}/{apsres['n_municipios']} completos",
          "ok": apsres["n_municipios"] > 0 and apsres["n_completos"] == apsres["n_municipios"]},
@@ -1974,8 +1985,8 @@ def validacion(request: Request, eid: int):
              "detalle": (f"{nav} avance(s)" if nav else "sin avances · opcional en el período de inicio")},
         ]})
     return tpl.TemplateResponse(request, "validacion.html", _ctx(
-        request, emp=emp, matriz=matriz, resumen=resumen, servicios=servicios, bcr_val=bcr_val,
-        anios=anios, meses_num=list(range(1, 13)), meses=ops.MESES))
+        request, emp=emp, matriz=matriz, bal_anual=bal_anual, resumen=resumen, servicios=servicios,
+        bcr_val=bcr_val, anios=anios, meses_num=list(range(1, 13)), meses=ops.MESES))
 
 
 # ------------------------------------------------------------------ Resultados · Costos de referencia por año tarifario
