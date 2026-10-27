@@ -279,7 +279,7 @@ def r688_de_segmento(seg):
 
 def ipc_dic(conn, anio):
     """IPC de diciembre de un año desde la tabla de IPC (indice_ipc, mes 12), o None."""
-    return conn.execute(text("SELECT indice FROM indice_ipc WHERE anio=:a AND mes=12 ORDER BY 1 LIMIT 1"),
+    return conn.execute(text("SELECT indice FROM indice_ipc WHERE anio=:a AND mes=12 AND indice IS NOT NULL ORDER BY 1 LIMIT 1"),
                         {"a": anio}).scalar()
 
 

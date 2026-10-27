@@ -35,8 +35,11 @@ def componentes_base(conn, empresa_id):
 
 
 def serie_ipc(conn):
-    """{(anio,mes): (ipc, ipcs)}; ipcs cae a ipc si no está cargado."""
-    rows = conn.execute(text("SELECT anio, mes, indice, ipcs FROM indice_ipc")).mappings().all()
+    """{(anio,mes): (ipc, ipcs)}; ipcs cae a ipc si no está cargado. Omite los meses sin IPC
+    (el IPC, el IPC-SAR y el ICTC se publican en fechas distintas, así que un mes puede tener
+    solo el ICTC o solo el IPC-SAR; para la indexación por IPC esos meses no aplican)."""
+    rows = conn.execute(text(
+        "SELECT anio, mes, indice, ipcs FROM indice_ipc WHERE indice IS NOT NULL")).mappings().all()
     s = {}
     for r in rows:
         ipc = float(r["indice"])

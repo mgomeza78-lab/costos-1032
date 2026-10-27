@@ -14,6 +14,7 @@ Lo que falte se marca como «por cargar/calcular», con el artículo y para qué
 """
 from sqlalchemy import text
 import balance_view as bv
+import ccp_view
 import energia_quimicos_service as eq
 import ingesta
 import periodos as per
@@ -192,6 +193,14 @@ def variables(conn, empresa_id, servicios, emp=None, pclave="inicio"):
     sub24 = _num_por_sub(conn, empresa_id, ab["CMA"])      # CACe/COCe/CE/CIQ/COIR (i-2)
     subict = _num_por_sub(conn, empresa_id, ab["CMICT"])   # ICTA/ITO/TA (i-1)
     susc = _suscriptores(conn, empresa_id, ab["CMA"])
+    # CCP (consumo corregido por pérdidas) y denominador del CMICT: se toman del MISMO cálculo que la
+    # página "CCP y pérdidas" (consumos + macromedición + IPUF* del período, art. 2.1.2.1.3.3.1),
+    # usando el IPUF* del período (segmento en el inicio; senda en los años 1–10). Así esta página
+    # muestra el CCP que ya está calculado, en lugar de pedirlo por la base del estudio.
+    sel = _periodo(pclave)
+    ipuf_e = ccp_view._ipuf_de_periodo(conn, empresa_id, sel)
+    ccp_cmo = ccp_view.indicadores(conn, empresa_id, [ab["CMO"]], ipuf_e) if ipuf_e is not None else {}
+    ccp_ict = ccp_view.indicadores(conn, empresa_id, [ab["CMICT"]], ipuf_e) if ipuf_e is not None else {}
     out = {}
     for s in servicios:
         b = base.get(s, {})
@@ -229,9 +238,25 @@ def variables(conn, empresa_id, servicios, emp=None, pclave="inicio"):
         put("ITO", (subict.get(s, {}).get("ICTO") if subict.get(s) else None), "balance clasificado")
         put("TA", (subict.get(s, {}).get("TA") if subict.get(s) else None), "balance clasificado")
         put("N", susc.get(s), "comercial")
-        # Parámetros regulatorios / de la base del estudio
-        for clave in ("kct", "CCP", "denom_cmict", "CMI_base"):
-            put(clave, None, None)
+        # Parámetros de la base del estudio: kct (con respaldo de la empresa) y CMI (del BCR/POIR).
+        put("kct", None, None)
+        put("CMI_base", None, None)
+        # CCP y denominador del CMICT: del cálculo de "CCP y pérdidas". Si usa macromedición
+        # (o se estima para alcantarillado) es el CCP pleno; si solo hay AF se muestra marcado;
+        # si no hay ni AF, cae a la base del estudio ("por cargar").
+        def _ccp_de(ind):
+            f = ind.get(s)
+            if not f or f.get("ccp") is None:
+                return None, None
+            if f.get("usa_ap") or f.get("estimado"):
+                return f["ccp"], "cálculo CCP (art. 2.1.2.1.3.3.1)"
+            return f["ccp"], "= agua facturada (falta macromedición)"
+        put("CCP", *_ccp_de(ccp_cmo))
+        if s == "acueducto":
+            put("denom_cmict", *_ccp_de(ccp_ict))
+        else:
+            _af = (ccp_ict.get(s) or {}).get("af")
+            put("denom_cmict", (_af or None), "agua facturada (AF)")
         if v["kct"]["valor"] is None and kct_emp is not None:
             v["kct"] = {"valor": kct_emp, "fuente": "parámetro de la empresa"}
         # Factor de actualización: se CALCULA por indexación (art. 2.1.2.1.5.3.1). Si falta el
