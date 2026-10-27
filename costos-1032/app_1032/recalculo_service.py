@@ -22,6 +22,7 @@ pérdidas: la recuperación por peso del CMO/CMI/CMICT_ac vale AF/CCP). En alcan
 tiene macromedición propia, el IPUF real se estima con el del acueducto del mismo mes.
 """
 from sqlalchemy import text
+import energia_quimicos_service as eq
 
 CONCEPTOS = ("CACe", "COCe", "CE", "CIQ", "COIR", "ICTA", "ITO", "TA")
 PERIODOS = [(2026, m) for m in (7, 8, 9, 10, 11, 12)]   # período de inicio (6 meses)
@@ -133,6 +134,16 @@ def recalcular(conn, empresa_id):
     # macromedición propia) según el art. 2.1.2.1.3.3.1 (fórmula de CCP_al).
     ac_drv = {(a, m): v for (s, a, m), v in drivers.items() if s.lower().startswith("acu")}
     nums = _num_mes(conn, empresa_id)
+    # CE/CIQ RECONOCIDOS por el módulo de costos particulares (energía/químicos): si están cargados,
+    # reemplazan al valor contable del balance en el numerador del CMO (art. 2.1.2.1.3.4.5/.6). El año
+    # base del CMO es i-2 (p. ej. 2024 para el período de inicio 2026), por eso se consulta por a-2.
+    # No hay doble conteo: el clasificador ya separa energía/químicos (CE/CIQ) del COC comparable (COCe).
+    _modc = {}
+
+    def _mod_ce_ciq(servicio, by):
+        if (servicio, by) not in _modc:
+            _modc[(servicio, by)] = eq.ce_ciq_de(conn, empresa_id, servicio, by)
+        return _modc[(servicio, by)]
     # tarifa cobrada (indexada) para la brecha de suficiencia
     cobr = {}
     for r in conn.execute(text(
@@ -177,6 +188,12 @@ def recalcular(conn, empresa_id):
             ccp_m, perd_real, _ = ccp_mes(af_mes, ap_mes, n_mes, ipuf, ipuf_ext)
             ianc = (perd_real / ap_mes * 100.0) if ap_mes else None
             num, origen = _numeradores(bs, nums.get((servicio, a, m)))
+            # Reemplazo de CE/CIQ por el valor reconocido del módulo (anual del año base i-2, /12).
+            ce_mod, ciq_mod = _mod_ce_ciq(servicio, a - 2)
+            if ce_mod is not None:
+                num["CE"] = ce_mod / MESES_PERIODO
+            if ciq_mod is not None:
+                num["CIQ"] = ciq_mod / MESES_PERIODO
             denom_m = _denom_cmict(ccp_m, af_mes)        # CMICT: CCP (ac) / AF (al), escalado
             cma_m, cmo_m, cmict_m = _costos(num, kct, fa_cma, fa_cmo, fa_cmict,
                                             n_mes, ccp_m, denom_m)

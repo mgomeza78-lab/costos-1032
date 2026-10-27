@@ -369,18 +369,157 @@ de macromedición (CSV) o el reporte del SUI.</p>
 
 {# ---------------- COSTOS PARTICULARES ---------------- #}
 {% if fuente=='costos' %}
+{% macro anio_base_sel() %}<label>Año base <select name="anio">{% for a in anios_base %}<option value="{{ a }}">{{ a }}</option>{% endfor %}</select></label>{% endmacro %}
 <h2 class="serv-h">Costos particulares (Res. CRA 1032)</h2>
-<p class="muted2">Costos que la metodología reconoce de forma particular para el prestador. Se registran
-por año y servicio; el sistema los asocia al año tarifario correspondiente.</p>
+<p class="muted2">Costos operativos que la metodología reconoce <b>aparte</b> del costo operativo comparable (COC):
+<b>energía</b> (CE) e <b>insumos químicos</b> (CIQ) se calculan al detalle y se alimentan por cargue
+<b>masivo</b> (archivo descargable) o <b>manual</b>, por año base. Art. 2.1.2.1.3.4.5 y 2.1.2.1.3.4.6.</p>
+
+{# ================= ENERGÍA (CE) ================= #}
+<h3 class="serv-h">Energía (CE) · art. 2.1.2.1.3.4.6</h3>
+<p class="muted2">Por punto de toma/bombeo: <b>Ceb = Σ Kebⱼ·Pceⱼ</b>, con <b>Kebⱼ = mín[(Υ/(3600·η))·Vⱼ·Hⱼ, Krⱼ]</b>.
+Para <b>otros procesos</b> (no bombeo), el costo es <b>Ko·Pce</b>. Υ = 9,8 (acueducto) / 10,5 (alcantarillado);
+η = 0,60 (alcant.) o por volumen bombeado en acueducto (0,63 / 0,69 / 0,77).</p>
+{% if puede_cargar %}
+<div class="carga-metodo">
+  <div class="metodo-tabs">
+    <button type="button" class="metodo-tab active" data-m="masivo">Cargue masivo</button>
+    <button type="button" class="metodo-tab" data-m="manual">Cargue manual</button>
+  </div>
+  <div class="metodo-panel active" data-m="masivo">
+    <form method="post" action="/empresa/{{ emp.id }}/energia-masivo" enctype="multipart/form-data" class="up-form">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+      {{ anio_base_sel() }}
+      <label class="wide">Archivo de energía (CSV) <input type="file" name="archivo" accept=".csv" required></label>
+      <button class="btn primary" type="submit">Cargar energía</button>
+    </form>
+    <p class="muted2" style="margin:4px 0 0"><a href="/empresa/{{ emp.id }}/plantilla-energia">Descargar plantilla</a>
+     · columnas <code>servicio, tipo, no_sui, punto, actividad, volumen_m3, altura_m, consumo_real_kwh, precio_kwh</code>.
+     <b>tipo</b> = <code>bombeo</code> (usa V y H) u <code>otros</code> (usa consumo_real_kwh = Ko). Reemplaza todo el año base.</p>
+  </div>
+  <div class="metodo-panel" data-m="manual">
+    <form method="post" action="/empresa/{{ emp.id }}/energia-manual" class="form-grid">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+      {{ anio_base_sel() }}
+      <label>Servicio <select name="servicio">{{ servopts() }}</select></label>
+      <label>Tipo <select name="tipo"><option value="bombeo">Bombeo (V, H)</option><option value="otros">Otros procesos (Ko)</option></select></label>
+      <label>No. SUI <input name="no_sui"></label>
+      <label>Punto de toma <input name="punto" required></label>
+      <label>Actividad <input name="actividad" placeholder="producción / distribución"></label>
+      <label>Volumen V (m³/año) <input name="volumen_m3" inputmode="decimal"></label>
+      <label>Altura H (m) <input name="altura_m" inputmode="decimal"></label>
+      <label>Consumo real / Ko (kWh/año) <input name="consumo_real_kwh" inputmode="decimal"></label>
+      <label>Precio Pce ($/kWh) <input name="precio_kwh" inputmode="decimal"></label>
+      <label class="wide">Observación <input name="observacion"></label>
+      <button class="btn" type="submit">Guardar punto</button>
+    </form>
+  </div>
+</div>
+{% endif %}
+{% if energia %}
+<div style="overflow-x:auto"><table class="tabla compact">
+  <thead><tr><th>Año</th><th>Servicio</th><th>Tipo</th><th>Punto</th><th class="r">V (m³)</th><th class="r">H (m)</th>
+    <th class="r">η</th><th class="r">Teórico</th><th class="r">Keb</th><th class="r">Real (kWh)</th>
+    <th class="r">Pce</th><th class="r">Ceb ($)</th><th class="r">Castigo</th>{% if puede_cargar %}<th></th>{% endif %}</tr></thead>
+  <tbody>
+    {% for x in energia %}<tr>
+      <td class="comp">{{ x.anio }}</td><td>{{ x.servicio }}</td><td>{{ x.tipo }}</td><td>{{ x.punto }}</td>
+      <td class="num">{{ x.volumen_m3|valor if x.volumen_m3 is not none else '—' }}</td>
+      <td class="num">{{ x.altura_m|valor if x.altura_m is not none else '—' }}</td>
+      <td class="num">{{ '%.2f'|format(x.calc.eta) if x.calc.eta else '—' }}</td>
+      <td class="num">{{ x.calc.teorico|valor if x.calc.teorico is not none else '—' }}</td>
+      <td class="num">{{ x.calc.keb|valor }}</td>
+      <td class="num">{{ x.consumo_real_kwh|valor if x.consumo_real_kwh is not none else '—' }}</td>
+      <td class="num">{{ x.precio_kwh|valor('$') if x.precio_kwh is not none else '—' }}</td>
+      <td class="num"><b>{{ x.calc.ceb|valor('$') }}</b></td>
+      <td class="num">{{ x.calc.castigo|valor('$') if x.calc.castigo else '—' }}</td>
+      {% if puede_cargar %}<td class="c"><form method="post" action="/empresa/{{ emp.id }}/energia/{{ x.id }}/eliminar" style="display:inline"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}"><button class="btn-link" type="submit" title="eliminar">×</button></form></td>{% endif %}
+    </tr>{% endfor %}
+  </tbody>
+</table></div>
+<table class="tabla compact" style="max-width:560px;margin-top:6px">
+  <thead><tr><th>CE reconocido (ΣCeb)</th><th class="r">Ceb ($)</th><th class="r">Castigo por eficiencia ($)</th><th class="r"># puntos</th></tr></thead>
+  <tbody>
+    {% for k, v in eq_tot.ce.items() %}<tr><td class="comp">{{ k[1] }} · {{ k[0] }}</td>
+      <td class="num"><b>{{ v.ce|valor('$') }}</b></td><td class="num">{{ v.castigo|valor('$') }}</td><td class="num">{{ v.n }}</td></tr>{% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="empty">Aún no hay energía cargada.</p>{% endif %}
+
+{# ================= QUÍMICOS (CIQ) ================= #}
+<h3 class="serv-h">Insumos químicos (CIQ)</h3>
+<p class="muted2"><b>CIQ = Σ Piqⱼ·Qiqⱼ</b>, con Qiqⱼ = suma de los 12 meses (kg). Una fila por insumo y planta.</p>
+{% if puede_cargar %}
+<div class="carga-metodo">
+  <div class="metodo-tabs">
+    <button type="button" class="metodo-tab active" data-m="masivo">Cargue masivo</button>
+    <button type="button" class="metodo-tab" data-m="manual">Cargue manual</button>
+  </div>
+  <div class="metodo-panel active" data-m="masivo">
+    <form method="post" action="/empresa/{{ emp.id }}/quimico-masivo" enctype="multipart/form-data" class="up-form">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+      {{ anio_base_sel() }}
+      <label class="wide">Archivo de químicos (CSV) <input type="file" name="archivo" accept=".csv" required></label>
+      <button class="btn primary" type="submit">Cargar químicos</button>
+    </form>
+    <p class="muted2" style="margin:4px 0 0"><a href="/empresa/{{ emp.id }}/plantilla-quimico">Descargar plantilla</a>
+     · columnas <code>servicio, no_sui, punto, insumo, estado, precio_kg, ene, feb … dic</code> (kg por mes). Reemplaza todo el año base.</p>
+  </div>
+  <div class="metodo-panel" data-m="manual">
+    <form method="post" action="/empresa/{{ emp.id }}/quimico-manual" class="form-grid">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+      {{ anio_base_sel() }}
+      <label>Servicio <select name="servicio">{{ servopts() }}</select></label>
+      <label>No. SUI <input name="no_sui"></label>
+      <label>Planta / punto <input name="punto"></label>
+      <label>Insumo <input name="insumo" required></label>
+      <label>Estado <input name="estado" placeholder="líquido / gaseoso / sólido"></label>
+      <label>Precio ($/kg) <input name="precio_kg" inputmode="decimal"></label>
+      {% for m in meses_hdr %}<label>{{ m|capitalize }} (kg) <input name="{{ m }}" inputmode="decimal"></label>{% endfor %}
+      <label class="wide">Observación <input name="observacion"></label>
+      <button class="btn" type="submit">Guardar insumo</button>
+    </form>
+  </div>
+</div>
+{% endif %}
+{% if quimicos %}
+<div style="overflow-x:auto"><table class="tabla compact">
+  <thead><tr><th>Año</th><th>Servicio</th><th>Planta</th><th>Insumo</th><th>Estado</th>
+    <th class="r">Precio $/kg</th><th class="r">Cantidad (kg)</th><th class="r">CIQ ($)</th>{% if puede_cargar %}<th></th>{% endif %}</tr></thead>
+  <tbody>
+    {% for x in quimicos %}<tr>
+      <td class="comp">{{ x.anio }}</td><td>{{ x.servicio }}</td><td>{{ x.punto or '—' }}</td><td>{{ x.insumo }}</td><td>{{ x.estado or '—' }}</td>
+      <td class="num">{{ x.precio_kg|valor('$') if x.precio_kg is not none else '—' }}</td>
+      <td class="num">{{ x.calc.cantidad_anual|valor }}</td>
+      <td class="num"><b>{{ x.calc.ciq|valor('$') }}</b></td>
+      {% if puede_cargar %}<td class="c"><form method="post" action="/empresa/{{ emp.id }}/quimico/{{ x.id }}/eliminar" style="display:inline"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}"><button class="btn-link" type="submit" title="eliminar">×</button></form></td>{% endif %}
+    </tr>{% endfor %}
+  </tbody>
+</table></div>
+<table class="tabla compact" style="max-width:420px;margin-top:6px">
+  <thead><tr><th>CIQ reconocido (ΣCIQ)</th><th class="r">CIQ ($)</th><th class="r"># insumos</th></tr></thead>
+  <tbody>
+    {% for k, v in eq_tot.ciq.items() %}<tr><td class="comp">{{ k[1] }} · {{ k[0] }}</td>
+      <td class="num"><b>{{ v.ciq|valor('$') }}</b></td><td class="num">{{ v.n }}</td></tr>{% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="empty">Aún no hay insumos químicos cargados.</p>{% endif %}
+
+{# ================= OTROS COSTOS PARTICULARES (genérico) ================= #}
+<h3 class="serv-h">Otros costos particulares</h3>
+<p class="muted2">Para tratamiento de aguas residuales, contratos de suministro/interconexión, COIR u otros
+conceptos particulares distintos de energía y químicos (art. 2.1.2.1.3.4.5). Si el costo ya está en la
+contabilidad del COC, indica la <b>cuenta contable</b> y el <b>valor contable</b>: se <b>resta del COC</b>
+para no doble contar (art. 2.1.2.1.3.4.4).</p>
 {% if puede_cargar %}
 <form method="post" action="/empresa/{{ emp.id }}/cargar-costo-particular" class="form-grid">
   <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
   {{ periodo_anio() }}
   <label>Servicio <select name="servicio">{{ servopts() }}<option value="general">General</option></select></label>
-  <label>Categoría <input name="categoria" list="cp_cats" placeholder="CMO particular, tasas…">
+  <label>Categoría <input name="categoria" list="cp_cats" placeholder="tratamiento, contrato…">
     <datalist id="cp_cats">{% for c in cat_cp %}<option value="{{ c }}">{% endfor %}</datalist></label>
   <label>Concepto <input name="concepto" required></label>
-  <label>Cantidad <span class="muted2">(kWh, kg…)</span><input name="cantidad" inputmode="decimal"></label>
+  <label>Cantidad <span class="muted2">(m³, h…)</span><input name="cantidad" inputmode="decimal"></label>
   <label>Precio unitario ($) <input name="precio_unitario" inputmode="decimal"></label>
   <label>Valor reconocido ($) <input name="valor" inputmode="decimal"></label>
   <label>Unidad <input name="unidad" placeholder="$/mes, $/m³, $ total"></label>
@@ -388,21 +527,16 @@ por año y servicio; el sistema los asocia al año tarifario correspondiente.</p
   <label>Valor contable del año tarifario ($) <span class="muted2">· se resta del COC</span><input name="valor_contable" inputmode="decimal"></label>
   <label>Origen <select name="origen"><option value="empresa">Empresa</option><option value="SUI">SUI</option><option value="supuesto">Supuesto</option></select></label>
   <label class="wide">Observación <input name="observacion"></label>
-  <button class="btn primary" type="submit">Guardar costo particular</button>
+  <button class="btn" type="submit">Guardar costo particular</button>
 </form>
-<p class="muted2">Los costos operativos particulares (energía, químicos, tratamiento, contratos; art. 2.1.2.1.3.4.5)
-se reconocen aparte del costo operativo comparable (COC). Si el costo ya está registrado en la contabilidad
-que alimenta el COC, indica la <b>cuenta contable</b> y el <b>valor contable del año tarifario</b>: el sistema
-lo <b>resta del COC</b> para no doble contar (art. 2.1.2.1.3.4.4).</p>
 {% endif %}
-<h3 class="serv-h">Cargado</h3>
 {% if costos %}
-<table class="tabla">
-  <thead><tr><th>Año</th><th>Año tarif.</th><th>Servicio</th><th>Categoría</th><th>Concepto</th>
+<div style="overflow-x:auto"><table class="tabla compact">
+  <thead><tr><th>Año</th><th>Servicio</th><th>Categoría</th><th>Concepto</th>
     <th class="r">Cantidad</th><th class="r">P. unit.</th><th class="r">Valor reconocido</th>
     <th>Cuenta</th><th class="r">Valor contable (resta COC)</th><th></th></tr></thead>
   <tbody>
-    {% for x in costos %}<tr><td class="comp">{{ x.anio }}</td><td>{{ aniotar(x.anio) }}</td><td>{{ x.servicio }}</td>
+    {% for x in costos %}<tr><td class="comp">{{ x.anio }}</td><td>{{ x.servicio }}</td>
       <td>{{ x.categoria or '—' }}</td><td>{{ x.concepto }}</td>
       <td class="num">{{ x.cantidad|valor if x.cantidad is not none else '—' }}</td>
       <td class="num">{{ x.precio_unitario|valor('$') if x.precio_unitario is not none else '—' }}</td>
@@ -413,7 +547,8 @@ lo <b>resta del COC</b> para no doble contar (art. 2.1.2.1.3.4.4).</p>
         <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
         <button class="btn-link" type="submit">eliminar</button></form>{% endif %}</td></tr>{% endfor %}
   </tbody>
-</table>
+</table></div>
+{% endif %}
 {% if ajuste_coc %}
 <h3 class="serv-h">Resta al COC por no doble conteo</h3>
 <table class="tabla">
@@ -427,7 +562,6 @@ lo <b>resta del COC</b> para no doble contar (art. 2.1.2.1.3.4.4).</p>
 <p class="hint">Este valor contable se descuenta del COC del servicio y año respectivos para que el costo no se
 reconozca dos veces (una vía el COC comparable y otra vía el costo particular).</p>
 {% endif %}
-{% else %}<p class="empty">Aún no hay costos particulares cargados.</p>{% endif %}
 {% endif %}
 
 {# ---------------- CCP Y PÉRDIDAS (Fap) ---------------- #}

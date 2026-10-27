@@ -28,6 +28,7 @@ import indices_service as ix
 import ccp_view as cv
 import suscriptores_view as sv
 import balance_view as bv
+import energia_quimicos_service as eq
 import recalculo_service as rc
 import inversiones_service as inv
 import subsidios_service as subs
@@ -2601,6 +2602,9 @@ def cargar_info(request: Request, eid: int):
         munis = aps.municipios_empresa(conn, eid)
         costos = cpart.lista(conn, eid)
         ajuste_coc = cpart.ajuste_coc(conn, eid)
+        energia = eq.energia_lista(conn, eid)
+        quimicos = eq.quimico_lista(conn, eid)
+        eq_tot = eq.totales(conn, eid)
         servicios_emp = [s for s, on in (("acueducto", emp["presta_ac"]), ("alcantarillado", emp["presta_al"])) if on] or ["acueducto"]
         ccp_fap = {s: ccp.get(conn, eid, s) for s in servicios_emp}
         cat_row = conn.execute(text(
@@ -2621,6 +2625,7 @@ def cargar_info(request: Request, eid: int):
         bal_ajustes=bal_ajustes, conceptos_manual=bv.CONCEPTOS_MANUAL,
         tipos_cac=bv.TIPOS_CAC, tipo_label=bv.TIPO_LABEL, art_manual=bv.ART_MANUAL,
         anios_base=per.PERIODOS[0]["anios_base"],
+        energia=energia, quimicos=quimicos, eq_tot=eq_tot, meses_hdr=eq.MES_HDR,
         puede_cargar=rbac.can(user, "cargar_mensual")))
 
 
@@ -2674,6 +2679,169 @@ def eliminar_costo_particular(request: Request, eid: int, cid: int,
         cpart.eliminar(conn, eid, cid)
     db.audit(scope_of(user), "costo_particular_eliminar", "empresa", eid, str(cid))
     return RedirectResponse(_dest(next, dflt, "msg=Costo+particular+eliminado"), status_code=303)
+
+
+# ---------------------------------------------------------- energía (CE) y químicos (CIQ)
+def _decodificar(raw):
+    for enc in ("utf-8-sig", "cp1252", "latin-1"):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("latin-1", errors="replace")
+
+
+@app.post("/empresa/{eid}/energia-masivo")
+def energia_masivo_subir(request: Request, eid: int, anio: int = Form(...),
+                         archivo: UploadFile = File(...), next: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    dflt = f"/empresa/{eid}/cargar?fuente=costos"
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
+    texto = _decodificar(archivo.file.read())
+    with db.scope_conn(scope_of(user)) as conn:
+        if not _emp_or_redirect(conn, eid):
+            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        n, err = eq.energia_masivo(conn, eid, anio, texto, cargado_por=user.get("user_id"))
+        rc.recalcular(conn, eid)
+    db.audit(scope_of(user), "energia_masivo", "empresa", eid, f"{anio}: {n} puntos, {len(err)} errores")
+    msg = f"msg=Energía+{anio}:+{n}+punto(s)+cargado(s)" + (f";+{len(err)}+con+error" if err else "")
+    return RedirectResponse(_dest(next, dflt, msg), status_code=303)
+
+
+@app.post("/empresa/{eid}/energia-manual")
+def energia_manual(request: Request, eid: int, anio: int = Form(...), servicio: str = Form("acueducto"),
+                   tipo: str = Form("bombeo"), no_sui: str = Form(""), punto: str = Form(...),
+                   actividad: str = Form(""), volumen_m3: str = Form(""), altura_m: str = Form(""),
+                   consumo_real_kwh: str = Form(""), precio_kwh: str = Form(""),
+                   observacion: str = Form(""), next: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    dflt = f"/empresa/{eid}/cargar?fuente=costos"
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
+    with db.scope_conn(scope_of(user)) as conn:
+        if not _emp_or_redirect(conn, eid):
+            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        ok, err = eq.energia_guardar(conn, eid, anio, {
+            "servicio": servicio, "tipo": tipo, "no_sui": no_sui, "punto": punto, "actividad": actividad,
+            "volumen_m3": volumen_m3, "altura_m": altura_m, "consumo_real_kwh": consumo_real_kwh,
+            "precio_kwh": precio_kwh, "observacion": observacion}, cargado_por=user.get("user_id"))
+        rc.recalcular(conn, eid)
+    if err:
+        return RedirectResponse(_dest(next, dflt, "err=" + err.replace(" ", "+")), status_code=303)
+    db.audit(scope_of(user), "energia_manual", "empresa", eid, f"{anio} {servicio}: {punto}")
+    return RedirectResponse(_dest(next, dflt, "msg=Punto+de+energía+guardado"), status_code=303)
+
+
+@app.post("/empresa/{eid}/energia/{pid}/eliminar")
+def energia_del(request: Request, eid: int, pid: int, next: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    dflt = f"/empresa/{eid}/cargar?fuente=costos"
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
+    with db.scope_conn(scope_of(user)) as conn:
+        eq.energia_eliminar(conn, eid, pid)
+        rc.recalcular(conn, eid)
+    return RedirectResponse(_dest(next, dflt, "msg=Punto+eliminado"), status_code=303)
+
+
+@app.post("/empresa/{eid}/quimico-masivo")
+def quimico_masivo_subir(request: Request, eid: int, anio: int = Form(...),
+                         archivo: UploadFile = File(...), next: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    dflt = f"/empresa/{eid}/cargar?fuente=costos"
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
+    texto = _decodificar(archivo.file.read())
+    with db.scope_conn(scope_of(user)) as conn:
+        if not _emp_or_redirect(conn, eid):
+            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        n, err = eq.quimico_masivo(conn, eid, anio, texto, cargado_por=user.get("user_id"))
+        rc.recalcular(conn, eid)
+    db.audit(scope_of(user), "quimico_masivo", "empresa", eid, f"{anio}: {n} insumos, {len(err)} errores")
+    msg = f"msg=Químicos+{anio}:+{n}+insumo(s)+cargado(s)" + (f";+{len(err)}+con+error" if err else "")
+    return RedirectResponse(_dest(next, dflt, msg), status_code=303)
+
+
+@app.post("/empresa/{eid}/quimico-manual")
+def quimico_manual(request: Request, eid: int, anio: int = Form(...), servicio: str = Form("acueducto"),
+                   no_sui: str = Form(""), punto: str = Form(""), insumo: str = Form(...),
+                   estado: str = Form(""), precio_kg: str = Form(""),
+                   ene: str = Form(""), feb: str = Form(""), mar: str = Form(""), abr: str = Form(""),
+                   may: str = Form(""), jun: str = Form(""), jul: str = Form(""), ago: str = Form(""),
+                   sep: str = Form(""), oct: str = Form(""), nov: str = Form(""), dic: str = Form(""),
+                   observacion: str = Form(""), next: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    dflt = f"/empresa/{eid}/cargar?fuente=costos"
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
+    with db.scope_conn(scope_of(user)) as conn:
+        if not _emp_or_redirect(conn, eid):
+            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        ok, err = eq.quimico_guardar(conn, eid, anio, {
+            "servicio": servicio, "no_sui": no_sui, "punto": punto, "insumo": insumo, "estado": estado,
+            "precio_kg": precio_kg, "ene": ene, "feb": feb, "mar": mar, "abr": abr, "may": may, "jun": jun,
+            "jul": jul, "ago": ago, "sep": sep, "oct": oct, "nov": nov, "dic": dic,
+            "observacion": observacion}, cargado_por=user.get("user_id"))
+        rc.recalcular(conn, eid)
+    if err:
+        return RedirectResponse(_dest(next, dflt, "err=" + err.replace(" ", "+")), status_code=303)
+    db.audit(scope_of(user), "quimico_manual", "empresa", eid, f"{anio} {servicio}: {insumo}")
+    return RedirectResponse(_dest(next, dflt, "msg=Insumo+químico+guardado"), status_code=303)
+
+
+@app.post("/empresa/{eid}/quimico/{qid}/eliminar")
+def quimico_del(request: Request, eid: int, qid: int, next: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    dflt = f"/empresa/{eid}/cargar?fuente=costos"
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
+    with db.scope_conn(scope_of(user)) as conn:
+        eq.quimico_eliminar(conn, eid, qid)
+        rc.recalcular(conn, eid)
+    return RedirectResponse(_dest(next, dflt, "msg=Insumo+eliminado"), status_code=303)
+
+
+@app.get("/empresa/{eid}/plantilla-energia")
+def plantilla_energia(request: Request, eid: int):
+    if (r := _need_login(request)):
+        return r
+    nombre, txt = eq.plantilla_energia()
+    return Response(txt, media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f"attachment; filename={nombre}"})
+
+
+@app.get("/empresa/{eid}/plantilla-quimico")
+def plantilla_quimico(request: Request, eid: int):
+    if (r := _need_login(request)):
+        return r
+    nombre, txt = eq.plantilla_quimico()
+    return Response(txt, media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f"attachment; filename={nombre}"})
 
 
 @app.post("/empresa/{eid}/ccp-fap")
