@@ -64,6 +64,7 @@ def limpiar():
         c.execute(text("DELETE FROM numerador_subcomp WHERE empresa_id=1 AND anio=2011"))
         c.execute(text("DELETE FROM numerador_cuenta WHERE empresa_id=1 AND anio=2011"))
         c.execute(text("DELETE FROM balance_reparto WHERE empresa_id=1"))
+        c.execute(text("DELETE FROM balance_ajuste WHERE empresa_id=1 AND anio=2011"))
 
 
 limpiar()
@@ -114,6 +115,37 @@ with db.scope_conn({"allow_all": True, "empresa_ids": [], "user_id": 1}) as conn
           f"tras % Ac=70: CMA·CAC-1 Ac 2011 = 700.000 (obtenido {cac1['cols'][2011]['ac'] if cac1 else None})")
     cmo = bv.resumen(conn, 1, "CMO")
     check(near(cmo["principal"]["total"][2011]["ac"], 600_000), "CMO Ac sigue 600.000 (clase 7 no usa el %)")
+
+# ---------------- 4) Ajustes manuales: desagregación CAC-5 (informativa) + exclusión (se resta) ----------------
+print("\n== desagregaciones CAC-4/5/6 (informativas) + exclusión explícita (se resta del numerador) ==")
+# % Ac quedó en 0,70 tras la sección 3; el bruto del CMA 2011 = CAC-1 1.000.000 => Ac 700k / Al 300k.
+c.post("/empresa/1/balance-ajuste",
+       data={"anio": 2011, "tipo": "CAC-5", "concepto": "Esquemas diferenciales urbanos (lit. a)",
+             "servicio": "acueducto", "valor": "100000", "csrf": tok("/empresa/1/cargar?fuente=balance"), "next": ""},
+       follow_redirects=False)
+c.post("/empresa/1/balance-ajuste",
+       data={"anio": 2011, "tipo": "exclusion", "componente": "CMA", "concepto": "Donaciones",
+             "servicio": "acueducto", "valor": "50000", "csrf": tok("/empresa/1/cargar?fuente=balance"), "next": ""},
+       follow_redirects=False)
+with db.scope_conn({"allow_all": True, "empresa_ids": [], "user_id": 1}) as conn:
+    r = bv.resumen(conn, 1, "CMA")
+    des = r["desagregacion"]
+    check(des["hay"] and len(des["filas"]) == 3, f"desagregación muestra las 3 filas CAC-4/5/6 (obtenido {len(des['filas'])})")
+    cac5 = next((f for f in des["filas"] if f["sub"] == "CAC-5"), None)
+    check(cac5 and near(cac5["cols"][2011]["ac"], 100_000),
+          f"CAC-5 (informativa) Ac 2011 = 100.000 (obtenido {cac5['cols'][2011]['ac'] if cac5 else None})")
+    check(near(r["principal"]["total"][2011]["suma"], 1_000_000),
+          f"el bruto del CMA NO cambia por la desagregación (sigue 1.000.000, obtenido {r['principal']['total'][2011]['suma']})")
+    exc = r["exclusiones"]
+    check(exc["hay"] and near(exc["total"][2011]["ac"], 50_000),
+          f"exclusión 'Donaciones' Ac 2011 = 50.000 (obtenido {exc['total'][2011]['ac']})")
+    check(near(r["neto"][2011]["ac"], 650_000) and near(r["neto"][2011]["suma"], 950_000),
+          f"neto = bruto − exclusión: Ac 700k−50k=650k, suma 1.000.000−50.000=950.000 "
+          f"(obtenido ac={r['neto'][2011]['ac']} suma={r['neto'][2011]['suma']})")
+    # La exclusión del CMA no afecta el neto de otro componente.
+    rcmo = bv.resumen(conn, 1, "CMO")
+    check(near(rcmo["exclusiones"]["total"].get(2011, {}).get("suma", 0.0), 0.0),
+          "la exclusión cargada en CMA no aparece en las exclusiones del CMO")
 
 limpiar()
 print()

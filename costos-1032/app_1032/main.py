@@ -1488,6 +1488,54 @@ def balance_reparto_set(request: Request, eid: int, pct_ac: str = Form("52"),
                             status_code=303)
 
 
+@app.post("/empresa/{eid}/balance-ajuste")
+def balance_ajuste_add(request: Request, eid: int, anio: int = Form(...), tipo: str = Form(...),
+                       componente: str = Form("CMA"), concepto: str = Form(""),
+                       concepto_otro: str = Form(""), servicio: str = Form("conjunto"),
+                       valor: str = Form("0"), observacion: str = Form(""),
+                       next: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    dflt = f"/empresa/{eid}/cargar?fuente=balance"
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
+    if tipo not in ("CAC-4", "CAC-5", "CAC-6", "exclusion"):
+        return RedirectResponse(_dest(next, dflt, "err=Tipo+inválido"), status_code=303)
+    comp = "CMA" if tipo != "exclusion" else (componente if componente in ("CMA", "CMO", "CMICT") else "CMA")
+    conc = (concepto_otro.strip() if (concepto or "").lower() in ("", "otro") else concepto.strip())
+    if not conc:
+        return RedirectResponse(_dest(next, dflt, "err=Falta+el+concepto"), status_code=303)
+    serv = servicio if servicio in ("acueducto", "alcantarillado", "conjunto") else "conjunto"
+    try:
+        v = float(str(valor).replace(".", "").replace(",", ".")) if ("," in str(valor)) else float(str(valor))
+    except ValueError:
+        v = 0.0
+    with db.scope_conn(scope_of(user)) as conn:
+        ingesta.ajuste_agregar(conn, eid, int(anio), tipo, comp, conc, serv, v,
+                               observacion=observacion, creado_por=user.get("user_id"))
+    db.audit(scope_of(user), "balance_ajuste", "empresa", eid, f"{tipo}/{comp} {conc} {anio}: {v:,.0f}")
+    return RedirectResponse(_dest(next, dflt, "msg=Ajuste+manual+agregado"), status_code=303)
+
+
+@app.post("/empresa/{eid}/balance-ajuste-eliminar")
+def balance_ajuste_del(request: Request, eid: int, ajuste_id: int = Form(...),
+                       next: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(f"/empresa/{eid}/cargar?fuente=balance&err=No+autorizado", status_code=303)
+    with db.scope_conn(scope_of(user)) as conn:
+        ingesta.ajuste_eliminar(conn, eid, ajuste_id)
+    return RedirectResponse(_dest(next, f"/empresa/{eid}/cargar?fuente=balance", "msg=Ajuste+eliminado"),
+                            status_code=303)
+
+
 @app.get("/empresa/{eid}/inversiones", response_class=HTMLResponse)
 def inversiones(request: Request, eid: int):
     if (r := _need_login(request)):
@@ -2528,6 +2576,7 @@ def cargar_info(request: Request, eid: int):
         cat_row = conn.execute(text(
             "SELECT n_cuentas, nombre_archivo FROM catalogo_empresa WHERE empresa_id=:e"),
             {"e": eid}).mappings().first()
+        bal_ajustes = ingesta.ajustes_listar(conn, eid)   # CAC-4/5/6 y exclusiones manuales
     cat_estado = {"propio": bool(cat_row),
                   "n": cat_row["n_cuentas"] if cat_row else None,
                   "nombre": cat_row["nombre_archivo"] if cat_row else None,
@@ -2539,6 +2588,9 @@ def cargar_info(request: Request, eid: int):
         ivh_opc=ccp.IVH_OPC, met_opc=ccp.MET_OPC,
         meses=ops.MESES, anios_tar=ANIOS_TAR, cat_cp=cpart.CATEGORIAS,
         serv_cp=cpart.SERVICIOS, periodos_carga=per.periodos_cargables(),
+        bal_ajustes=bal_ajustes, conceptos_manual=bv.CONCEPTOS_MANUAL,
+        tipos_cac=bv.TIPOS_CAC, tipo_label=bv.TIPO_LABEL, art_manual=bv.ART_MANUAL,
+        anios_base=per.PERIODOS[0]["anios_base"],
         puede_cargar=rbac.can(user, "cargar_mensual")))
 
 

@@ -7,7 +7,7 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 
 echo "1/3  Base de datos estudios_1032…"
 psql -h "$HOST" -p "$PORT" -U "$OWNER" -tc "SELECT 1 FROM pg_database WHERE datname='estudios_1032'" \
-  | grep -q 1 || createdb -h "$HOST" -p "$PORT" -U "$OWNER" estudios_1032
+  | grep -q 1 || createdb -h "$HOST" -p "$PORT" -U "$OWNER" --encoding=UTF8 --template=template0 --locale=C estudios_1032
 
 echo "2/3  Migraciones (esquema + Row-Level Security)…"
 psql -h "$HOST" -p "$PORT" -U "$OWNER" -d estudios_1032 -v ON_ERROR_STOP=1 -q -f "$DIR/sql/001_schema.sql"
@@ -37,6 +37,9 @@ psql -h "$HOST" -p "$PORT" -U "$OWNER" -d estudios_1032 -v ON_ERROR_STOP=1 -q -f
 psql -h "$HOST" -p "$PORT" -U "$OWNER" -d estudios_1032 -v ON_ERROR_STOP=1 -q -f "$DIR/sql/025_bcr_serie_mes.sql"
 psql -h "$HOST" -p "$PORT" -U "$OWNER" -d estudios_1032 -v ON_ERROR_STOP=1 -q -f "$DIR/sql/026_aps_cargues.sql"
 psql -h "$HOST" -p "$PORT" -U "$OWNER" -d estudios_1032 -v ON_ERROR_STOP=1 -q -f "$DIR/sql/027_aps_balance.sql"
+psql -h "$HOST" -p "$PORT" -U "$OWNER" -d estudios_1032 -v ON_ERROR_STOP=1 -q -f "$DIR/sql/028_balance_subcomp.sql"
+psql -h "$HOST" -p "$PORT" -U "$OWNER" -d estudios_1032 -v ON_ERROR_STOP=1 -q -f "$DIR/sql/029_balance_cuentas.sql"
+psql -h "$HOST" -p "$PORT" -U "$OWNER" -d estudios_1032 -v ON_ERROR_STOP=1 -q -f "$DIR/sql/030_balance_ajuste.sql"
 
 echo "3/3  Semilla (catálogo + 3 empresas + usuarios + operación + recálculo + inversiones)…"
 python3 "$DIR/seed.py"

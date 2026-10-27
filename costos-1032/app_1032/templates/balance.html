@@ -2,11 +2,11 @@
 {% block title %}Balance clasificado · {{ emp.nombre }}{% endblock %}
 {% block body %}
 {% macro m(x) %}{% if not x %}<span class="mut">0</span>{% else %}{{ x|valor }}{% endif %}{% endmacro %}
-{% macro tbl(t, pfx) %}
+{% macro tbl(t, pfx, col0='Subcomponente') %}
 <div class="tbl-wrap">
 <table class="tabla compact bal-tbl">
   <thead>
-    <tr><th rowspan="2" class="l">Subcomponente</th>
+    <tr><th rowspan="2" class="l">{{ col0 }}</th>
       {% for a in b.anios %}<th colspan="3" class="r yr-h">{{ a }}</th>{% endfor %}</tr>
     <tr>{% for a in b.anios %}<th class="r sub-h">Ac</th><th class="r sub-h">Al</th><th class="r sub-h">Ac + Al</th>{% endfor %}</tr>
   </thead>
@@ -14,7 +14,7 @@
     {% for f in t.filas %}
     {% set gi = pfx ~ '-' ~ loop.index0 %}
     <tr class="subrow {{ 'has-det' if f.detalle }}" {% if f.detalle %}data-grp="{{ gi }}"{% endif %}>
-      <td class="l"><span class="car">{{ '▸' if f.detalle else '' }}</span> <b>{{ f.sub }}</b> · {{ f.nombre }}</td>
+      <td class="l"><span class="car">{{ '▸' if f.detalle else '' }}</span> <b>{{ f.sub }}</b>{% if f.nombre and f.nombre != f.sub %} · {{ f.nombre }}{% endif %}</td>
       {% for a in b.anios %}<td class="num mut">{{ m(f.cols[a].ac) }}</td><td class="num mut">{{ m(f.cols[a].al) }}</td><td class="num tot"><b>{{ m(f.cols[a].suma) }}</b></td>{% endfor %}</tr>
     {% for d in f.detalle %}
     <tr class="detrow" data-grp="{{ gi }}" hidden>
@@ -72,14 +72,47 @@ contabilidad separada (no usa el % de reparto).</p>
 
 <h2 class="serv-h">{{ b.componente }} · {{ b.comp_nombre[b.componente] }}</h2>
 {{ tbl(b.principal, 'p') }}
-<p class="hint">Valores en pesos (COP). El <b>Total</b> es el numerador que, dividido por su denominador
-(N·12 para el CMA; CCP para CMO/CMICT) e indexado, produce el componente tarifario.</p>
+<p class="hint">Valores en pesos (COP). El <b>Total</b> es el numerador bruto que, descontadas las
+exclusiones explícitas y dividido por su denominador (N·12 para el CMA; CCP para CMO/CMICT) e indexado,
+produce el componente tarifario.</p>
+
+{% if b.exclusiones.hay %}
+<h2 class="serv-h">Exclusiones explícitas · se restan del numerador (art. {{ b.art_manual['exclusion'] }})</h2>
+<p class="muted2" style="margin:-4px 0 6px">Conceptos que la Res. CRA 1032 excluye del costo reconocido
+(costos con ingreso asociado, actividades no reguladas, donaciones, etc.), cargados manualmente para este
+componente. A diferencia de las desagregaciones, <b>sí reducen</b> el numerador.</p>
+{{ tbl(b.exclusiones, 'e', 'Concepto excluido') }}
+<div class="tbl-wrap">
+<table class="tabla compact bal-tbl neto-tbl">
+  <thead><tr><th class="l">Numerador reconocido del {{ b.componente }}</th>
+    {% for a in b.anios %}<th class="r sub-h">Ac</th><th class="r sub-h">Al</th><th class="r sub-h">Ac + Al</th>{% endfor %}</tr></thead>
+  <tbody>
+    <tr><td class="l">Total bruto (clasificación)</td>
+      {% for a in b.anios %}<td class="num mut">{{ m(b.principal.total[a].ac) }}</td><td class="num mut">{{ m(b.principal.total[a].al) }}</td><td class="num tot">{{ m(b.principal.total[a].suma) }}</td>{% endfor %}</tr>
+    <tr><td class="l">(−) Exclusiones explícitas</td>
+      {% for a in b.anios %}<td class="num mut">{{ m(b.exclusiones.total[a].ac) }}</td><td class="num mut">{{ m(b.exclusiones.total[a].al) }}</td><td class="num tot">{{ m(b.exclusiones.total[a].suma) }}</td>{% endfor %}</tr>
+    <tr class="bal-total"><td class="l"><b>= Total neto reconocido</b></td>
+      {% for a in b.anios %}<td class="num mut"><b>{{ m(b.neto[a].ac) }}</b></td><td class="num mut"><b>{{ m(b.neto[a].al) }}</b></td><td class="num tot"><b>{{ m(b.neto[a].suma) }}</b></td>{% endfor %}</tr>
+  </tbody>
+</table>
+</div>
+{% endif %}
+
+{% if b.componente == 'CMA' %}
+<h2 class="serv-h">Desagregaciones del CAC (CAC-4/5/6) · informativas (art. {{ b.art_manual['CAC-4'].split(' ')[0] }})</h2>
+<p class="muted2" style="margin:-4px 0 6px">Numerales del CAC que la Res. CRA 1032 exige identificar —gestión
+social (CAC-4), iniciativas de gestión social (CAC-5) e inversiones ambientales administrativas (CAC-6)—.
+<b>Ya están incluidos</b> en el Total del CMA de arriba: se muestran por separado sólo para trazabilidad y
+<b>no alteran</b> el numerador en el período de inicio. Toca un renglón para ver sus conceptos.</p>
+{{ tbl(b.desagregacion, 'd', 'Numeral del CAC') }}
+{% endif %}
 
 {% if b.excluido.hay %}
-<h2 class="serv-h">Conceptos excluidos · no reconocidos o que migran a otro componente</h2>
-<p class="muted2" style="margin:-4px 0 6px">Cuentas de clase 5/7 del balance que <b>no</b> entran en el
-numerador de ningún componente de cargo (gastos no reconocidos, depreciaciones que se remuneran vía CMI,
-partidas financieras, etc.). Se muestran para trazabilidad; toca un renglón para ver las cuentas.</p>
+<h2 class="serv-h">Conceptos excluidos por la clasificación · no reconocidos o que migran al CMI</h2>
+<p class="muted2" style="margin:-4px 0 6px">Cuentas de clase 5/7 del balance que la <b>clasificación</b> (catálogo
+Res. 1032) deja fuera del numerador de todo componente de cargo (gastos no reconocidos, depreciaciones que se
+remuneran vía CMI, partidas financieras, etc.). Se muestran para trazabilidad; toca un renglón para ver las
+cuentas.</p>
 {{ tbl(b.excluido, 'x') }}
 {% endif %}
 

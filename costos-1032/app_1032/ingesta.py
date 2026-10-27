@@ -581,6 +581,38 @@ def persistir_cuentas(conn, empresa_id, anio, cuentas, cod_dane=""):
     return n
 
 
+def ajuste_agregar(conn, empresa_id, anio, tipo, componente, concepto, servicio, valor,
+                   observacion="", creado_por=None, cod_dane=""):
+    """Agrega un ajuste manual del balance: desagregación CAC-4/5/6 (informativa) o exclusión
+    explícita (se resta del numerador). `servicio` ∈ {acueducto, alcantarillado, conjunto};
+    'conjunto' se reparte por el % de la clase 5."""
+    v = float(valor or 0.0)
+    ad = al = rp = 0.0
+    if servicio == "acueducto":
+        ad = v
+    elif servicio == "alcantarillado":
+        al = v
+    else:
+        rp = v
+    conn.execute(text(
+        "INSERT INTO balance_ajuste(empresa_id,anio,tipo,componente,concepto,cod_dane,ac_dir,al_dir,"
+        " repartir,observacion,creado_por) VALUES (:e,:a,:t,:cp,:co,:cd,:ad,:ld,:rp,:ob,:u)"),
+        {"e": empresa_id, "a": anio, "t": tipo, "cp": componente, "co": concepto, "cd": cod_dane,
+         "ad": ad, "ld": al, "rp": rp, "ob": (observacion or "").strip() or None, "u": creado_por})
+
+
+def ajuste_eliminar(conn, empresa_id, ajuste_id):
+    conn.execute(text("DELETE FROM balance_ajuste WHERE empresa_id=:e AND id=:i"),
+                 {"e": empresa_id, "i": int(ajuste_id)})
+
+
+def ajustes_listar(conn, empresa_id):
+    return conn.execute(text(
+        "SELECT id, anio, tipo, componente, concepto, ac_dir, al_dir, repartir, observacion "
+        "FROM balance_ajuste WHERE empresa_id=:e ORDER BY tipo, componente, anio, id"),
+        {"e": empresa_id}).mappings().all()
+
+
 def get_pct_ac(conn, empresa_id, default=0.52):
     """Participación de acueducto de la clase 5 (CMA e impuestos admin.), editable por empresa."""
     v = conn.execute(text("SELECT pct_ac FROM balance_reparto WHERE empresa_id=:e"),

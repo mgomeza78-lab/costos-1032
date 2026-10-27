@@ -196,6 +196,87 @@ Puedes subir el tuyo (tiene prioridad); las cuentas que no figuren quedan «sin 
   {% endif %}
 </div>
 {% endif %}
+
+{# ---------- Desagregaciones manuales (CAC-4/5/6) + exclusiones explícitas ---------- #}
+<h3 class="serv-h">Desagregaciones (CAC-4/5/6) y exclusiones · entrada manual</h3>
+<p class="muted2">Conceptos que la contabilidad no separa en cuentas propias pero que la Res. CRA 1032 exige
+identificar. Las <b>desagregaciones del CAC</b> —gestión social (PQRS y Comités), iniciativas de gestión social
+(IDH7/IDH14) e inversiones ambientales administrativas, art. 2.1.2.1.3.2.4 num. 4, 5 y 6— <b>ya están incluidas
+en el balance cargado</b>: se registran aparte sólo para identificarlas y <b>no se vuelven a sumar</b> (en el
+período de inicio no cambian el total). Las <b>exclusiones explícitas</b> (art. 2.1.2.1.3.3.3) —p. ej. costos
+con ingreso asociado, actividades no reguladas, donaciones— <b>sí se restan</b> del numerador reconocido del
+componente que elijas.</p>
+{% if puede_cargar %}
+<form method="post" action="/empresa/{{ emp.id }}/balance-ajuste" class="up-form" id="aj-form">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+  <label>Tipo
+    <select name="tipo" id="aj-tipo">
+      {% for t in tipos_cac %}<option value="{{ t }}">{{ t }} · {{ tipo_label[t] }}</option>{% endfor %}
+      <option value="exclusion">Exclusión explícita (art. {{ art_manual['exclusion'] }})</option>
+    </select>
+  </label>
+  <label id="aj-comp-wrap" hidden>Componente
+    <select name="componente" id="aj-comp">
+      <option value="CMA">CMA · Administración</option>
+      <option value="CMO">CMO · Operación</option>
+      <option value="CMICT">CMICT · Impuestos y tasas</option>
+    </select>
+  </label>
+  <label>Concepto <select name="concepto" id="aj-concepto"></select></label>
+  <label id="aj-otro-wrap" class="wide" hidden>Concepto (otro)
+    <input type="text" name="concepto_otro" id="aj-otro" placeholder="Describe el concepto"></label>
+  <label>Año base
+    <select name="anio">{% for a in anios_base %}<option value="{{ a }}">{{ a }}</option>{% endfor %}</select></label>
+  <label>Servicio
+    <select name="servicio">
+      <option value="conjunto">Conjunto (reparte por %)</option>
+      <option value="acueducto">Acueducto</option>
+      <option value="alcantarillado">Alcantarillado</option>
+    </select></label>
+  <label>Valor ($) <input type="text" name="valor" inputmode="decimal" placeholder="0" required></label>
+  <label class="wide">Observación (opcional) <input type="text" name="observacion" placeholder="Soporte / detalle"></label>
+  <button class="btn primary" type="submit">Agregar</button>
+</form>
+<script>
+(function(){
+  var CM = {{ conceptos_manual|tojson }};
+  var tipo = document.getElementById('aj-tipo'),
+      compw = document.getElementById('aj-comp-wrap'),
+      conc = document.getElementById('aj-concepto'),
+      otrow = document.getElementById('aj-otro-wrap');
+  function sync(){ otrow.hidden = (conc.value !== 'otro'); }
+  function fill(){
+    var lista = CM[tipo.value] || [];
+    conc.innerHTML = '';
+    lista.forEach(function(c){ var o=document.createElement('option'); o.value=c; o.textContent=c; conc.appendChild(o); });
+    var oo=document.createElement('option'); oo.value='otro'; oo.textContent='Otro…'; conc.appendChild(oo);
+    compw.hidden = (tipo.value !== 'exclusion');
+    sync();
+  }
+  tipo.addEventListener('change', fill);
+  conc.addEventListener('change', sync);
+  fill();
+})();
+</script>
+{% endif %}
+{% if bal_ajustes %}
+<table class="tabla" style="margin-top:8px">
+  <thead><tr><th>Tipo</th><th>Componente</th><th>Concepto</th><th>Año</th>
+    <th class="r">Acueducto</th><th class="r">Alcant.</th><th class="r">Por repartir</th>{% if puede_cargar %}<th></th>{% endif %}</tr></thead>
+  <tbody>
+    {% for a in bal_ajustes %}<tr>
+      <td class="comp">{{ a.tipo }}</td><td>{{ a.componente }}</td>
+      <td>{{ a.concepto }}{% if a.observacion %}<br><span class="muted2">{{ a.observacion }}</span>{% endif %}</td>
+      <td>{{ a.anio }}</td>
+      <td class="num">{{ a.ac_dir|valor('$') if a.ac_dir else '—' }}</td>
+      <td class="num">{{ a.al_dir|valor('$') if a.al_dir else '—' }}</td>
+      <td class="num">{{ a.repartir|valor('$') if a.repartir else '—' }}</td>
+      {% if puede_cargar %}<td class="c"><form method="post" action="/empresa/{{ emp.id }}/balance-ajuste-eliminar" style="display:inline" onsubmit="return confirm('¿Eliminar este ajuste?')"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}"><input type="hidden" name="ajuste_id" value="{{ a.id }}"><button class="btn-link" type="submit">Eliminar</button></form></td>{% endif %}
+    </tr>{% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="muted2" style="margin-top:6px">Aún no hay desagregaciones ni exclusiones registradas.</p>{% endif %}
+
 <h3 class="serv-h">Cargado · resultado de la clasificación (Res. 1032)</h3>
 <p style="margin:-4px 0 8px"><a class="btn-sm" href="/empresa/{{ emp.id }}/balance">Ver desglose por componente y subcomponente, por año →</a></p>
 <p class="muted2" style="margin:0 0 8px">Numeradores de costo que resultan de clasificar las cuentas del
