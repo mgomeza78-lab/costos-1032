@@ -1412,10 +1412,12 @@ def cargar_balance(request: Request, eid: int, anio: int = Form(...),
                 _dest(next, dflt, "err=Falta+el+catálogo+de+clasificación+de+esta+empresa"),
                 status_code=303)
         sub, comp, sin = clf.clasificar(filas, catalogo)
-        buckets, _s2 = clf.clasificar_buckets(filas, catalogo)
+        buckets, cuentas, _s2 = clf.clasificar_detalle(filas, catalogo)
         pct_ac = ingesta.get_pct_ac(conn, eid)
         # Desglose por subcomponente y AÑO (fuente de la pantalla de balance). Período = año.
         n = ingesta.persistir_subcomp(conn, eid, anio, buckets, cod_dane=cod_dane)
+        # Detalle por cuenta (para el drill-down de cada subcomponente).
+        ingesta.persistir_cuentas(conn, eid, anio, cuentas, cod_dane=cod_dane)
         # Para un año de SEGUIMIENTO (período de inicio en adelante, ≥ 2026) el balance también
         # alimenta el motor mensual (numerador_mensual + recálculo); el split por servicio se deriva
         # de las cubetas + el % de la clase 5. Para los años BASE (2024/2025) solo se guarda el
@@ -1455,19 +1457,18 @@ def empresa_balance(request: Request, eid: int):
         return r
     user = session_user(request)
     comp = request.query_params.get("comp") or None
-    serv = request.query_params.get("serv") or None
     with db.scope_conn(scope_of(user)) as conn:
         emp = conn.execute(text("SELECT * FROM empresa WHERE id=:e"), {"e": eid}).mappings().first()
         if not emp:
             return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
-        datos = bv.resumen(conn, eid, comp, serv)
+        datos = bv.resumen(conn, eid, comp)
     return tpl.TemplateResponse(request, "balance.html", _ctx(
         request, emp=emp, b=datos, puede_cargar=rbac.can(user, "cargar_mensual")))
 
 
 @app.post("/empresa/{eid}/balance-reparto")
 def balance_reparto_set(request: Request, eid: int, pct_ac: str = Form("52"),
-                        comp: str = Form("CMA"), serv: str = Form(""), csrf: str = Form("")):
+                        comp: str = Form("CMA"), csrf: str = Form("")):
     if (r := _need_login(request)):
         return r
     if (bad := _bad_csrf(request, csrf)):
@@ -1483,10 +1484,8 @@ def balance_reparto_set(request: Request, eid: int, pct_ac: str = Form("52"),
         p = p / 100.0
     with db.scope_conn(scope_of(user)) as conn:
         ingesta.set_pct_ac(conn, eid, p)
-    dest = f"/empresa/{eid}/balance?comp={comp or 'CMA'}"
-    if serv:
-        dest += f"&serv={serv}"
-    return RedirectResponse(dest + "&msg=Porcentaje+de+reparto+actualizado", status_code=303)
+    return RedirectResponse(f"/empresa/{eid}/balance?comp={comp or 'CMA'}&msg=Porcentaje+actualizado",
+                            status_code=303)
 
 
 @app.get("/empresa/{eid}/inversiones", response_class=HTMLResponse)

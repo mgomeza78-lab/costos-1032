@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Pruebas del balance de prueba por SUBCOMPONENTE y el reparto por servicio:
+"""Pruebas del balance de prueba por SUBCOMPONENTE, detalle por cuenta y reparto por servicio:
 
-  · clasificar_buckets + aplicar_pct: clase 5 reparte por %, clase 7 por el servicio de la cuenta;
-  · cargar un balance (año base) guarda numerador_subcomp sin tocar el motor (año < 2026);
-  · balance_view.resumen muestra subcomponentes por año y por servicio;
+  · clasificar_detalle: clase 5 a 'repartir' (por %), clase 7 por el servicio de la cuenta, + detalle;
+  · cargar un balance (año base) guarda numerador_subcomp y numerador_cuenta sin tocar el motor (<2026);
+  · balance_view.resumen: por año Ac / Al / Ac+Al, drill-down de cuentas y tabla de Excluidos;
   · cambiar el % de reparto re-reparte la clase 5 al instante (sin recargar el balance).
 
 Usa el año ficticio 2011 en Las Ceibas (empresa 1) y limpia al final.
@@ -27,11 +27,11 @@ def near(a, b, t=1.0):
     return a is not None and abs(a - b) <= t
 
 
-# ---------------- 1) Unidad: cubetas + reparto ----------------
-print("== clasificar_buckets + aplicar_pct (clase 5 por %, clase 7 por cuenta) ==")
+# ---------------- 1) Unidad: cubetas + detalle + reparto ----------------
+print("== clasificar_detalle + aplicar_pct (clase 5 por %, clase 7 por cuenta) ==")
 cat = {
-    "51010101": ("CAC-1", "CMA", "", ""),             # clase 5 -> reparte por %
-    "750201":   ("COC-2", "CMO", "", "acueducto"),    # clase 7 -> acueducto
+    "51010101": ("CAC-1", "CMA", "", ""),               # clase 5 -> reparte por %
+    "750201":   ("COC-2", "CMO", "", "acueducto"),      # clase 7 -> acueducto
     "7503040":  ("COC-2", "CMO", "", "alcantarillado"),  # clase 7 -> alcantarillado
 }
 filas = [
@@ -39,27 +39,30 @@ filas = [
     {"codigo_norm": "750201",   "nombre": "OPER AC", "saldo_final": 600_000.0},
     {"codigo_norm": "75030401", "nombre": "OPER AL", "saldo_final": 400_000.0},  # usa prefijo 7503040
 ]
-buckets, sin = clf.clasificar_buckets(filas, cat)
+buckets, cuentas, sin = clf.clasificar_detalle(filas, cat)
 check(near(buckets[("CMA", "CAC-1")]["repartir"], 1_000_000), "CAC-1 (clase 5) va a 'repartir'")
 check(near(buckets[("CMO", "COC-2")]["ac_dir"], 600_000) and near(buckets[("CMO", "COC-2")]["al_dir"], 400_000),
       "COC-2 (clase 7): 600k acueducto + 400k alcantarillado directos")
+check(len(cuentas) == 3 and any(c["codigo"] == "51010101" and near(c["repartir"], 1_000_000) for c in cuentas),
+      "clasificar_detalle devuelve 3 cuentas con su cubeta")
 agg = clf.aplicar_pct(buckets, 0.6)
 check(near(agg[("CMA", "CAC-1", "acueducto")], 600_000) and near(agg[("CMA", "CAC-1", "alcantarillado")], 400_000),
       "CAC-1 repartido 60/40 = 600k/400k")
-check(near(agg[("CMO", "COC-2", "acueducto")], 600_000), "COC-2 acueducto = 600k (no usa %)")
 
 # ---------------- 2) Carga del balance (año base) + vista ----------------
-print("\n== carga de balance año base (2011) → numerador_subcomp + vista ==")
+print("\n== carga de balance año base (2011) → vista por año Ac/Al/Ac+Al + detalle + excluidos ==")
 balance_csv = ("CODIGO,NOMBRE,SALDO INICIAL,DEBITO,CREDITO,SALDO FINAL\n"
                "51010101,SUELDOS DE PERSONAL,0,0,0,1000000\n"
                "750201,COSTOS GENERALES OPER,0,0,0,600000\n"
                "75030401,COSTOS OPER ALCANT,0,0,0,400000\n"
-               "75111708,ALUMBRADO PUBLICO,0,0,0,200000\n")  # ICTA (clase 5) -> reparte por %
+               "75111708,ALUMBRADO PUBLICO,0,0,0,200000\n"      # ICTA (clase 5) -> reparte por %
+               "511154,ORGANIZACION DE EVENTOS,0,0,0,50000\n")  # EXCLUIDO (no reconocido)
 
 
 def limpiar():
     with db.engine_owner.begin() as c:
         c.execute(text("DELETE FROM numerador_subcomp WHERE empresa_id=1 AND anio=2011"))
+        c.execute(text("DELETE FROM numerador_cuenta WHERE empresa_id=1 AND anio=2011"))
         c.execute(text("DELETE FROM balance_reparto WHERE empresa_id=1"))
 
 
@@ -82,32 +85,35 @@ check(r.status_code in (302, 303) and "/balance" in r.headers.get("location", ""
       f"carga redirige a la pantalla de balance ({r.headers.get('location','')[:50]})")
 
 with db.scope_conn({"allow_all": True, "empresa_ids": [], "user_id": 1}) as conn:
-    cma = bv.resumen(conn, 1, "CMA", None)        # conjunto, pct default 0.52
-    fila_cac1 = next((f for f in cma["filas"] if f["sub"] == "CAC-1"), None)
-    check(2011 in cma["anios"], "la vista lista el año 2011 cargado")
-    check(fila_cac1 and near(fila_cac1["cols"].get(2011), 1_000_000),
-          f"CMA · CAC-1 conjunto 2011 = 1.000.000 (obtenido {fila_cac1['cols'].get(2011) if fila_cac1 else None})")
-    cma_ac = bv.resumen(conn, 1, "CMA", "acueducto")
-    f_ac = next((f for f in cma_ac["filas"] if f["sub"] == "CAC-1"), None)
-    check(f_ac and near(f_ac["cols"].get(2011), 520_000),
-          f"CMA · CAC-1 acueducto 2011 = 520.000 (52% de 1.000.000) (obtenido {f_ac['cols'].get(2011) if f_ac else None})")
-    cmo = bv.resumen(conn, 1, "CMO", "acueducto")
-    tot_cmo_ac = cmo["total"].get(2011)
-    check(near(tot_cmo_ac, 600_000), f"CMO acueducto 2011 = 600.000 (cuenta 7502, por cuenta) (obtenido {tot_cmo_ac})")
+    r = bv.resumen(conn, 1, "CMA")        # pct default 0.52
+    check(2011 in r["anios"], "la vista lista el año 2011 cargado")
+    cac1 = next((f for f in r["principal"]["filas"] if f["sub"] == "CAC-1"), None)
+    cell = cac1["cols"][2011] if cac1 else {}
+    check(near(cell.get("suma"), 1_000_000), f"CMA·CAC-1 Ac+Al 2011 = 1.000.000 (obtenido {cell.get('suma')})")
+    check(near(cell.get("ac"), 520_000), f"CMA·CAC-1 Ac 2011 = 520.000 (52%) (obtenido {cell.get('ac')})")
+    check(near(cell.get("al"), 480_000), f"CMA·CAC-1 Al 2011 = 480.000 (48%) (obtenido {cell.get('al')})")
+    det = next((d for d in (cac1["detalle"] if cac1 else []) if d["codigo"] == "51010101"), None)
+    check(det and near(det["cols"][2011]["ac"], 520_000),
+          "drill-down: la cuenta 51010101 aparece en el detalle de CAC-1 con Ac = 520.000")
+    cmo = bv.resumen(conn, 1, "CMO")
+    tc = cmo["principal"]["total"].get(2011, {})
+    check(near(tc.get("ac"), 600_000) and near(tc.get("al"), 400_000),
+          f"CMO total 2011: Ac 600k (7502) / Al 400k (7503) (obtenido ac={tc.get('ac')} al={tc.get('al')})")
+    check(r["excluido"]["hay"] and any(f["sub"].endswith("-X") or f["sub"] in ("CAC-X",) for f in r["excluido"]["filas"]),
+          "la tabla de Excluidos tiene la cuenta no reconocida (511154)")
 
 # ---------------- 3) Cambiar el % re-reparte la clase 5 ----------------
 print("\n== cambiar el % de reparto re-reparte la clase 5 ==")
 c.post("/empresa/1/balance-reparto",
-       data={"pct_ac": "70", "comp": "CMA", "serv": "", "csrf": tok("/empresa/1/balance?comp=CMA")},
+       data={"pct_ac": "70", "comp": "CMA", "csrf": tok("/empresa/1/balance?comp=CMA")},
        follow_redirects=False)
 with db.scope_conn({"allow_all": True, "empresa_ids": [], "user_id": 1}) as conn:
-    cma_ac = bv.resumen(conn, 1, "CMA", "acueducto")
-    f_ac = next((f for f in cma_ac["filas"] if f["sub"] == "CAC-1"), None)
-    check(f_ac and near(f_ac["cols"].get(2011), 700_000),
-          f"tras % Ac=70: CMA · CAC-1 acueducto 2011 = 700.000 (obtenido {f_ac['cols'].get(2011) if f_ac else None})")
-    # la clase 7 (CMO) NO cambia con el %
-    cmo_ac = bv.resumen(conn, 1, "CMO", "acueducto")
-    check(near(cmo_ac["total"].get(2011), 600_000), "CMO acueducto sigue 600.000 (clase 7 no usa el %)")
+    r = bv.resumen(conn, 1, "CMA")
+    cac1 = next((f for f in r["principal"]["filas"] if f["sub"] == "CAC-1"), None)
+    check(cac1 and near(cac1["cols"][2011]["ac"], 700_000),
+          f"tras % Ac=70: CMA·CAC-1 Ac 2011 = 700.000 (obtenido {cac1['cols'][2011]['ac'] if cac1 else None})")
+    cmo = bv.resumen(conn, 1, "CMO")
+    check(near(cmo["principal"]["total"][2011]["ac"], 600_000), "CMO Ac sigue 600.000 (clase 7 no usa el %)")
 
 limpiar()
 print()

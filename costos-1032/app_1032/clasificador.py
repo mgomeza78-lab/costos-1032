@@ -116,20 +116,23 @@ def numeradores(por_subcomponente):
     }
 
 
-def clasificar_buckets(balance_filas, catalogo, valor="saldo_final"):
+def clasificar_detalle(balance_filas, catalogo, valor="saldo_final"):
     """Clasifica el balance por (componente, subcomponente) en TRES cubetas, para que el reparto
-    por servicio se pueda recomputar luego con cualquier %:
+    por servicio se pueda recomputar luego con cualquier %, Y devuelve el detalle por CUENTA:
 
       - `ac_dir`  : cuentas con servicio 'acueducto' en el catálogo (clase 7, cont. separada);
       - `al_dir`  : cuentas con servicio 'alcantarillado';
       - `repartir`: cuentas sin servicio (clase 5: CMA e impuestos admin.), que se reparten por %.
 
-    Devuelve (buckets, sin): `buckets` = {(componente, subcomponente): {ac_dir, al_dir, repartir}}
-    (solo cuentas hoja, por el prefijo más largo del catálogo); `sin` = cuentas clase 5/7 sin mapear.
+    Devuelve (buckets, cuentas, sin):
+      · buckets = {(componente, subcomponente): {ac_dir, al_dir, repartir}}
+      · cuentas = [{codigo, nombre, componente, subcomponente, ac_dir, al_dir, repartir}]  (saldo≠0)
+      · sin     = cuentas hoja de clase 5/7 no mapeadas.
     """
     hojas = _hojas(balance_filas)
     cat_codes = sorted(catalogo.keys(), key=len, reverse=True)
     buckets = defaultdict(lambda: {"ac_dir": 0.0, "al_dir": 0.0, "repartir": 0.0})
+    cuentas = []
     sin = []
     for f in balance_filas:
         cn = f.get("codigo_norm", "")
@@ -154,14 +157,26 @@ def clasificar_buckets(balance_filas, catalogo, valor="saldo_final"):
                 serv = "alcantarillado"
             elif cn.startswith(("7501", "7502", "7504")):
                 serv = "acueducto"
-        b = buckets[(cp, sc)]
+        ad = al = rp = 0.0
         if serv == "acueducto":
-            b["ac_dir"] += val
+            ad = val
         elif serv == "alcantarillado":
-            b["al_dir"] += val
+            al = val
         else:
-            b["repartir"] += val
-    return {k: dict(v) for k, v in buckets.items()}, sin
+            rp = val
+        b = buckets[(cp, sc)]
+        b["ac_dir"] += ad
+        b["al_dir"] += al
+        b["repartir"] += rp
+        cuentas.append({"codigo": cn, "nombre": f.get("nombre"), "componente": cp,
+                        "subcomponente": sc, "ac_dir": ad, "al_dir": al, "repartir": rp})
+    return {k: dict(v) for k, v in buckets.items()}, cuentas, sin
+
+
+def clasificar_buckets(balance_filas, catalogo, valor="saldo_final"):
+    """Cubetas por (componente, subcomponente). Ver `clasificar_detalle` para el detalle por cuenta."""
+    buckets, _cuentas, sin = clasificar_detalle(balance_filas, catalogo, valor)
+    return buckets, sin
 
 
 def aplicar_pct(buckets, pct_ac=0.52):

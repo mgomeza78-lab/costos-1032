@@ -559,6 +559,28 @@ def persistir_subcomp(conn, empresa_id, anio, buckets, cod_dane=""):
     return n
 
 
+def persistir_cuentas(conn, empresa_id, anio, cuentas, cod_dane=""):
+    """Guarda el detalle por CUENTA del balance (para el drill-down de cada subcomponente);
+    reemplaza ese año/APS. Mismas cubetas que numerador_subcomp, pero por cuenta."""
+    cod_dane = (cod_dane or "").strip()
+    conn.execute(text("DELETE FROM numerador_cuenta WHERE empresa_id=:e AND anio=:a AND cod_dane=:cd"),
+                 {"e": empresa_id, "a": anio, "cd": cod_dane})
+    sql = ("INSERT INTO numerador_cuenta(empresa_id,anio,componente,subcomponente,codigo,nombre,"
+           " cod_dane,ac_dir,al_dir,repartir,origen) VALUES (:e,:a,:cp,:sc,:co,:no,:cd,:ad,:ld,:rp,'balance') "
+           "ON CONFLICT (empresa_id,anio,codigo,cod_dane) DO UPDATE SET componente=excluded.componente, "
+           "subcomponente=excluded.subcomponente, nombre=excluded.nombre, ac_dir=excluded.ac_dir, "
+           "al_dir=excluded.al_dir, repartir=excluded.repartir, origen=excluded.origen, actualizado_en=now()")
+    n = 0
+    for c in cuentas:
+        if not c.get("componente") or not c.get("subcomponente") or not c.get("codigo"):
+            continue
+        conn.execute(text(sql), {"e": empresa_id, "a": anio, "cp": c["componente"], "sc": c["subcomponente"],
+                                 "co": str(c["codigo"]), "no": (c.get("nombre") or "")[:200], "cd": cod_dane,
+                                 "ad": c.get("ac_dir", 0.0), "ld": c.get("al_dir", 0.0), "rp": c.get("repartir", 0.0)})
+        n += 1
+    return n
+
+
 def get_pct_ac(conn, empresa_id, default=0.52):
     """Participación de acueducto de la clase 5 (CMA e impuestos admin.), editable por empresa."""
     v = conn.execute(text("SELECT pct_ac FROM balance_reparto WHERE empresa_id=:e"),
