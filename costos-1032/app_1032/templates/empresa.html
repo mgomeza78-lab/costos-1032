@@ -95,7 +95,7 @@ a pesos de diciembre de i‑1. El <b>resultado</b> se recalcula con esas variabl
       <td class="comp">{{ f.label }}</td>
       <td class="num">{% if f.valor is not none %}{% if f.unidad == 'factor' %}{{ ('%.4f'|format(f.valor))|replace('.',',') }}{% else %}{{ f.valor|valor }}{% endif %}{% else %}<span class="warn">{{ 'por calcular' if f.nota else 'por cargar' }}</span>{% endif %}</td>
       <td>{{ f.unidad }}</td>
-      <td>{% if f.fuente %}<span class="proc">{{ f.fuente }}</span>{% elif f.nota %}<span class="muted2" style="font-size:12px">{{ f.nota }}</span>{% else %}—{% endif %}</td>
+      <td>{% if f.fuente %}<span class="proc">{{ f.fuente }}</span>{% elif f.nota %}<span class="muted2" style="font-size:12px">{{ f.nota }}</span>{% else %}—{% endif %}{% if f.ref is not none %}<div class="muted2" style="font-size:11px">contable (ref.): {{ f.ref|valor }} · no tarifario</div>{% endif %}</td>
       <td class="art">{{ f.articulo }}</td>
     </tr>
     {% endfor %}

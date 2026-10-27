@@ -228,12 +228,19 @@ def variables(conn, empresa_id, servicios, emp=None, pclave="inicio"):
         put("CACe", cace, "balance clasificado")
         put("COCe", coce, "balance clasificado")
         put("COIR", coir, "balance clasificado")
-        # CE/CIQ: módulo de energía/químicos (reconocido); si no, el subcomponente del balance
+        # CE/CIQ: su fuente NO son los estados financieros, sino el MÓDULO de energía/químicos
+        # (CE = Σ bombeo/otros · Pce; CIQ = Piq · Σ kg, art. 2.1.2.1.3.4.6 y .7). Si el módulo no está
+        # cargado quedan "por cargar". El valor contable del balance se guarda solo como REFERENCIA
+        # (no se lleva a la tarifa) para poder compararlo.
         ce_mod, ciq_mod = eq.ce_ciq_de(conn, empresa_id, s, ab["CMO"])
-        put("CE", ce_mod if ce_mod is not None else (sub24.get(s, {}).get("CE") if sub24.get(s) else None),
-            "módulo de energía" if ce_mod is not None else "balance clasificado")
-        put("CIQ", ciq_mod if ciq_mod is not None else (sub24.get(s, {}).get("CIQ") if sub24.get(s) else None),
-            "módulo de químicos" if ciq_mod is not None else "balance clasificado")
+        put("CE", ce_mod, "módulo de energía")
+        put("CIQ", ciq_mod, "módulo de químicos")
+        ce_cont = (sub24.get(s, {}).get("CE") if sub24.get(s) else None)
+        ciq_cont = (sub24.get(s, {}).get("CIQ") if sub24.get(s) else None)
+        if ce_cont is not None:
+            v["CE"]["ref"] = ce_cont
+        if ciq_cont is not None:
+            v["CIQ"]["ref"] = ciq_cont
         put("ICTA", (subict.get(s, {}).get("ICTA") if subict.get(s) else None), "balance clasificado")
         put("ITO", (subict.get(s, {}).get("ICTO") if subict.get(s) else None), "balance clasificado")
         put("TA", (subict.get(s, {}).get("TA") if subict.get(s) else None), "balance clasificado")
@@ -324,7 +331,8 @@ def detalle(conn, empresa_id, componente, servicios, emp=None, pclave="inicio"):
             lbl, uni, art = VAR_META.get(clave, (clave, "", ""))
             vv = v.get(clave, {})
             filas.append({"clave": clave, "label": lbl, "unidad": uni, "articulo": art,
-                          "valor": vv.get("valor"), "fuente": vv.get("fuente"), "nota": vv.get("nota")})
+                          "valor": vv.get("valor"), "fuente": vv.get("fuente"), "nota": vv.get("nota"),
+                          "ref": vv.get("ref")})
         stored = res.get(s, {}).get(comp)
         por_serv.append({
             "servicio": s, "variables": filas,
