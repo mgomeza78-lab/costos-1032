@@ -73,6 +73,13 @@ a pesos de diciembre de i‑1. El <b>resultado</b> se recalcula con esas variabl
   <span class="hint">Art. {{ cref.art }} · Res. CRA 1032 · año base {{ cref.anio_base }} · pesos de dic‑{{ cref.dic_ref }}</span>
 </form>
 
+<div class="idx-dane">
+  <span class="idx-lab">Último índice DANE cargado</span>
+  {% for col in ['indice','ipcs','ictc'] %}{% set u = cref.ultimo_indice[col] %}<span class="idx-chip">{{ u.nombre }}:
+    {% if u.mes %}<b>{{ meses.get(u.mes, u.mes) }}‑{{ u.anio }}</b>{% else %}<span class="warn">sin cargar</span>{% endif %}</span>{% endfor %}
+  <a class="idx-link" href="/empresa/{{ emp.id }}/actualizacion">actualizar índices →</a>
+</div>
+
 <div class="formula-box">
   <div class="formula">{{ cref.formula }}</div>
   <p class="muted2" style="margin:6px 0 0">{{ cref.nota }}</p>
@@ -118,5 +125,10 @@ tras <b>Recalcular</b>. Para el detalle del numerador por subcomponente, ve a
 .formula{font-family:var(--mono,ui-monospace,Menlo,Consolas,monospace);font-size:15px;color:var(--teal-deep,#15604f);font-weight:600}
 .res-row td{border-top:2px solid var(--line,#d8d2c4);background:var(--paper,#faf8f2)}
 .warn{color:#9a6a00}
+.idx-dane{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 12px;padding:7px 12px;
+  background:var(--paper,#faf8f2);border:1px solid var(--line,#e5e0d2);border-radius:var(--r,8px);font-size:13px}
+.idx-lab{font-weight:600;color:var(--teal-deep,#15604f)}
+.idx-chip{color:var(--muted,#6f6a5e)}
+.idx-link{margin-left:auto;font-size:12.5px}
 </style>
 {% endblock %}

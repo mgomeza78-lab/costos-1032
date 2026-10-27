@@ -96,6 +96,19 @@ def _ipc(conn, col, anio, mes):
     return float(v) if v is not None else None
 
 
+def ultimo_indice(conn):
+    """Último mes cargado de cada índice del DANE (indice_ipc): IPC, IPCs e ICTC.
+    Devuelve {col: {anio, mes, valor} | None} para mostrar la frescura de la serie."""
+    out = {}
+    for col, nombre in (("indice", "IPC"), ("ipcs", "IPCs"), ("ictc", "ICTC")):
+        r = conn.execute(text(
+            "SELECT anio, mes, " + col + " AS v FROM indice_ipc WHERE " + col + " IS NOT NULL "
+            "ORDER BY anio DESC, mes DESC LIMIT 1")).mappings().first()
+        out[col] = ({"nombre": nombre, "anio": r["anio"], "mes": r["mes"], "valor": float(r["v"])}
+                    if r else {"nombre": nombre, "anio": None, "mes": None, "valor": None})
+    return out
+
+
 def fa_componente(conn, clave_fa, anio_aplicacion):
     """(fa, descripción, faltan) del factor de actualización para el año de aplicación i; los costos
     quedan en pesos de diciembre de i-1. None si falta algún índice en indice_ipc."""
@@ -299,4 +312,5 @@ def detalle(conn, empresa_id, componente, servicios, emp=None, pclave="inicio"):
             "unidad": COMP_UNIDAD[comp], "por_servicio": por_serv,
             "anio_base": _anios_base(pclave)[comp], "periodos": periodos_sel(),
             "pclave": pclave, "periodo_etiqueta": pobj["etiqueta"],
-            "anio_aplicacion": pobj["anio"], "dic_ref": pobj["anio"] - 1}
+            "anio_aplicacion": pobj["anio"], "dic_ref": pobj["anio"] - 1,
+            "ultimo_indice": ultimo_indice(conn)}
