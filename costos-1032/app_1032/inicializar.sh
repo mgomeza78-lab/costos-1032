@@ -40,6 +40,7 @@ psql -h "$HOST" -p "$PORT" -U "$OWNER" -d estudios_1032 -v ON_ERROR_STOP=1 -q -f
 psql -h "$HOST" -p "$PORT" -U "$OWNER" -d estudios_1032 -v ON_ERROR_STOP=1 -q -f "$DIR/sql/028_balance_subcomp.sql"
 psql -h "$HOST" -p "$PORT" -U "$OWNER" -d estudios_1032 -v ON_ERROR_STOP=1 -q -f "$DIR/sql/029_balance_cuentas.sql"
 psql -h "$HOST" -p "$PORT" -U "$OWNER" -d estudios_1032 -v ON_ERROR_STOP=1 -q -f "$DIR/sql/030_balance_ajuste.sql"
+psql -h "$HOST" -p "$PORT" -U "$OWNER" -d estudios_1032 -v ON_ERROR_STOP=1 -q -f "$DIR/sql/031_balance_cargue.sql"
 
 echo "3/3  Semilla (catálogo + 3 empresas + usuarios + operación + recálculo + inversiones)…"
 python3 "$DIR/seed.py"

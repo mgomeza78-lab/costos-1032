@@ -203,3 +203,50 @@ def resumen(conn, empresa_id, componente=None):
             "usa_pct": comp_sel in ("CMA", "CMICT"), "principal": principal, "excluido": excluido,
             "desagregacion": desagregacion, "exclusiones": exclusiones, "neto": neto,
             "hay_datos": bool(anios), "art": ART.get(comp_sel, ""), "art_manual": ART_MANUAL}
+
+
+def cargues(conn, empresa_id):
+    """Registro de balances cargados: una fila por (año, ámbito) con el nombre del archivo, el rango
+    de meses y los TOTALES DE CONTROL por clase PUC — clase 5 (administración) y clase 7 (operación).
+    Mezcla el registro de cargue (balance_cargue: totales de control del archivo, completos) con los
+    años que ya están en el sistema (numerador_subcomp/_cuenta), para que los cargues anteriores a
+    esta versión también se vean (ahí los totales se derivan de las cuentas clasificadas)."""
+    reg = {}
+    for r in conn.execute(text(
+        "SELECT anio, cod_dane, archivo, mes_ini, mes_fin, total_clase5, total_clase7, n_cuentas, "
+        "n_sin, cargado_en FROM balance_cargue WHERE empresa_id=:e"), {"e": empresa_id}).mappings().all():
+        reg[(r["anio"], r["cod_dane"])] = r
+    # Totales por clase derivados del detalle por cuenta (para cargues sin registro).
+    der = {}
+    for r in conn.execute(text(
+        "SELECT anio, cod_dane, left(codigo,1) AS cl, SUM(ac_dir+al_dir+repartir) AS val "
+        "FROM numerador_cuenta WHERE empresa_id=:e GROUP BY anio, cod_dane, left(codigo,1)"),
+            {"e": empresa_id}).mappings().all():
+        if r["cl"] in ("5", "7"):
+            der.setdefault((r["anio"], r["cod_dane"]), {"5": 0.0, "7": 0.0})[r["cl"]] += float(r["val"] or 0.0)
+    universo = set(reg) | set(der)
+    for a, cd in conn.execute(text(
+            "SELECT DISTINCT anio, cod_dane FROM numerador_subcomp WHERE empresa_id=:e"),
+            {"e": empresa_id}).all():
+        universo.add((a, cd))
+    danes = [cd for (_a, cd) in universo if cd]
+    muni = {}
+    if danes:
+        for r in conn.execute(text("SELECT cod_dane, nombre FROM municipio WHERE cod_dane = ANY(:dd)"),
+                              {"dd": danes}).mappings().all():
+            muni[r["cod_dane"]] = r["nombre"]
+    filas = []
+    for (anio, cd) in sorted(universo, key=lambda k: (k[0], k[1])):
+        rg = reg.get((anio, cd))
+        dd = der.get((anio, cd), {})
+        if rg:
+            fila = {"total5": float(rg["total_clase5"] or 0.0), "total7": float(rg["total_clase7"] or 0.0),
+                    "archivo": rg["archivo"] or "—", "mes_ini": rg["mes_ini"], "mes_fin": rg["mes_fin"],
+                    "n_sin": rg["n_sin"], "cargado_en": rg["cargado_en"], "registro": True}
+        else:
+            fila = {"total5": dd.get("5", 0.0), "total7": dd.get("7", 0.0),
+                    "archivo": None, "mes_ini": None, "mes_fin": None,
+                    "n_sin": None, "cargado_en": None, "registro": False}
+        fila.update({"anio": anio, "cod_dane": cd, "municipio": muni.get(cd)})
+        filas.append(fila)
+    return filas

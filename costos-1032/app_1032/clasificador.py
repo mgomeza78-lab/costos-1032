@@ -85,6 +85,32 @@ def clasificar(balance_filas, catalogo, valor="saldo_final"):
     return dict(sub), dict(comp), sin
 
 
+def totales_clase(balance_filas, valor="saldo_final"):
+    """Totales de control del balance por CLASE PUC, usando SOLO cuentas hoja (sin doble conteo
+    de las cuentas agregadas: 5 → 51 → 5101 …): clase 5 (gastos/administración) y clase 7
+    (costos/operación). Independiente del catálogo, para reconciliar lo cargado contra el balance
+    de la empresa. Devuelve {'5','7','n5','n7'}."""
+    hojas = _hojas(balance_filas)
+    out = {"5": 0.0, "7": 0.0, "n5": 0, "n7": 0}
+    for f in balance_filas:
+        cn = f.get("codigo_norm", "")
+        if not cn or cn not in hojas:
+            continue
+        val = f.get(valor)
+        if val is None:
+            val = f.get("saldo_final") or f.get("debito") or 0.0
+        if not val:
+            continue
+        d = cn[:1]
+        if d == "5":
+            out["5"] += val
+            out["n5"] += 1
+        elif d == "7":
+            out["7"] += val
+            out["n7"] += 1
+    return out
+
+
 def sugerir(codigo_norm, catalogo):
     """Sugiere el subcomponente para una cuenta nueva por el prefijo más largo del catálogo."""
     for c in sorted(catalogo.keys(), key=len, reverse=True):

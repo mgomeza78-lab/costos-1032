@@ -277,25 +277,31 @@ componente que elijas.</p>
 </table>
 {% else %}<p class="muted2" style="margin-top:6px">Aún no hay desagregaciones ni exclusiones registradas.</p>{% endif %}
 
-<h3 class="serv-h">Cargado · resultado de la clasificación (Res. 1032)</h3>
+<h3 class="serv-h">Balances cargados</h3>
 <p style="margin:-4px 0 8px"><a class="btn-sm" href="/empresa/{{ emp.id }}/balance">Ver desglose por componente y subcomponente, por año →</a></p>
-<p class="muted2" style="margin:0 0 8px">Numeradores de costo que resultan de clasificar las cuentas del
-balance con los criterios de la Res. CRA 1032, por período y servicio: <b>numerador del CMA</b> (costos
-administrativos, CACe), <b>del CMO</b> (operativos: COCe + energía + insumos químicos + otros) y <b>del
-CMICT</b> (inversiones y tasas: ICTA + ITO + TA). En la pantalla <b>Balance clasificado</b> ves el detalle por
-subcomponente (CAC-1, CAC-2…) y por año base, con el reparto por servicio (% editable para la clase 5).</p>
-{% if bal %}
+<p class="muted2" style="margin:0 0 8px">Cada balance cargado con su <b>archivo</b>, el <b>período</b> (año base y
+meses) al que corresponde y los <b>totales de control por clase PUC</b>: <b>cuenta 5</b> (gastos de
+administración) y <b>cuenta 7</b> (costos de operación). Son la suma de las cuentas hoja de cada clase en el
+archivo —para reconciliar contra tu balance de prueba—. El detalle por componente/subcomponente y el reparto
+por servicio están en <b>Balance clasificado</b>.</p>
+{% if bal_cargues %}
 <table class="tabla">
-  <thead><tr><th>Período</th><th>Año tarifario</th><th>Servicio</th><th>Ámbito</th>
-    <th class="r">Num. CMA</th><th class="r">Num. CMO</th><th class="r">Num. CMICT</th><th></th></tr></thead>
+  <thead><tr><th>Archivo</th><th>Período</th><th>Ámbito</th>
+    <th class="r">Total cuenta 5<br><span class="muted2">(administración)</span></th>
+    <th class="r">Total cuenta 7<br><span class="muted2">(operación)</span></th>{% if puede_cargar %}<th></th>{% endif %}</tr></thead>
   <tbody>
-    {% for x in bal %}<tr><td class="comp">{{ meses.get(x.mes,x.mes) }}-{{ x.anio }}</td><td>{{ aniotar(x.anio) }}</td>
-      <td>{{ x.servicio }}</td>
+    {% for x in bal_cargues %}<tr>
+      <td>{% if x.archivo %}{{ x.archivo }}{% else %}<span class="muted2">— (cargado antes)</span>{% endif %}
+        {% if x.n_sin %}<br><span class="muted2">{{ x.n_sin }} cuenta(s) sin clasificar</span>{% endif %}</td>
+      <td class="comp">{% if x.mes_ini %}{{ meses.get(x.mes_ini, x.mes_ini) }}{% if x.mes_fin != x.mes_ini %}–{{ meses.get(x.mes_fin, x.mes_fin) }}{% endif %} {{ x.anio }}{% else %}Año {{ x.anio }}{% endif %}</td>
       <td>{% if x.cod_dane %}{{ x.municipio or x.cod_dane }}{% else %}<span class="muted2">Conjunto</span>{% endif %}</td>
-      <td class="num">{{ x.num_cma|valor('$') if x.num_cma is not none else '—' }}</td>
-      <td class="num">{{ x.num_cmo|valor('$') if x.num_cmo is not none else '—' }}</td>
-      <td class="num">{{ x.num_cmict|valor('$') if x.num_cmict is not none else '—' }}</td>
-      <td class="c">{{ delcargue('balance', x) }}</td></tr>{% endfor %}
+      <td class="num">{{ x.total5|valor('$') }}</td>
+      <td class="num">{{ x.total7|valor('$') }}</td>
+      {% if puede_cargar %}<td class="c"><form method="post" action="/empresa/{{ emp.id }}/balance-cargue-eliminar" style="display:inline" onsubmit="return confirm('¿Eliminar el balance {{ x.anio }} ({{ x.municipio or 'conjunto' }})? Se borra su clasificación y detalle. No se puede deshacer.')">
+        <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+        <input type="hidden" name="anio" value="{{ x.anio }}"><input type="hidden" name="cod_dane" value="{{ x.cod_dane|default('', true) }}">
+        <button class="btn-link" type="submit">eliminar</button></form></td>{% endif %}
+    </tr>{% endfor %}
   </tbody>
 </table>
 {% else %}<p class="empty">Aún no hay balance de prueba cargado.</p>{% endif %}

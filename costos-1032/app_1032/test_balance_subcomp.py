@@ -65,6 +65,7 @@ def limpiar():
         c.execute(text("DELETE FROM numerador_cuenta WHERE empresa_id=1 AND anio=2011"))
         c.execute(text("DELETE FROM balance_reparto WHERE empresa_id=1"))
         c.execute(text("DELETE FROM balance_ajuste WHERE empresa_id=1 AND anio=2011"))
+        c.execute(text("DELETE FROM balance_cargue WHERE empresa_id=1 AND anio=2011"))
 
 
 limpiar()
@@ -146,6 +147,34 @@ with db.scope_conn({"allow_all": True, "empresa_ids": [], "user_id": 1}) as conn
     rcmo = bv.resumen(conn, 1, "CMO")
     check(near(rcmo["exclusiones"]["total"].get(2011, {}).get("suma", 0.0), 0.0),
           "la exclusión cargada en CMA no aparece en las exclusiones del CMO")
+
+# ---------------- 5) Registro de cargues: archivo + período + totales de control clase 5/7 ----------------
+print("\n== registro de balances cargados (archivo, período, totales clase 5/7) + borrado por archivo ==")
+# El balance de la sección 2 se cargó como 'bal2011.csv' (ene–dic). Totales de control por clase PUC
+# (cuentas hoja): clase 5 = 51010101 (1.000.000) + 511154 (50.000) = 1.050.000;
+# clase 7 = 750201 (600.000) + 75030401 (400.000) + 75111708 (200.000) = 1.200.000.
+with db.scope_conn({"allow_all": True, "empresa_ids": [], "user_id": 1}) as conn:
+    cg = bv.cargues(conn, 1)
+    row = next((z for z in cg if z["anio"] == 2011), None)
+    check(row is not None and row["archivo"] == "bal2011.csv",
+          f"el cargue 2011 aparece con su nombre de archivo (obtenido {row['archivo'] if row else None})")
+    check(row and near(row["total5"], 1_050_000),
+          f"total cuenta 5 = 1.050.000 (obtenido {row['total5'] if row else None})")
+    check(row and near(row["total7"], 1_200_000),
+          f"total cuenta 7 = 1.200.000 (obtenido {row['total7'] if row else None})")
+    check(row and row["mes_ini"] == 1 and row["mes_fin"] == 12, "el período del cargue 2011 es ene–dic")
+r = c.post("/empresa/1/balance-cargue-eliminar",
+           data={"anio": 2011, "cod_dane": "", "csrf": tok("/empresa/1/cargar?fuente=balance"), "next": ""},
+           follow_redirects=False)
+check(r.status_code in (302, 303), "borrar el cargue por archivo/año redirige")
+with db.scope_conn({"allow_all": True, "empresa_ids": [], "user_id": 1}) as conn:
+    cg2 = bv.cargues(conn, 1)
+    check(not any(z["anio"] == 2011 for z in cg2), "tras borrar, el año 2011 ya no está en el registro de cargues")
+    # El borrado quita la clasificación del balance (subcomponentes y detalle); los ajustes manuales
+    # de la sección 4 son independientes y se conservan (por eso 2011 sigue en la lista de años).
+    left = conn.execute(text("SELECT count(*) FROM numerador_subcomp WHERE empresa_id=1 AND anio=2011")).scalar()
+    lcta = conn.execute(text("SELECT count(*) FROM numerador_cuenta WHERE empresa_id=1 AND anio=2011")).scalar()
+    check(left == 0 and lcta == 0, f"tras borrar, no quedan subcomponentes ni cuentas del balance 2011 (obtenido {left}/{lcta})")
 
 limpiar()
 print()

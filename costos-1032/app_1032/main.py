@@ -1418,6 +1418,11 @@ def cargar_balance(request: Request, eid: int, anio: int = Form(...),
         n = ingesta.persistir_subcomp(conn, eid, anio, buckets, cod_dane=cod_dane)
         # Detalle por cuenta (para el drill-down de cada subcomponente).
         ingesta.persistir_cuentas(conn, eid, anio, cuentas, cod_dane=cod_dane)
+        # Registro del cargue (archivo + meses + totales de control por clase 5/7) para el listado.
+        tot = clf.totales_clase(filas)
+        ingesta.registrar_cargue(conn, eid, anio, cod_dane, archivo.filename, mes_ini, mes_fin,
+                                 tot["5"], tot["7"], n_cuentas=len(cuentas), n_sin=len(sin),
+                                 cargado_por=user.get("user_id"))
         # Para un año de SEGUIMIENTO (período de inicio en adelante, ≥ 2026) el balance también
         # alimenta el motor mensual (numerador_mensual + recálculo); el split por servicio se deriva
         # de las cubetas + el % de la clase 5. Para los años BASE (2024/2025) solo se guarda el
@@ -1534,6 +1539,29 @@ def balance_ajuste_del(request: Request, eid: int, ajuste_id: int = Form(...),
         ingesta.ajuste_eliminar(conn, eid, ajuste_id)
     return RedirectResponse(_dest(next, f"/empresa/{eid}/cargar?fuente=balance", "msg=Ajuste+eliminado"),
                             status_code=303)
+
+
+@app.post("/empresa/{eid}/balance-cargue-eliminar")
+def balance_cargue_del(request: Request, eid: int, anio: int = Form(...), cod_dane: str = Form(""),
+                       next: str = Form(""), csrf: str = Form("")):
+    """Borra todo el cargue de un balance (año + ámbito): subcomponentes, detalle por cuenta, los
+    numeradores mensuales derivados y el registro del archivo."""
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    dflt = f"/empresa/{eid}/cargar?fuente=balance"
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
+    with db.scope_conn(scope_of(user)) as conn:
+        if not conn.execute(text("SELECT 1 FROM empresa WHERE id=:e"), {"e": eid}).first():
+            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        n = ingesta.cargue_borrar(conn, eid, int(anio), cod_dane)
+        if int(anio) >= per.ANIO_INICIO:      # un año de seguimiento alimenta el motor: re-calcular
+            rc.recalcular(conn, eid)
+    db.audit(scope_of(user), "balance_cargue_eliminar", "empresa", eid, f"año {anio} ámbito '{cod_dane}': {n} filas")
+    return RedirectResponse(_dest(next, dflt, f"msg=Balance+{anio}+eliminado+({n}+filas)"), status_code=303)
 
 
 @app.get("/empresa/{eid}/inversiones", response_class=HTMLResponse)
@@ -2548,17 +2576,8 @@ def cargar_info(request: Request, eid: int):
             "ORDER BY anio"), {"e": eid}).scalars().all()
         # Resultado de la clasificación de cuentas (Res. 1032) por período/servicio/APS:
         # numerador del CMA (CACe), del CMO (COCe+CE+CIQ+COIR) y del CMICT (ICTA+ITO+TA).
-        bal = conn.execute(text(
-            "SELECT nm.anio, nm.mes, nm.servicio, nm.cod_dane, m.nombre AS municipio, "
-            "  SUM(nm.valor) FILTER (WHERE nm.concepto='CACe') AS num_cma, "
-            "  SUM(nm.valor) FILTER (WHERE nm.concepto IN ('COCe','CE','CIQ','COIR')) AS num_cmo, "
-            "  SUM(nm.valor) FILTER (WHERE nm.concepto IN ('ICTA','ITO','TA')) AS num_cmict, "
-            "  SUM(nm.valor) AS total "
-            "FROM numerador_mensual nm LEFT JOIN municipio m ON m.cod_dane = nm.cod_dane "
-            "WHERE nm.empresa_id=:e "
-            "GROUP BY nm.anio, nm.mes, nm.servicio, nm.cod_dane, m.nombre "
-            "ORDER BY nm.anio, nm.mes, nm.servicio, nm.cod_dane"),
-            {"e": eid}).mappings().all()
+        # Registro de balances cargados: por archivo/año/ámbito, con totales de control clase 5/7.
+        bal_cargues = bv.cargues(conn, eid)
         # Agua producida por APS (cod_dane); '' = conjunto. Se muestra el municipio del APS.
         agua = conn.execute(text(
             "SELECT mm.anio, mm.mes, mm.servicio, mm.cod_dane, m.nombre AS municipio, "
@@ -2583,7 +2602,7 @@ def cargar_info(request: Request, eid: int):
                   "n_default": len(clf.cargar_catalogo(_catalogo_default_texto() or ""))}
     return tpl.TemplateResponse(request, "cargar.html", _ctx(
         request, emp=emp, fuente=fuente, com=com, com_aps=com_aps, com_anios=com_anios,
-        cm_vista=cm_vista, cm_anio=cm_anio, bal=bal, agua=agua, munis=munis, costos=costos,
+        cm_vista=cm_vista, cm_anio=cm_anio, bal_cargues=bal_cargues, agua=agua, munis=munis, costos=costos,
         ajuste_coc=ajuste_coc, ccp_fap=ccp_fap, servicios_emp=servicios_emp, cat_estado=cat_estado,
         ivh_opc=ccp.IVH_OPC, met_opc=ccp.MET_OPC,
         meses=ops.MESES, anios_tar=ANIOS_TAR, cat_cp=cpart.CATEGORIAS,

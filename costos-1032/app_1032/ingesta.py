@@ -613,6 +613,36 @@ def ajustes_listar(conn, empresa_id):
         {"e": empresa_id}).mappings().all()
 
 
+def registrar_cargue(conn, empresa_id, anio, cod_dane, archivo, mes_ini, mes_fin,
+                     total5, total7, n_cuentas=0, n_sin=0, cargado_por=None):
+    """Registra (o reemplaza) el cargue de un balance por (empresa, año, ámbito): nombre del archivo,
+    rango de meses y totales de control por clase 5/7 (art. de reconciliación)."""
+    cod_dane = (cod_dane or "").strip()
+    conn.execute(text(
+        "INSERT INTO balance_cargue(empresa_id,anio,cod_dane,archivo,mes_ini,mes_fin,"
+        " total_clase5,total_clase7,n_cuentas,n_sin,cargado_por) "
+        "VALUES (:e,:a,:cd,:f,:mi,:mf,:t5,:t7,:nc,:ns,:u) "
+        "ON CONFLICT (empresa_id,anio,cod_dane) DO UPDATE SET archivo=excluded.archivo, "
+        "mes_ini=excluded.mes_ini, mes_fin=excluded.mes_fin, total_clase5=excluded.total_clase5, "
+        "total_clase7=excluded.total_clase7, n_cuentas=excluded.n_cuentas, n_sin=excluded.n_sin, "
+        "cargado_por=excluded.cargado_por, cargado_en=now()"),
+        {"e": empresa_id, "a": int(anio), "cd": cod_dane, "f": (archivo or "")[:200],
+         "mi": int(mes_ini), "mf": int(mes_fin), "t5": float(total5 or 0.0), "t7": float(total7 or 0.0),
+         "nc": int(n_cuentas or 0), "ns": int(n_sin or 0), "u": cargado_por})
+
+
+def cargue_borrar(conn, empresa_id, anio, cod_dane=""):
+    """Borra todo el cargue de un balance (año + ámbito): subcomponentes, detalle por cuenta, los
+    numeradores mensuales derivados y el registro del cargue. Devuelve el total de filas borradas."""
+    cod_dane = (cod_dane or "").strip()
+    p = {"e": empresa_id, "a": int(anio), "cd": cod_dane}
+    n = 0
+    for t in ("numerador_subcomp", "numerador_cuenta", "numerador_mensual", "balance_cargue"):
+        res = conn.execute(text(f"DELETE FROM {t} WHERE empresa_id=:e AND anio=:a AND cod_dane=:cd"), p)
+        n += res.rowcount or 0
+    return n
+
+
 def get_pct_ac(conn, empresa_id, default=0.52):
     """Participación de acueducto de la clase 5 (CMA e impuestos admin.), editable por empresa."""
     v = conn.execute(text("SELECT pct_ac FROM balance_reparto WHERE empresa_id=:e"),
