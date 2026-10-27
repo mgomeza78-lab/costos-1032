@@ -27,11 +27,16 @@
       {% if rbac.can(user,'editar_empresa') %}<a class="rail-edit" href="/empresa/{{ emp.id }}/editar">✎ Editar empresa / áreas</a>{% endif %}
 
       {% set en_gi = '/aps' in p or '/cargar' in p or '/mensual' in p %}
+      {% set fz = fuente|default('') %}
+      {% set en_car = '/cargar' in p or '/mensual' in p %}
       <details class="rail-group" {{ 'open' if en_gi }}>
         <summary>Gestión de información</summary>
         <ol class="rail-nav">
           <li><a class="link {{ 'active' if '/aps' in p }}" href="/empresa/{{ emp.id }}/aps">Configuración del APS</a></li>
-          <li><a class="link {{ 'active' if '/cargar' in p or '/mensual' in p }}" href="/empresa/{{ emp.id }}/cargar">Cargar información</a></li>
+          <li><a class="link {{ 'active' if en_car and (fz=='comercial' or '/mensual' in p) }}" href="/empresa/{{ emp.id }}/cargar?fuente=comercial">Comercial</a></li>
+          <li><a class="link {{ 'active' if en_car and fz=='agua' }}" href="/empresa/{{ emp.id }}/cargar?fuente=agua">Producción y Suministro de Agua y Fap</a></li>
+          <li><a class="link {{ 'active' if en_car and fz=='balance' }}" href="/empresa/{{ emp.id }}/cargar?fuente=balance">Información Contable</a></li>
+          <li><a class="link {{ 'active' if en_car and fz=='costos' }}" href="/empresa/{{ emp.id }}/cargar?fuente=costos">Costos Particulares</a></li>
         </ol>
       </details>
 

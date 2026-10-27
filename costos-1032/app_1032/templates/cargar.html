@@ -38,12 +38,16 @@
   Revisa la completitud en <a href="/empresa/{{ emp.id }}/validacion">Validación de información</a>.</p>
 </div>
 
-<div class="aps-tabs">
-  <a class="aps-tab {{ 'active' if fuente=='comercial' }}" href="/empresa/{{ emp.id }}/cargar?fuente=comercial"><span class="dot {{ 'ok' if com else 'none' }}"></span>Comercial</a>
-  <a class="aps-tab {{ 'active' if fuente=='balance' }}" href="/empresa/{{ emp.id }}/cargar?fuente=balance"><span class="dot {{ 'ok' if bal else 'none' }}"></span>Balance de prueba</a>
-  <a class="aps-tab {{ 'active' if fuente=='agua' }}" href="/empresa/{{ emp.id }}/cargar?fuente=agua"><span class="dot {{ 'ok' if agua else 'none' }}"></span>Agua producida</a>
-  <a class="aps-tab {{ 'active' if fuente=='costos' }}" href="/empresa/{{ emp.id }}/cargar?fuente=costos"><span class="dot {{ 'ok' if costos else 'none' }}"></span>Costos particulares</a>
-  <a class="aps-tab {{ 'active' if fuente=='ccp' }}" href="/empresa/{{ emp.id }}/cargar?fuente=ccp"><span class="dot {{ 'ok' if (ccp_fap.values()|select|list) else 'none' }}"></span>CCP y pérdidas (Fap)</a>
+{% set pasos = [('comercial','Comercial'),('agua','Producción y Suministro de Agua y Fap'),('balance','Información Contable'),('costos','Costos Particulares')] %}
+{% set idx = namespace(i=0) %}
+{% for pp in pasos %}{% if pp[0]==fuente %}{% set idx.i = loop.index0 %}{% endif %}{% endfor %}
+<div class="paso-nav">
+  <span class="paso-tag">Paso {{ idx.i + 2 }} de {{ pasos|length + 1 }} · <b>{{ pasos[idx.i][1] }}</b> <span class="muted2">(tras Configuración del APS)</span></span>
+  {% if idx.i + 1 < pasos|length %}
+  <a class="btn primary" href="/empresa/{{ emp.id }}/cargar?fuente={{ pasos[idx.i+1][0] }}">Continúa a {{ pasos[idx.i+1][1] }} →</a>
+  {% else %}
+  <a class="btn primary" href="/empresa/{{ emp.id }}/validacion">Continúa a Validación de información →</a>
+  {% endif %}
 </div>
 
 {# ---------------- COMERCIAL ---------------- #}
@@ -309,9 +313,11 @@ por servicio están en <b>Balance clasificado</b>.</p>
 
 {# ---------------- AGUA PRODUCIDA ---------------- #}
 {% if fuente=='agua' %}
-<h2 class="serv-h">Agua producida · macromedición</h2>
-<p class="muted2">Volúmenes producidos y de bloque por punto de macromedición. Fuente esperada: reporte
-de macromedición (CSV) o el reporte del SUI.</p>
+<h2 class="serv-h">Producción y Suministro de Agua y Fap</h2>
+<p class="muted2">Volúmenes producidos y de bloque por punto de macromedición (insumo del IPUF real y las
+pérdidas), y el <b>Fap</b> que ajusta el ISUF. Fuente esperada: reporte de macromedición (CSV) o el reporte
+del SUI.</p>
+<h3 class="serv-h">Agua producida · macromedición</h3>
 {% if puede_cargar %}
 <div class="carga-metodo">
   <div class="metodo-tabs">
@@ -365,6 +371,43 @@ de macromedición (CSV) o el reporte del SUI.</p>
   </tbody>
 </table>
 {% else %}<p class="empty">Aún no hay agua producida cargada.</p>{% endif %}
+
+<h3 class="serv-h">Fap · ajuste del ISUF por pérdidas (optativo)</h3>
+<p class="muted2">El ajuste es <b>optativo</b>: ISUF ajustado = ISUF − Fap (parágrafo 3 del artículo del CCP,
+Res. CRA 1032). El Fap se obtiene de una tabla según: (a) el rango del <b>IPUFreal</b> —para el período de
+inicio, el del <b>1-jul-2024 a 30-jun-2025</b> (indicador IRD1)—, (b) el <b>IVH</b> del IDEAM de la subzona de
+captación, (c) la <b>metodología anterior</b> (688/825) y (d) si <b>cumplió la meta</b> del IPUF de la 688
+(diferencia ≤ 20 %).</p>
+{% for s in servicios_emp %}{% set f = ccp_fap.get(s) %}
+<h4 style="font-family:var(--head);font-size:14px;color:var(--teal-deep);margin:14px 0 4px">{{ s|capitalize }}</h4>
+{% if f %}
+<div class="cards">
+  <div class="card"><div class="k">Fap resuelto</div><div class="v" style="font-size:22px">{{ ('%.2f'|format(f.fap))|replace('.',',') if f.fap is not none else '—' }}</div>
+    <div class="muted2">{% if not f.aplica %}no aplicado{% elif f.fap is none %}falta información{% else %}se resta del ISUF{% endif %}</div></div>
+  <div class="card"><div class="k">IPUFreal</div><div class="v" style="font-size:22px">{{ f.ipuf_real|valor if f.ipuf_real is not none else '—' }}</div><div class="muted2">m³/susc·mes</div></div>
+  <div class="card"><div class="k">IVH</div><div class="v" style="font-size:17px">{{ ivh_opc.get(f.ivh, '—') }}</div></div>
+  <div class="card"><div class="k">Metodología / meta</div><div class="v" style="font-size:15px">{{ f.metodologia or '—' }}{% if f.metodologia=='688' %} · meta {{ 'sí' if f.cumplio_meta else 'no' }}{% endif %}</div></div>
+</div>
+{% endif %}
+{% if puede_cargar %}
+<form method="post" action="/empresa/{{ emp.id }}/ccp-fap" class="form-grid">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="/empresa/{{ emp.id }}/cargar?fuente=agua">
+  <input type="hidden" name="servicio" value="{{ s }}">
+  <label class="wide" style="display:flex;gap:8px;align-items:center;font-weight:600">
+    <input type="checkbox" name="aplica" {{ 'checked' if (not f) or f.aplica }}> Aplicar el ajuste del ISUF (optativo)</label>
+  <label>IPUFreal (m³/susc·mes) <input name="ipuf_real" inputmode="decimal" value="{{ f.ipuf_real if f and f.ipuf_real is not none else '' }}"></label>
+  <label>IVH (IDEAM) <select name="ivh"><option value="">—</option>{% for k,v in ivh_opc.items() %}<option value="{{ k }}" {{ 'selected' if f and f.ivh==k }}>{{ v }}</option>{% endfor %}</select></label>
+  <label>Metodología anterior <select name="metodologia"><option value="">—</option>{% for k,v in met_opc.items() %}<option value="{{ k }}" {{ 'selected' if f and f.metodologia==k }}>{{ v }}</option>{% endfor %}</select></label>
+  <label>IPUF planeado (688) <span class="muted2">· para la meta</span><input name="ipuf_planeado" inputmode="decimal" value="{{ f.ipuf_planeado if f and f.ipuf_planeado is not none else '' }}"></label>
+  <label>¿Cumplió la meta? (688) <select name="cumplio"><option value="">Auto (diferencia ≤ 20 %)</option><option value="si">Sí</option><option value="no">No</option></select></label>
+  <label class="wide">Observación <input name="observacion" value="{{ f.observacion if f and f.observacion else '' }}"></label>
+  <button class="btn primary" type="submit">Calcular y guardar Fap</button>
+</form>
+{% endif %}
+{% endfor %}
+<p class="hint">Para la 825 no aplica el cumplimiento de meta (no había metas de ISUF). Si el IPUFreal ≤ 6
+(ya en el estándar), el Fap es 0. El Fap se descuenta del ISUF en el denominador del cargo por consumo,
+generando continuidad con las señales regulatorias de la Res. 688.</p>
 {% endif %}
 
 {# ---------------- COSTOS PARTICULARES ---------------- #}
@@ -564,46 +607,6 @@ reconozca dos veces (una vía el COC comparable y otra vía el costo particular)
 {% endif %}
 {% endif %}
 
-{# ---------------- CCP Y PÉRDIDAS (Fap) ---------------- #}
-{% if fuente=='ccp' %}
-<h2 class="serv-h">CCP · ajuste del ISUF por pérdidas (Fap)</h2>
-<p class="muted2">El ajuste es <b>optativo</b>: ISUF ajustado = ISUF − Fap (parágrafo 3 del artículo del CCP,
-Res. CRA 1032). El Fap se obtiene de una tabla según: (a) el rango del <b>IPUFreal</b> —para el período de
-inicio, el del <b>1-jul-2024 a 30-jun-2025</b> (indicador IRD1)—, (b) el <b>IVH</b> del IDEAM de la subzona de
-captación, (c) la <b>metodología anterior</b> (688/825) y (d) si <b>cumplió la meta</b> del IPUF de la 688
-(diferencia ≤ 20 %).</p>
-
-{% for s in servicios_emp %}{% set f = ccp_fap.get(s) %}
-<h3 style="font-family:var(--head);font-size:14px;color:var(--teal-deep);margin:14px 0 4px">{{ s|capitalize }}</h3>
-{% if f %}
-<div class="cards">
-  <div class="card"><div class="k">Fap resuelto</div><div class="v" style="font-size:22px">{{ ('%.2f'|format(f.fap))|replace('.',',') if f.fap is not none else '—' }}</div>
-    <div class="muted2">{% if not f.aplica %}no aplicado{% elif f.fap is none %}falta información{% else %}se resta del ISUF{% endif %}</div></div>
-  <div class="card"><div class="k">IPUFreal</div><div class="v" style="font-size:22px">{{ f.ipuf_real|valor if f.ipuf_real is not none else '—' }}</div><div class="muted2">m³/susc·mes</div></div>
-  <div class="card"><div class="k">IVH</div><div class="v" style="font-size:17px">{{ ivh_opc.get(f.ivh, '—') }}</div></div>
-  <div class="card"><div class="k">Metodología / meta</div><div class="v" style="font-size:15px">{{ f.metodologia or '—' }}{% if f.metodologia=='688' %} · meta {{ 'sí' if f.cumplio_meta else 'no' }}{% endif %}</div></div>
-</div>
-{% endif %}
-{% if puede_cargar %}
-<form method="post" action="/empresa/{{ emp.id }}/ccp-fap" class="form-grid">
-  <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="/empresa/{{ emp.id }}/cargar?fuente=ccp">
-  <input type="hidden" name="servicio" value="{{ s }}">
-  <label class="wide" style="display:flex;gap:8px;align-items:center;font-weight:600">
-    <input type="checkbox" name="aplica" {{ 'checked' if (not f) or f.aplica }}> Aplicar el ajuste del ISUF (optativo)</label>
-  <label>IPUFreal (m³/susc·mes) <input name="ipuf_real" inputmode="decimal" value="{{ f.ipuf_real if f and f.ipuf_real is not none else '' }}"></label>
-  <label>IVH (IDEAM) <select name="ivh"><option value="">—</option>{% for k,v in ivh_opc.items() %}<option value="{{ k }}" {{ 'selected' if f and f.ivh==k }}>{{ v }}</option>{% endfor %}</select></label>
-  <label>Metodología anterior <select name="metodologia"><option value="">—</option>{% for k,v in met_opc.items() %}<option value="{{ k }}" {{ 'selected' if f and f.metodologia==k }}>{{ v }}</option>{% endfor %}</select></label>
-  <label>IPUF planeado (688) <span class="muted2">· para la meta</span><input name="ipuf_planeado" inputmode="decimal" value="{{ f.ipuf_planeado if f and f.ipuf_planeado is not none else '' }}"></label>
-  <label>¿Cumplió la meta? (688) <select name="cumplio"><option value="">Auto (diferencia ≤ 20 %)</option><option value="si">Sí</option><option value="no">No</option></select></label>
-  <label class="wide">Observación <input name="observacion" value="{{ f.observacion if f and f.observacion else '' }}"></label>
-  <button class="btn primary" type="submit">Calcular y guardar Fap</button>
-</form>
-{% endif %}
-{% endfor %}
-<p class="hint">Para la 825 no aplica el cumplimiento de meta (no había metas de ISUF). Si el IPUFreal ≤ 6
-(ya en el estándar), el Fap es 0. El Fap se descuenta del ISUF en el denominador del cargo por consumo,
-generando continuidad con las señales regulatorias de la Res. 688.</p>
-{% endif %}
 
 <script>
 // Editar un cargue manual: abre la pestaña de cargue manual y rellena el formulario con el
@@ -674,6 +677,12 @@ function editarManual(d) {
 .cm-filtros .chip{display:inline-block;padding:3px 10px;border:1px solid var(--line,#d8d2c4);
   border-radius:999px;font-size:12.5px;text-decoration:none;color:inherit;background:var(--paper,#fff)}
 .cm-filtros .chip.on{background:var(--teal,#1f7a6b);border-color:var(--teal,#1f7a6b);color:#fff}
+.paso-nav{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;
+  margin:0 0 16px;padding:8px 12px;background:var(--paper,#faf8f2);border:1px solid var(--line,#e5e0d2);
+  border-radius:var(--r,8px)}
+.paso-tag{font-size:13px;color:var(--muted,#8a8578)}
+.paso-tag b{color:var(--teal-deep,#15604f)}
+.paso-nav .btn{white-space:nowrap}
 .tabla td.nowrap{white-space:nowrap}
 </style>
 {% endblock %}

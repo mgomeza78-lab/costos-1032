@@ -2550,6 +2550,10 @@ def cargar_info(request: Request, eid: int):
         return r
     user = session_user(request)
     fuente = request.query_params.get("fuente") or "comercial"
+    if fuente == "ccp":          # CCP/Fap se fusionó en "Producción y Suministro de Agua y Fap"
+        fuente = "agua"
+    if fuente not in ("comercial", "agua", "balance", "costos"):
+        fuente = "comercial"
     # Vista comercial: "total" (conjunto, resumen) o "aps" (desglose por APS desde el detalle);
     # y filtro opcional por año. Orden cronológico en toda la vista "Cargado".
     cm_vista = request.query_params.get("cmvista") or "total"
@@ -2854,7 +2858,7 @@ def ccp_fap_guardar(request: Request, eid: int, servicio: str = Form("acueducto"
     if (bad := _bad_csrf(request, csrf)):
         return bad
     user = session_user(request)
-    dflt = f"/empresa/{eid}/cargar?fuente=ccp"
+    dflt = f"/empresa/{eid}/cargar?fuente=agua"
     if not rbac.can(user, "cargar_mensual"):
         return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
     d = {"aplica": aplica is not None, "ipuf_real": _fnum(ipuf_real),
