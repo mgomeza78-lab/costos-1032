@@ -3156,9 +3156,11 @@ def ipc_form(request: Request, indice: str = "indice", desde: str = "", hasta: s
     svg = ix.svg_grafica(graf)
     des_def = f'{graf["desde"][0]:04d}-{graf["desde"][1]:02d}' if graf["desde"] else ""
     has_def = f'{graf["hasta"][0]:04d}-{graf["hasta"][1]:02d}' if graf["hasta"] else ""
+    # último mes cargado de cada índice (publican en fechas distintas) para el pie de cada campo
+    ult_col = {m["clave"]: m["etq"] for m in resumen["mensuales"]}
     return tpl.TemplateResponse(request, "ipc.html", _ctx(
         request, resumen=resumen, salario=salario, graf=graf, svg=svg, meses=ops.MESES,
-        col=col, mensuales=ix.MENSUALES, orden=ix.ORDEN_MENSUAL,
+        col=col, mensuales=ix.MENSUALES, orden=ix.ORDEN_MENSUAL, ult_col=ult_col,
         des_def=des_def, has_def=has_def, prox_anio=prox_a, prox_mes=prox_m, prox_sal=prox_sal))
 
 
@@ -3166,7 +3168,9 @@ def ipc_form(request: Request, indice: str = "indice", desde: str = "", hasta: s
 def ipc_post(request: Request, anio: int = Form(...), mes: int = Form(...),
              indice: str = Form(""), ipcs: str = Form(""), ictc: str = Form(""),
              fuente: str = Form("DANE"), csrf: str = Form("")):
-    """Ingreso/actualización del dato mensual: IPC (obligatorio), IPC-SAR e ICTC (opcionales)."""
+    """Ingreso/actualización del dato mensual. El IPC, el IPC-SAR y el ICTC se publican en
+    fechas distintas, así que cada uno se carga por separado: basta con indicar al menos uno
+    y los demás se dejan en blanco (se conservan los valores ya cargados para ese mes)."""
     if (r := _need_login(request)):
         return r
     if (bad := _bad_csrf(request, csrf)):
@@ -3174,24 +3178,27 @@ def ipc_post(request: Request, anio: int = Form(...), mes: int = Form(...),
     user = session_user(request)
     if not rbac.can(user, "administrar_ipc"):
         return RedirectResponse("/panel?err=No+autorizado", status_code=303)
-    v_ipc = _fnum(indice)
-    if v_ipc is None:
-        return RedirectResponse("/ipc?err=El+IPC+es+obligatorio", status_code=303)
+    v_ipc, v_ipcs, v_ictc = _fnum(indice), _fnum(ipcs), _fnum(ictc)
+    if v_ipc is None and v_ipcs is None and v_ictc is None:
+        return RedirectResponse(
+            "/ipc?err=Indique+al+menos+un+índice+(IPC,+IPC-SAR+o+ICTC)", status_code=303)
     try:
         with db.scope_conn(scope_of(user)) as conn:
+            # COALESCE en los tres: cargar un índice no borra los otros ya reportados del mes.
             conn.execute(text(
                 "INSERT INTO indice_ipc(anio,mes,indice,ipcs,ictc,fuente,procedencia,cargado_por) "
                 "VALUES (:a,:m,:ipc,:ipcs,:ictc,:f,'reportada',:u) "
-                "ON CONFLICT (anio,mes) DO UPDATE SET indice=excluded.indice, "
+                "ON CONFLICT (anio,mes) DO UPDATE SET "
+                " indice=COALESCE(excluded.indice, indice_ipc.indice), "
                 " ipcs=COALESCE(excluded.ipcs, indice_ipc.ipcs), "
                 " ictc=COALESCE(excluded.ictc, indice_ipc.ictc), "
                 " fuente=excluded.fuente, procedencia=excluded.procedencia, cargado_por=excluded.cargado_por"),
-                {"a": anio, "m": mes, "ipc": v_ipc, "ipcs": _fnum(ipcs), "ictc": _fnum(ictc),
+                {"a": anio, "m": mes, "ipc": v_ipc, "ipcs": v_ipcs, "ictc": v_ictc,
                  "f": fuente.strip() or "DANE", "u": user["user_id"]})
     except Exception as e:
         return RedirectResponse(f"/ipc?err=No+se+pudo+guardar+({type(e).__name__})", status_code=303)
     db.audit(scope_of(user), "cargar_indice_mensual", "ipc", None,
-             f"{ops.MESES.get(mes, mes)}-{anio}: IPC={indice} IPC-SAR={ipcs or '—'} ICTC={ictc or '—'}")
+             f"{ops.MESES.get(mes, mes)}-{anio}: IPC={v_ipc or '—'} IPC-SAR={v_ipcs or '—'} ICTC={v_ictc or '—'}")
     return RedirectResponse("/ipc?msg=Índice+mensual+guardado+(recuerde+reprocesar+la+indexación)",
                             status_code=303)
 

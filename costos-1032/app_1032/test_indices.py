@@ -63,7 +63,7 @@ html = admin.get("/ipc").text
 check(admin.get("/ipc").status_code == 200, "GET /ipc responde 200 al admin")
 check("Último dato cargado" in html, "muestra el bloque 'Último dato cargado'")
 check("Evolución" in html and "<svg" in html, "muestra la gráfica (SVG)")
-check("Ingresar índice mensual" in html and "Salario mínimo (anual)" in html, "formularios de ingreso presentes")
+check("Ingresar / actualizar índices" in html and "Salario mínimo (anual)" in html, "formularios de ingreso presentes")
 check("Cargar CSV" not in html and "CSV" not in html, "ya NO hay carga masiva (CSV)")
 
 # ---------- 2) base + ingreso mensual por la ruta ----------
@@ -91,12 +91,26 @@ row = q("SELECT indice,ipcs,ictc FROM indice_ipc WHERE anio=2099 AND mes=1")[0]
 check(near(float(row[0]), 102.5) and near(float(row[1]), 101.0) and near(float(row[2]), 103.0),
       "al reenviar solo IPC, IPC-SAR e ICTC se conservan")
 
-# ---------- 4) IPC obligatorio ----------
-print("== IPC obligatorio ==")
-r = admin.post("/ipc", data={"anio": 2099, "mes": 6, "indice": "", "csrf": csrf(admin)},
-               follow_redirects=False)
-check("err=" in r.headers.get("location", ""), "sin IPC se rechaza")
-check(not q("SELECT 1 FROM indice_ipc WHERE anio=2099 AND mes=6"), "no se creó la fila sin IPC")
+# ---------- 4) carga por separado (cada índice publica en fecha distinta) ----------
+print("== Carga por separado de cada índice ==")
+r = admin.post("/ipc", data={"anio": 2099, "mes": 6, "indice": "", "ipcs": "", "ictc": "",
+               "csrf": csrf(admin)}, follow_redirects=False)
+check("err=" in r.headers.get("location", ""), "sin ningún índice se rechaza")
+check(not q("SELECT 1 FROM indice_ipc WHERE anio=2099 AND mes=6"), "no se creó la fila vacía")
+# solo ICTC (el IPC de ese mes aún no publica): se guarda con IPC nulo
+admin.post("/ipc", data={"anio": 2099, "mes": 6, "indice": "", "ipcs": "", "ictc": "150,00",
+           "csrf": csrf(admin)}, follow_redirects=False)
+row6 = q("SELECT indice, ictc FROM indice_ipc WHERE anio=2099 AND mes=6")
+check(bool(row6) and row6[0][0] is None and near(float(row6[0][1]), 150.0),
+      "carga solo-ICTC crea la fila con IPC nulo e ICTC=150")
+# luego llega el IPC del mismo mes: no borra el ICTC ya cargado (COALESCE en los tres)
+admin.post("/ipc", data={"anio": 2099, "mes": 6, "indice": "104,00", "ipcs": "", "ictc": "",
+           "csrf": csrf(admin)}, follow_redirects=False)
+row6b = q("SELECT indice, ictc FROM indice_ipc WHERE anio=2099 AND mes=6")[0]
+check(near(float(row6b[0]), 104.0) and near(float(row6b[1]), 150.0),
+      "cargar el IPC después conserva el ICTC (COALESCE)")
+with db.engine_owner.begin() as _c:
+    _c.execute(text("DELETE FROM indice_ipc WHERE anio=2099 AND mes=6"))
 
 # ---------- 5) variaciones y gráfica ----------
 print("== Variaciones y gráfica ==")

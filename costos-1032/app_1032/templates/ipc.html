@@ -85,9 +85,12 @@
 </table>
 {% endif %}
 
-<h2 class="serv-h">Ingresar índice mensual</h2>
-<p class="hint">Por defecto aparece el <b>mes siguiente</b> al último cargado ({{ meses[prox_mes] }}-{{ prox_anio }}).
-El IPC es obligatorio; IPC-SAR e ICTC son opcionales (puede dejarlos en blanco y cargarlos después).</p>
+{% set uc = ult_col|default({}) %}
+<h2 class="serv-h">Ingresar / actualizar índices</h2>
+<p class="hint">El <b>IPC</b>, el <b>IPC-SAR</b> (sin alimentos ni regulados) y el <b>ICTC</b> los publica
+el DANE en <b>fechas distintas</b>. Cargue el mes y escriba solo el índice que ya salió; los que deje
+en blanco <b>conservan</b> su valor previo. Debe indicar <b>al menos uno</b>. El valor por defecto es el
+<b>mes siguiente</b> al último mes con algún dato ({{ meses[prox_mes] }}-{{ prox_anio }}).</p>
 <form method="post" action="/ipc" class="form wide">
   <input type="hidden" name="csrf" value="{{ csrf_token }}">
   <div class="grid2">
@@ -97,12 +100,12 @@ El IPC es obligatorio; IPC-SAR e ICTC son opcionales (puede dejarlos en blanco y
         {% for m in range(1,13) %}<option value="{{ m }}" {{ 'selected' if m == prox_mes }}>{{ meses[m] }}</option>{% endfor %}
       </select>
     </label>
-    <label>IPC <span class="muted2">· número índice DANE</span><input name="indice" inputmode="decimal" required></label>
-    <label>IPC sin alimentos ni regulados <span class="muted2">· opcional</span><input name="ipcs" inputmode="decimal"></label>
-    <label>ICTC — Costos de Transporte de Carga <span class="muted2">· opcional</span><input name="ictc" inputmode="decimal"></label>
+    <label>IPC <span class="muted2">· nº índice DANE · {{ 'último ' ~ uc.indice if uc.indice else 'aún sin cargar' }}</span><input name="indice" inputmode="decimal"></label>
+    <label>IPC sin alimentos ni regulados <span class="muted2">· {{ 'último ' ~ uc.ipcs if uc.ipcs else 'aún sin cargar' }}</span><input name="ipcs" inputmode="decimal"></label>
+    <label>ICTC — Costos de Transporte de Carga <span class="muted2">· {{ 'último ' ~ uc.ictc if uc.ictc else 'aún sin cargar' }}</span><input name="ictc" inputmode="decimal"></label>
     <label>Fuente<input name="fuente" value="DANE"></label>
   </div>
-  <button class="btn primary" type="submit">Guardar índice mensual</button>
+  <button class="btn primary" type="submit">Guardar índices del mes</button>
 </form>
 
 <h2 class="serv-h">Salario mínimo (anual)</h2>
