@@ -54,17 +54,23 @@ información</a>; la cobertura mes a mes, en <a href="/empresa/{{ emp.id }}/vali
 {% endif %}
 
 <h2 class="serv-h">Costo de referencia</h2>
-<p class="muted2">Las <b>variables</b> y la <b>fórmula</b> de cada componente tarifario del período de inicio
-(jul–dic 2026). Elige el componente; los valores se arman de la información que ya cargaste (balance, módulo de
-energía/químicos, comercial) y de la base del estudio. El <b>resultado</b> se recalcula con esas variables.</p>
+<p class="muted2">Las <b>variables</b> y la <b>fórmula</b> de cada componente tarifario. Elige el <b>año tarifario</b>
+y el <b>componente</b>; los valores se arman de la información cargada (balance, módulo de energía/químicos,
+comercial) y de la base del estudio, y el <b>factor de actualización (Fa)</b> se calcula por indexación (IPC/IPCs)
+a pesos de diciembre de i‑1. El <b>resultado</b> se recalcula con esas variables.</p>
 
 <form method="get" action="/empresa/{{ emp.id }}" class="cref-ctrl">
+  <label>Año tarifario
+    <select name="at" onchange="this.form.submit()">
+      {% for p in cref.periodos %}<option value="{{ p.clave }}" {{ 'selected' if p.clave==cref.pclave }}>{{ p.etiqueta }} · a dic‑{{ p.dic_ref }}</option>{% endfor %}
+    </select>
+  </label>
   <label>Componente
     <select name="comp" onchange="this.form.submit()">
       {% for c in cref.componentes %}<option value="{{ c }}" {{ 'selected' if c==cref.componente }}>{{ c }} · {{ cref.comp_nombre[c] }}</option>{% endfor %}
     </select>
   </label>
-  <span class="hint">Art. {{ cref.art }} · Res. CRA 1032 · año base {{ cref.anio_base }}</span>
+  <span class="hint">Art. {{ cref.art }} · Res. CRA 1032 · año base {{ cref.anio_base }} · pesos de dic‑{{ cref.dic_ref }}</span>
 </form>
 
 <div class="formula-box">
@@ -80,9 +86,9 @@ energía/químicos, comercial) y de la base del estudio. El <b>resultado</b> se 
     {% for f in ps.variables %}
     <tr>
       <td class="comp">{{ f.label }}</td>
-      <td class="num">{% if f.valor is not none %}{% if f.unidad == 'factor' %}{{ ('%.4f'|format(f.valor))|replace('.',',') }}{% else %}{{ f.valor|valor }}{% endif %}{% else %}<span class="warn">por cargar</span>{% endif %}</td>
+      <td class="num">{% if f.valor is not none %}{% if f.unidad == 'factor' %}{{ ('%.4f'|format(f.valor))|replace('.',',') }}{% else %}{{ f.valor|valor }}{% endif %}{% else %}<span class="warn">{{ 'por calcular' if f.nota else 'por cargar' }}</span>{% endif %}</td>
       <td>{{ f.unidad }}</td>
-      <td>{% if f.fuente %}<span class="proc">{{ f.fuente }}</span>{% else %}—{% endif %}</td>
+      <td>{% if f.fuente %}<span class="proc">{{ f.fuente }}</span>{% elif f.nota %}<span class="muted2" style="font-size:12px">{{ f.nota }}</span>{% else %}—{% endif %}</td>
       <td class="art">{{ f.articulo }}</td>
     </tr>
     {% endfor %}
@@ -95,8 +101,10 @@ energía/químicos, comercial) y de la base del estudio. El <b>resultado</b> se 
     </tr>
   </tbody>
 </table></div>
-{% if ps.faltan %}<p class="hint"><b>Falta para el cálculo:</b> {{ ps.faltan|join(', ') }}. Cárgalo en
-<a href="/empresa/{{ emp.id }}/cargar?fuente=comercial">Gestión de información</a>.</p>{% endif %}
+{% if ps.faltan %}<p class="hint"><b>Falta para el cálculo:</b> {{ ps.faltan|join(', ') }}. Los numeradores y N
+se cargan en <a href="/empresa/{{ emp.id }}/cargar?fuente=comercial">Gestión de información</a>; el factor de
+actualización (Fa) se calcula al cargar el IPC/IPCs en <a href="/empresa/{{ emp.id }}/actualizacion">Actualización
+por índices</a>.</p>{% endif %}
 {% endfor %}
 <p class="hint">El <b>resultado</b> se recalcula aquí con las variables mostradas; «motor» es el valor almacenado
 tras <b>Recalcular</b>. Para el detalle del numerador por subcomponente, ve a

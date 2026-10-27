@@ -368,7 +368,8 @@ def empresa_detail(request: Request, eid: int):
             "ORDER BY anio DESC, servicio"), {"e": eid}).mappings().all()
         servicios_emp = [s for s, on in (("acueducto", emp["presta_ac"]), ("alcantarillado", emp["presta_al"])) if on] or ["acueducto"]
         comp = request.query_params.get("comp") or "CMA"
-        cref = crv.detalle(conn, eid, comp, servicios_emp, emp=emp)
+        at = request.query_params.get("at") or "inicio"
+        cref = crv.detalle(conn, eid, comp, servicios_emp, emp=emp, pclave=at)
     por_servicio = {}
     for row in res:
         por_servicio.setdefault(row["servicio"], []).append(row)

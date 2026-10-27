@@ -66,9 +66,56 @@ _SUB_CACe = lambda sc: sc.startswith("CAC-") and not sc.endswith("-X")
 _SUB_COCe = lambda sc: sc in ("COC-1", "COC-2", "COC-2.COM", "COC-3", "COC-4", "COC-5")
 
 
-def _anios_base():
-    ab = per.PERIODOS[0]["anios_base"]            # [i-2, i-1] = [2024, 2025]
+def _periodo(clave):
+    return per.POR_CLAVE.get(clave) or per.PERIODOS[0]
+
+
+def _anios_base(clave="inicio"):
+    """Años base de los numeradores del período elegido. CMA/CMO usan i-2; CMICT/CMI usan i-1."""
+    ab = _periodo(clave)["anios_base"]            # [i-2, i-1]
     return {"CMA": ab[0], "CMO": ab[0], "CMICT": ab[-1], "CMI": ab[-1]}
+
+
+# ---- Factor de actualización (Fa) — art. 2.1.2.1.5.3.1 ----
+#   Fa_cma = Fa_cmo = IPCs(dic, i-1) / IPCs(jun, i-2)   (costos i-2 en pesos de junio i-2)
+#   Fa_cmict         = IPCs(dic, i-1) / IPCs(jun, i-1)
+#   Fa (CMI)         = IPC (dic, i-1) / IPC (dic, i-2)  (el CMI usa IPC; los demás, IPCs)
+FA_SPEC = {  # columna del índice, (mes, desfase)_numerador, (mes, desfase)_denominador
+    "Fa_cma":   ("ipcs", (12, -1), (6, -2)),
+    "Fa_cmo":   ("ipcs", (12, -1), (6, -2)),
+    "Fa_cmict": ("ipcs", (12, -1), (6, -1)),
+    "Fa_cmi":   ("indice", (12, -1), (12, -2)),
+}
+_IDX_NOMBRE = {"ipcs": "IPCs", "indice": "IPC"}
+_MES_NOMBRE = {6: "jun", 12: "dic"}
+
+
+def _ipc(conn, col, anio, mes):
+    v = conn.execute(text("SELECT " + col + " FROM indice_ipc WHERE anio=:a AND mes=:m"),
+                     {"a": int(anio), "m": int(mes)}).scalar()
+    return float(v) if v is not None else None
+
+
+def fa_componente(conn, clave_fa, anio_aplicacion):
+    """(fa, descripción, faltan) del factor de actualización para el año de aplicación i; los costos
+    quedan en pesos de diciembre de i-1. None si falta algún índice en indice_ipc."""
+    spec = FA_SPEC.get(clave_fa)
+    if not spec:
+        return None, "", []
+    col, (mn, dn), (md, dd) = spec
+    i = int(anio_aplicacion)
+    an, ad = i + dn, i + dd
+    nom = _IDX_NOMBRE[col]
+    desc = f"{nom}({_MES_NOMBRE[mn]}-{an}) / {nom}({_MES_NOMBRE[md]}-{ad})"
+    num, den = _ipc(conn, col, an, mn), _ipc(conn, col, ad, md)
+    faltan = []
+    if num is None:
+        faltan.append(f"{nom} {_MES_NOMBRE[mn]}-{an}")
+    if not den:
+        faltan.append(f"{nom} {_MES_NOMBRE[md]}-{ad}")
+    if faltan:
+        return None, desc, faltan
+    return round(num / den, 4), desc, []
 
 
 def _num_por_sub(conn, empresa_id, anio):
@@ -122,9 +169,11 @@ def _val(x):
         return None
 
 
-def variables(conn, empresa_id, servicios, emp=None):
+def variables(conn, empresa_id, servicios, emp=None, pclave="inicio"):
     """Arma, por servicio, el valor y la fuente de cada variable, del mejor origen disponible."""
-    ab = _anios_base()
+    ab = _anios_base(pclave)
+    anio_apl = _periodo(pclave)["anio"]
+    fa_calc = {k: fa_componente(conn, k, anio_apl) for k in ("Fa_cma", "Fa_cmo", "Fa_cmict")}
     kct_emp = _val(emp["kct"]) if emp and emp.get("kct") is not None else None
     base = _base_calculo(conn, empresa_id)
     sub24 = _num_por_sub(conn, empresa_id, ab["CMA"])      # CACe/COCe/CE/CIQ/COIR (i-2)
@@ -168,10 +217,23 @@ def variables(conn, empresa_id, servicios, emp=None):
         put("TA", (subict.get(s, {}).get("TA") if subict.get(s) else None), "balance clasificado")
         put("N", susc.get(s), "comercial")
         # Parámetros regulatorios / de la base del estudio
-        for clave in ("kct", "CCP", "Fa_cma", "Fa_cmo", "Fa_cmict", "denom_cmict", "CMI_base"):
+        for clave in ("kct", "CCP", "denom_cmict", "CMI_base"):
             put(clave, None, None)
         if v["kct"]["valor"] is None and kct_emp is not None:
             v["kct"] = {"valor": kct_emp, "fuente": "parámetro de la empresa"}
+        # Factor de actualización: se CALCULA por indexación (art. 2.1.2.1.5.3.1). Si falta el
+        # índice en indice_ipc, se marca con el detalle; base del estudio como respaldo.
+        for clave_fa in ("Fa_cma", "Fa_cmo", "Fa_cmict"):
+            fa, desc, faltan = fa_calc[clave_fa]
+            if fa is not None:
+                v[clave_fa] = {"valor": fa, "fuente": "indexación · " + desc}
+            else:
+                bval, fb = de_base(clave_fa)
+                if bval is not None:
+                    v[clave_fa] = {"valor": bval, "fuente": fb}
+                else:
+                    v[clave_fa] = {"valor": None, "fuente": None,
+                                   "nota": "se calcula por indexación (" + desc + "); falta " + ", ".join(faltan)}
         out[s] = v
     return out
 
@@ -204,9 +266,17 @@ def _calc(componente, v):
     return None
 
 
-def detalle(conn, empresa_id, componente, servicios, emp=None):
+def periodos_sel():
+    """Lista para el selector de año tarifario: clave, etiqueta, año de aplicación y dic de referencia."""
+    return [{"clave": p["clave"], "etiqueta": p["etiqueta"], "anio": p["anio"], "dic_ref": p["anio"] - 1}
+            for p in per.PERIODOS]
+
+
+def detalle(conn, empresa_id, componente, servicios, emp=None, pclave="inicio"):
     comp = componente if componente in COMPS else "CMA"
-    varset = variables(conn, empresa_id, servicios, emp=emp)
+    pclave = pclave if pclave in per.POR_CLAVE else "inicio"
+    pobj = _periodo(pclave)
+    varset = variables(conn, empresa_id, servicios, emp=emp, pclave=pclave)
     res = _resultados(conn, empresa_id)
     por_serv = []
     for s in servicios:
@@ -216,7 +286,7 @@ def detalle(conn, empresa_id, componente, servicios, emp=None):
             lbl, uni, art = VAR_META.get(clave, (clave, "", ""))
             vv = v.get(clave, {})
             filas.append({"clave": clave, "label": lbl, "unidad": uni, "articulo": art,
-                          "valor": vv.get("valor"), "fuente": vv.get("fuente")})
+                          "valor": vv.get("valor"), "fuente": vv.get("fuente"), "nota": vv.get("nota")})
         stored = res.get(s, {}).get(comp)
         por_serv.append({
             "servicio": s, "variables": filas,
@@ -227,4 +297,6 @@ def detalle(conn, empresa_id, componente, servicios, emp=None):
     return {"componentes": COMPS, "comp_nombre": COMP_NOMBRE, "componente": comp,
             "formula": COMP_FORMULA[comp], "nota": COMP_NOTA[comp], "art": COMP_ART[comp],
             "unidad": COMP_UNIDAD[comp], "por_servicio": por_serv,
-            "anio_base": _anios_base()[comp]}
+            "anio_base": _anios_base(pclave)[comp], "periodos": periodos_sel(),
+            "pclave": pclave, "periodo_etiqueta": pobj["etiqueta"],
+            "anio_aplicacion": pobj["anio"], "dic_ref": pobj["anio"] - 1}
