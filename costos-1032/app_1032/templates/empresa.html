@@ -53,29 +53,62 @@ borrado de cargues erróneos están en <a href="/empresa/{{ emp.id }}/cargar?fue
 información</a>; la cobertura mes a mes, en <a href="/empresa/{{ emp.id }}/validacion">Validación</a>.</p>
 {% endif %}
 
-{% if por_servicio %}
-  {% for servicio, filas in por_servicio.items() %}
-  <h2 class="serv-h">{{ servicio if servicio != '—' else 'Conjunto / otros' }}</h2>
-  <table class="tabla">
-    <thead><tr><th>Componente</th><th class="r">Valor</th><th>Unidad</th>
-      <th>Procedencia</th><th>Artículo Res. 1032</th></tr></thead>
-    <tbody>
-      {% for f in filas %}
-      <tr>
-        <td class="comp">{{ f.componente }}</td>
-        <td class="r num">{{ f.valor|valor(f.unidad) }}</td>
-        <td>{{ f.unidad or '' }}</td>
-        <td><span class="proc proc-{{ f.procedencia }}">{{ f.procedencia or '—' }}</span></td>
-        <td class="art">{{ f.articulo or '' }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% endfor %}
-  <p class="hint">Costos económicos de referencia del período de inicio. Los valores
-  provienen del núcleo de cálculo validado al peso frente al modelo de la empresa.</p>
-{% else %}
-  <p class="empty">Aún no hay costos calculados.
-  {% if rbac.can(user,'recalcular') %}Use «Recalcular» para generarlos.{% endif %}</p>
-{% endif %}
+<h2 class="serv-h">Costo de referencia</h2>
+<p class="muted2">Las <b>variables</b> y la <b>fórmula</b> de cada componente tarifario del período de inicio
+(jul–dic 2026). Elige el componente; los valores se arman de la información que ya cargaste (balance, módulo de
+energía/químicos, comercial) y de la base del estudio. El <b>resultado</b> se recalcula con esas variables.</p>
+
+<form method="get" action="/empresa/{{ emp.id }}" class="cref-ctrl">
+  <label>Componente
+    <select name="comp" onchange="this.form.submit()">
+      {% for c in cref.componentes %}<option value="{{ c }}" {{ 'selected' if c==cref.componente }}>{{ c }} · {{ cref.comp_nombre[c] }}</option>{% endfor %}
+    </select>
+  </label>
+  <span class="hint">Art. {{ cref.art }} · Res. CRA 1032 · año base {{ cref.anio_base }}</span>
+</form>
+
+<div class="formula-box">
+  <div class="formula">{{ cref.formula }}</div>
+  <p class="muted2" style="margin:6px 0 0">{{ cref.nota }}</p>
+</div>
+
+{% for ps in cref.por_servicio %}
+<h3 class="serv-h">{{ ps.servicio|capitalize }}</h3>
+<div style="overflow-x:auto"><table class="tabla compact">
+  <thead><tr><th>Variable</th><th class="r">Valor</th><th>Unidad</th><th>Fuente</th><th>Artículo</th></tr></thead>
+  <tbody>
+    {% for f in ps.variables %}
+    <tr>
+      <td class="comp">{{ f.label }}</td>
+      <td class="num">{% if f.valor is not none %}{% if f.unidad == 'factor' %}{{ ('%.4f'|format(f.valor))|replace('.',',') }}{% else %}{{ f.valor|valor }}{% endif %}{% else %}<span class="warn">por cargar</span>{% endif %}</td>
+      <td>{{ f.unidad }}</td>
+      <td>{% if f.fuente %}<span class="proc">{{ f.fuente }}</span>{% else %}—{% endif %}</td>
+      <td class="art">{{ f.articulo }}</td>
+    </tr>
+    {% endfor %}
+    <tr class="res-row">
+      <td class="comp"><b>{{ cref.componente }} — resultado</b></td>
+      <td class="num"><b>{% if ps.calc is not none %}{{ ps.calc|valor(cref.unidad) }}{% else %}—{% endif %}</b></td>
+      <td>{{ cref.unidad }}</td>
+      <td>{% if ps.stored is not none %}<span class="muted2">motor: {{ ps.stored|valor(cref.unidad) }}</span>{% endif %}</td>
+      <td class="art">{{ cref.art }}</td>
+    </tr>
+  </tbody>
+</table></div>
+{% if ps.faltan %}<p class="hint"><b>Falta para el cálculo:</b> {{ ps.faltan|join(', ') }}. Cárgalo en
+<a href="/empresa/{{ emp.id }}/cargar?fuente=comercial">Gestión de información</a>.</p>{% endif %}
+{% endfor %}
+<p class="hint">El <b>resultado</b> se recalcula aquí con las variables mostradas; «motor» es el valor almacenado
+tras <b>Recalcular</b>. Para el detalle del numerador por subcomponente, ve a
+<a href="/empresa/{{ emp.id }}/balance">Información Contable (balance clasificado)</a>.</p>
+
+<style>
+.cref-ctrl{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin:6px 0 12px}
+.cref-ctrl select{padding:5px 8px;font:inherit}
+.formula-box{background:var(--paper,#faf8f2);border:1px solid var(--line,#e5e0d2);border-radius:var(--r,8px);
+  padding:12px 14px;margin:0 0 14px}
+.formula{font-family:var(--mono,ui-monospace,Menlo,Consolas,monospace);font-size:15px;color:var(--teal-deep,#15604f);font-weight:600}
+.res-row td{border-top:2px solid var(--line,#d8d2c4);background:var(--paper,#faf8f2)}
+.warn{color:#9a6a00}
+</style>
 {% endblock %}

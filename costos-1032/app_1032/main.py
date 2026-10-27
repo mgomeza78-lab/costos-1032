@@ -29,6 +29,7 @@ import ccp_view as cv
 import suscriptores_view as sv
 import balance_view as bv
 import energia_quimicos_service as eq
+import costo_referencia_view as crv
 import recalculo_service as rc
 import inversiones_service as inv
 import subsidios_service as subs
@@ -365,11 +366,14 @@ def empresa_detail(request: Request, eid: int):
             "round(avg(suscriptores))::int AS susc_prom, sum(m3_facturados) AS m3_total "
             "FROM carga_mensual WHERE empresa_id=:e AND cod_dane='' GROUP BY anio, servicio "
             "ORDER BY anio DESC, servicio"), {"e": eid}).mappings().all()
+        servicios_emp = [s for s, on in (("acueducto", emp["presta_ac"]), ("alcantarillado", emp["presta_al"])) if on] or ["acueducto"]
+        comp = request.query_params.get("comp") or "CMA"
+        cref = crv.detalle(conn, eid, comp, servicios_emp, emp=emp)
     por_servicio = {}
     for row in res:
         por_servicio.setdefault(row["servicio"], []).append(row)
     return tpl.TemplateResponse(request, "empresa.html", _ctx(
-        request, emp=emp, por_servicio=por_servicio, cargado=cargado, meses=ops.MESES,
+        request, emp=emp, por_servicio=por_servicio, cargado=cargado, meses=ops.MESES, cref=cref,
         tiene_perfil=nucleo_service.perfil_existe(emp["codigo"])))
 
 
