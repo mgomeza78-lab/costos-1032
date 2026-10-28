@@ -2884,9 +2884,11 @@ def cmict_tributo_masivo(request: Request, eid: int, componente: str = Form(...)
 
 @app.post("/empresa/{eid}/cmict-tributo-manual")
 def cmict_tributo_manual(request: Request, eid: int, componente: str = Form(...), anio: int = Form(...),
-                         servicio: str = Form("acueducto"), item: str = Form(...), incluye: str = Form("si"),
-                         valor_pagado: str = Form(""), observacion: str = Form(""),
-                         next: str = Form(""), csrf: str = Form("")):
+                         item: str = Form(...), valor_ac: str = Form(""), incluye_ac: str = Form("si"),
+                         valor_al: str = Form(""), incluye_al: str = Form("si"),
+                         observacion: str = Form(""), next: str = Form(""), csrf: str = Form("")):
+    """Ajusta, por servicio, el valor efectivamente pagado de un concepto de ICTA/ICTO (o lo excluye).
+    Guarda cada servicio con valor dado o marcado como no incluido; el resto se deja como está."""
     if (r := _need_login(request)):
         return r
     if (bad := _bad_csrf(request, csrf)):
@@ -2898,12 +2900,13 @@ def cmict_tributo_manual(request: Request, eid: int, componente: str = Form(...)
     with db.scope_conn(scope_of(user)) as conn:
         if not _emp_or_redirect(conn, eid):
             return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
-        ok, err = cmict.tributo_guardar(conn, eid, anio, comp, servicio, item, cmict._si(incluye),
-                                        valor_pagado, (observacion or None), "empresa", user.get("user_id"))
+        for serv, val, inc in (("acueducto", valor_ac, incluye_ac), ("alcantarillado", valor_al, incluye_al)):
+            if (val or "").strip() == "" and cmict._si(inc):
+                continue   # nada que ajustar para ese servicio (ni valor ni exclusión)
+            cmict.tributo_guardar(conn, eid, anio, comp, serv, item, cmict._si(inc),
+                                  val, (observacion or None), "empresa", user.get("user_id"))
         rc.recalcular(conn, eid)
-    if err:
-        return RedirectResponse(_dest(next, dflt, "err=" + err.replace(" ", "+")), status_code=303)
-    return RedirectResponse(_dest(next, dflt, "msg=Concepto+guardado"), status_code=303)
+    return RedirectResponse(_dest(next, dflt, "msg=Concepto+actualizado"), status_code=303)
 
 
 @app.post("/empresa/{eid}/cmict-tributo/{rid}/eliminar")

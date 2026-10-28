@@ -619,63 +619,57 @@ como referencia para conciliar. Año base i−1 = <b>{{ cmict_anio }}</b>.</p>
 
 {% for comp in ['ICTA','ICTO'] %}
 {% set items = cmict_icta if comp=='ICTA' else cmict_icto %}
+{% set hay = (items|selectattr('ac')|list|length) + (items|selectattr('al')|list|length) %}
 <h3 class="serv-h">{{ comp }} · {{ 'administrativas (art. 2.1.2.1.3.6.3)' if comp=='ICTA' else 'operativas (art. 2.1.2.1.3.6.4)' }}</h3>
-<div class="carga-metodo">
-  <div class="metodo-tabs">
-    <button type="button" class="metodo-tab active" data-m="masivo">Cargue masivo</button>
-    <button type="button" class="metodo-tab" data-m="manual">Cargue manual</button>
+<p class="muted2">El valor base de {{ comp }} viene del <b>balance de prueba</b> (Información Contable). Aquí, por servicio,
+puedes <b>ajustar el valor efectivamente pagado</b> de un concepto o <b>excluirlo</b>. Elige el concepto y modifica su valor.</p>
+{% if puede_cargar %}
+<form method="post" action="/empresa/{{ emp.id }}/cmict-tributo-manual" class="up-form cmict-edit">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+  <input type="hidden" name="componente" value="{{ comp }}"><input type="hidden" name="anio" value="{{ cmict_anio }}">
+  <div class="grid2">
+    <label style="grid-column:1/-1">Concepto
+      <select name="item" class="cmict-item">
+        {% for it in items %}<option value="{{ it.item }}" data-ac="{{ it.ac.valor_pagado if it.ac and it.ac.valor_pagado is not none else '' }}" data-acinc="{{ '0' if it.ac and not it.ac.incluye else '1' }}" data-al="{{ it.al.valor_pagado if it.al and it.al.valor_pagado is not none else '' }}" data-alinc="{{ '0' if it.al and not it.al.incluye else '1' }}">{{ '● ' if (it.ac or it.al) else '' }}{{ it.letra }}) {{ it.nombre }}</option>{% endfor %}
+      </select>
+    </label>
+    {% if emp.presta_ac %}
+    <label>Acueducto · valor pagado ($)<input name="valor_ac" class="cmv-ac" inputmode="decimal"></label>
+    <label>Acueducto<select name="incluye_ac" class="cmi-ac"><option value="si">Incluir</option><option value="no">Excluir</option></select></label>
+    {% endif %}
+    {% if emp.presta_al %}
+    <label>Alcantarillado · valor pagado ($)<input name="valor_al" class="cmv-al" inputmode="decimal"></label>
+    <label>Alcantarillado<select name="incluye_al" class="cmi-al"><option value="si">Incluir</option><option value="no">Excluir</option></select></label>
+    {% endif %}
   </div>
-  <div class="metodo-panel active" data-m="masivo">
-    <form method="post" action="/empresa/{{ emp.id }}/cmict-tributo-masivo" enctype="multipart/form-data" class="up-form">
-      <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
-      <input type="hidden" name="componente" value="{{ comp }}">
-      <label>Año<input type="number" name="anio" value="{{ cmict_anio }}" required></label>
-      <input type="file" name="archivo" accept=".csv" required>
-      <button class="btn primary" type="submit">Cargar {{ comp }}</button>
-    </form>
-    <p class="muted2" style="margin:4px 0 0"><a href="/empresa/{{ emp.id }}/plantilla-cmict/{{ comp|lower }}">Descargar plantilla {{ comp }}</a> · columnas: item, servicio, incluye (si/no), valor_pagado, observacion</p>
-  </div>
-  <div class="metodo-panel" data-m="manual">
-    <form method="post" action="/empresa/{{ emp.id }}/cmict-tributo-manual" class="up-form">
-      <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
-      <input type="hidden" name="componente" value="{{ comp }}">
-      <div class="grid2">
-        <label>Año<input type="number" name="anio" value="{{ cmict_anio }}" required></label>
-        <label>Servicio<select name="servicio">{% if emp.presta_ac %}<option value="acueducto">Acueducto</option>{% endif %}{% if emp.presta_al %}<option value="alcantarillado">Alcantarillado</option>{% endif %}</select></label>
-        <label>Concepto<select name="item">{% for it in items %}<option value="{{ it.item }}">{{ it.letra }}) {{ it.nombre }}</option>{% endfor %}</select></label>
-        <label>¿Se incluye?<select name="incluye"><option value="si">Sí, se incluye</option><option value="no">No se incluye</option></select></label>
-        <label>Valor efectivamente pagado ($)<input name="valor_pagado" inputmode="decimal"></label>
-        <label>Observación<input name="observacion"></label>
-      </div>
-      <button class="btn primary" type="submit">Guardar concepto</button>
-    </form>
-  </div>
-</div>
+  <button class="btn primary" type="submit">Guardar concepto</button>
+</form>
+{% endif %}
 <div style="overflow-x:auto"><table class="tabla compact">
-  <thead><tr><th>Concepto</th><th class="r">Acueducto</th><th class="r">Alcantarillado</th><th>Art.</th>{% if puede_cargar %}<th></th>{% endif %}</tr></thead>
+  <thead><tr><th>Concepto ajustado</th>{% if emp.presta_ac %}<th class="r">Acueducto</th>{% endif %}{% if emp.presta_al %}<th class="r">Alcantarillado</th>{% endif %}<th>Art.</th>{% if puede_cargar %}<th></th>{% endif %}</tr></thead>
   <tbody>
     {% set tot = namespace(ac=0.0, al=0.0) %}
-    {% for it in items %}
+    {% for it in items if it.ac or it.al %}
     {% if it.ac and it.ac.incluye and it.ac.valor_pagado %}{% set tot.ac = tot.ac + it.ac.valor_pagado %}{% endif %}
     {% if it.al and it.al.incluye and it.al.valor_pagado %}{% set tot.al = tot.al + it.al.valor_pagado %}{% endif %}
     <tr>
       <td class="comp">{{ it.letra }}) {{ it.nombre }}</td>
-      <td class="num">{% if it.ac %}{% if it.ac.incluye %}{{ it.ac.valor_pagado|valor }}{% else %}<span class="muted2">no incluido</span>{% endif %}{% else %}—{% endif %}</td>
-      <td class="num">{% if it.al %}{% if it.al.incluye %}{{ it.al.valor_pagado|valor }}{% else %}<span class="muted2">no incluido</span>{% endif %}{% else %}—{% endif %}</td>
+      {% if emp.presta_ac %}<td class="num">{% if it.ac %}{% if it.ac.incluye %}{{ it.ac.valor_pagado|valor }}{% else %}<span class="muted2">excluido</span>{% endif %}{% else %}—{% endif %}</td>{% endif %}
+      {% if emp.presta_al %}<td class="num">{% if it.al %}{% if it.al.incluye %}{{ it.al.valor_pagado|valor }}{% else %}<span class="muted2">excluido</span>{% endif %}{% else %}—{% endif %}</td>{% endif %}
       <td class="art">{{ it.articulo }}</td>
-      {% if puede_cargar %}<td class="c nowrap">
-        {% for cell in [it.ac, it.al] %}{% if cell %}<form method="post" action="/empresa/{{ emp.id }}/cmict-tributo/{{ cell.id }}/eliminar" style="display:inline" onsubmit="return confirm('¿Borrar este concepto?')"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}"><button class="btn-link" type="submit">borrar {{ 'ac' if cell==it.ac else 'al' }}</button></form> {% endif %}{% endfor %}
-      </td>{% endif %}
+      {% if puede_cargar %}<td class="c nowrap">{% for cell in [it.ac, it.al] %}{% if cell %}<form method="post" action="/empresa/{{ emp.id }}/cmict-tributo/{{ cell.id }}/eliminar" style="display:inline" onsubmit="return confirm('¿Quitar el ajuste?')"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}"><button class="btn-link" type="submit">quitar {{ 'ac' if cell==it.ac else 'al' }}</button></form> {% endif %}{% endfor %}</td>{% endif %}
     </tr>
     {% endfor %}
-    <tr class="res-row"><td class="comp"><b>Subtotal {{ comp }} (incluido)</b></td>
-      <td class="num"><b>{{ tot.ac|valor }}</b></td><td class="num"><b>{{ tot.al|valor }}</b></td><td></td>{% if puede_cargar %}<td></td>{% endif %}</tr>
-    <tr><td class="muted2" style="font-size:12px">Valor contable (balance {{ cmict_anio }}, referencia)</td>
-      <td class="num muted2">{{ cmict_contable.acueducto.get(comp)|valor if cmict_contable.acueducto.get(comp) else '—' }}</td>
-      <td class="num muted2">{{ cmict_contable.alcantarillado.get(comp)|valor if cmict_contable.alcantarillado.get(comp) else '—' }}</td>
+    {% if hay %}<tr class="res-row"><td class="comp"><b>Subtotal {{ comp }} ajustado (incluido)</b></td>
+      {% if emp.presta_ac %}<td class="num"><b>{{ tot.ac|valor }}</b></td>{% endif %}{% if emp.presta_al %}<td class="num"><b>{{ tot.al|valor }}</b></td>{% endif %}<td></td>{% if puede_cargar %}<td></td>{% endif %}</tr>{% endif %}
+    <tr><td class="muted2" style="font-size:12px">Valor contable del balance {{ cmict_anio }} ({{ 'base para conciliar' if hay else 'es el que se usa' }})</td>
+      {% if emp.presta_ac %}<td class="num muted2">{{ cmict_contable.acueducto.get(comp)|valor if cmict_contable.acueducto.get(comp) else '—' }}</td>{% endif %}
+      {% if emp.presta_al %}<td class="num muted2">{{ cmict_contable.alcantarillado.get(comp)|valor if cmict_contable.alcantarillado.get(comp) else '—' }}</td>{% endif %}
       <td></td>{% if puede_cargar %}<td></td>{% endif %}</tr>
   </tbody>
-</table></div>
+</table>
+{% if not hay %}<p class="muted2" style="margin:4px 0 0">Sin ajustes: se usa el valor del balance. Edita un concepto arriba para detallarlo o excluirlo.</p>{% endif %}
+</div>
 {% endfor %}
 
 {# ===== TA: TUA (acueducto) ===== #}
@@ -880,6 +874,21 @@ function editarManual(d) {
     });
   });
 })();
+
+// CMICT: al elegir un concepto, precarga su valor y estado por servicio (para modificarlo).
+document.querySelectorAll('form.cmict-edit').forEach(function (f) {
+  var sel = f.querySelector('.cmict-item'); if (!sel) return;
+  function fill() {
+    var o = sel.options[sel.selectedIndex]; if (!o) return;
+    var vac = f.querySelector('.cmv-ac'), iac = f.querySelector('.cmi-ac');
+    var val = f.querySelector('.cmv-al'), ial = f.querySelector('.cmi-al');
+    if (vac) vac.value = o.dataset.ac || '';
+    if (iac) iac.value = (o.dataset.acinc === '0') ? 'no' : 'si';
+    if (val) val.value = o.dataset.al || '';
+    if (ial) ial.value = (o.dataset.alinc === '0') ? 'no' : 'si';
+  }
+  sel.addEventListener('change', fill); fill();
+});
 </script>
 <style>
 .cm-filtros{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:6px 0 10px}
