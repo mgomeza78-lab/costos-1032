@@ -1288,9 +1288,9 @@ PLANTILLAS = {
         "anio,mes,ipc,ipcs",
         ["2026,7,112.34,110.20"]),
     "bcr_serie": ("plantilla_agua_facturada_688.csv",
-        "servicio,anio,mes,agua_facturada_m3,cmi_cobrado,segmento688",
-        ["acueducto,1,1,2040000,980.50,2", "acueducto,1,2,1980000,980.50,2",
-         "acueducto,1,3,2010000,1010.30,2", "alcantarillado,1,1,1840000,640.00,2"]),
+        "servicio,cod_dane,anio,mes,agua_facturada_m3,cmi_cobrado,cmi_corriente",
+        ["acueducto,41001,1,1,2040000,980.50,1250.00", "acueducto,41524,1,1,3500,980.50,1250.00",
+         "alcantarillado,41001,1,1,1840000,640.00,820.00"]),
     "balance": ("plantilla_balance_prueba.csv",
         "cuenta,nombre,saldo",
         ["511095,Gastos de personal administrativo,125000000",
@@ -1600,6 +1600,9 @@ def inversiones(request: Request, eid: int):
         r_emp = float(emp["r"]) if emp["r"] is not None else 0.0903
         bcr0 = bcr.bcr0_calculo(conn, eid, r_emp)
         bcr_params = bcr.params(conn, eid)
+        aps_list = conn.execute(text(
+            "SELECT a.cod_dane, m.nombre AS municipio FROM aps a LEFT JOIN municipio m ON m.cod_dane=a.cod_dane "
+            "WHERE a.empresa_id=:e ORDER BY m.nombre"), {"e": eid}).mappings().all()
         bcr_series = bcr.serie_list(conn, eid)
         bcr_ingresos = {s: bcr.ingresos_vp(conn, eid, s) for s in servicios}
         bcr_mods = {s: poir.mods_list(conn, eid, s) for s in servicios}
@@ -1613,6 +1616,7 @@ def inversiones(request: Request, eid: int):
         comp_ac=inv.COMPONENTES_AC, comp_al=inv.COMPONENTES_AL,
         servicios=servicios, bcr_activos=bcr_activos, bcr0=bcr0, bcr_comp=bcr.COMPONENTES,
         bcr_serv=bcr.SERVICIOS, bcr_params=bcr_params, bcr_series=bcr_series, bcr_ingresos=bcr_ingresos,
+        aps_list=aps_list, aps_nom={a["cod_dane"]: a["municipio"] for a in aps_list},
         bcr_mods=bcr_mods, bcr_cmi=bcr_cmi, cumpl=cumpl, proy=proy, r_emp=r_emp,
         puede_cargar=rbac.can(user, "cargar_mensual")))
 
@@ -1963,8 +1967,11 @@ def validacion(request: Request, eid: int):
         # Meses con m³ facturados cargados por servicio (serie 688): para validar la cobertura
         # desde el inicio de la 688 hasta jun‑2026 (mes anterior al inicio de la 1032).
         bserie_q = dict(conn.execute(text(
-            "SELECT servicio, count(*) FROM bcr_serie WHERE empresa_id=:e AND q_m3 IS NOT NULL GROUP BY servicio"),
-            {"e": eid}).all())
+            "SELECT servicio, count(DISTINCT (anio_tarifario, mes)) FROM bcr_serie "
+            "WHERE empresa_id=:e AND q_m3 IS NOT NULL GROUP BY servicio"), {"e": eid}).all())
+        bserie_cmi = dict(conn.execute(text(
+            "SELECT servicio, count(DISTINCT (anio_tarifario, mes)) FROM bcr_serie "
+            "WHERE empresa_id=:e AND cmi_cobrado IS NOT NULL GROUP BY servicio"), {"e": eid}).all())
         bact = dict(conn.execute(text(
             "SELECT servicio, count(*) FROM bcr_activo WHERE empresa_id=:e GROUP BY servicio"), {"e": eid}).all())
         bproy = dict(conn.execute(text(
@@ -2043,7 +2050,7 @@ def validacion(request: Request, eid: int):
         r688_res = p["r688"] if p.get("r688") not in (None, "") else r688_auto
         fecha_res = p["fecha_inicio_688"] if p.get("fecha_inicio_688") else emp["fecha_inicio_688"]
         ipc_ok = ipc_sis_ok or bool(p.get("ipc_dic_2014") and p.get("ipc_dic_2025"))
-        nq = bserie_q.get(s, 0)
+        nq = bserie_q.get(s, 0); ncmi = bserie_cmi.get(s, 0)
         na, np_, nav = bact.get(s, 0), bproy.get(s, 0), bav.get(s, 0)
         bcr_val.append({"servicio": s, "checks": [
             {"nombre": "Segmento 688 y tasa r688",
@@ -2063,7 +2070,7 @@ def validacion(request: Request, eid: int):
              "detalle": (f"{fecha_res}" if fecha_res else "falta: regístrala (abajo en «Punto de partida 688» o en «Editar empresa»)")},
             {"nombre": "Agua facturada 688 por servicio (del inicio 688 al mes previo a la 1032)",
              "ok": meses_688 > 0 and nq >= meses_688, "articulo": "art. 2.1.2.1.5.2.1",
-             "detalle": (f"{nq}/{meses_688} meses con m³ facturados" if meses_688
+             "detalle": (f"{nq}/{meses_688} meses con m³ facturados · CMI dic-2014: {ncmi}/{meses_688}" if meses_688
                          else "define la fecha de inicio 688 para validar la cobertura mensual")},
             {"nombre": "Activos de la BCR₀ (VPR₀ / VA₀)",
              "ok": na > 0, "articulo": "art. 2.1.2.1.5.2.1.1",
@@ -3681,9 +3688,9 @@ def bcr_param_guardar(request: Request, eid: int, servicio: str = Form(...), r68
 
 
 @app.post("/empresa/{eid}/bcr-serie")
-def bcr_serie_guardar(request: Request, eid: int, servicio: str = Form(...),
+def bcr_serie_guardar(request: Request, eid: int, servicio: str = Form(...), cod_dane: str = Form(""),
                       anio_tarifario: int = Form(...), mes: str = Form(""), q_m3: str = Form(""),
-                      cmi_cobrado: str = Form(""), segmento: str = Form(""),
+                      cmi_cobrado: str = Form(""), cmi_corriente: str = Form(""),
                       next: str = Form(""), csrf: str = Form("")):
     if (r := _need_login(request)):
         return r
@@ -3693,7 +3700,6 @@ def bcr_serie_guardar(request: Request, eid: int, servicio: str = Form(...),
     dflt = f"/empresa/{eid}/inversiones?sec=agua"
     if not rbac.can(user, "cargar_mensual"):
         return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
-    seg = "".join(ch for ch in (segmento or "") if ch.isdigit())
     mnum = "".join(ch for ch in (mes or "") if ch.isdigit())
     mnum = int(mnum) if mnum else 0
     if not (1 <= mnum <= 12):
@@ -3702,7 +3708,7 @@ def bcr_serie_guardar(request: Request, eid: int, servicio: str = Form(...),
         if not _emp_or_redirect(conn, eid):
             return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
         bcr.serie_set(conn, eid, servicio, anio_tarifario, _fnum(q_m3), _fnum(cmi_cobrado),
-                      int(seg) if seg else None, mes=mnum)
+                      None, mes=mnum, cod_dane=(cod_dane or "").strip(), cmi_corriente=_fnum(cmi_corriente))
     db.audit(scope_of(user), "bcr_serie", "empresa", eid, f"{servicio} año {anio_tarifario} mes {mnum}")
     return RedirectResponse(_dest(next, dflt, "msg=Serie+688+guardada"), status_code=303)
 

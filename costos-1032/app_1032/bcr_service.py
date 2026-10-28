@@ -349,38 +349,47 @@ def param_set(conn, empresa_id, servicio, d):
 
 
 def serie_list(conn, empresa_id, servicio=None):
-    sql = ("SELECT servicio, anio_tarifario, mes, q_m3, cmi_cobrado, segmento FROM bcr_serie WHERE empresa_id=:e")
+    sql = ("SELECT servicio, cod_dane, anio_tarifario, mes, q_m3, cmi_cobrado, cmi_corriente, segmento "
+           "FROM bcr_serie WHERE empresa_id=:e")
     p = {"e": empresa_id}
     if servicio:
         sql += " AND servicio=:s"; p["s"] = servicio
-    sql += " ORDER BY servicio, anio_tarifario, mes"
+    sql += " ORDER BY servicio, cod_dane, anio_tarifario, mes"
     return conn.execute(text(sql), p).mappings().all()
 
 
-def serie_set(conn, empresa_id, servicio, anio_tarifario, q_m3, cmi_cobrado, segmento=None, mes=0):
+def serie_set(conn, empresa_id, servicio, anio_tarifario, q_m3, cmi_cobrado, segmento=None, mes=0,
+              cod_dane="", cmi_corriente=None):
+    """Una fila por servicio, APS (cod_dane), año-688 y mes. `cmi_cobrado` = CMI en precios dic-2014
+    (obligatorio para el VP); `cmi_corriente` = CMI en precios corrientes (opcional). El `segmento`
+    por fila está obsoleto (se deriva de la empresa)."""
     if servicio not in SERVICIOS:
         return False, "servicio inválido"
     conn.execute(text(
-        "INSERT INTO bcr_serie(empresa_id,servicio,anio_tarifario,mes,q_m3,cmi_cobrado,segmento) "
-        "VALUES (:e,:s,:a,:m,:q,:c,:g) ON CONFLICT (empresa_id,servicio,anio_tarifario,mes) DO UPDATE SET "
-        " q_m3=excluded.q_m3, cmi_cobrado=excluded.cmi_cobrado, segmento=excluded.segmento"),
-        {"e": empresa_id, "s": servicio, "a": anio_tarifario, "m": int(mes or 0),
-         "q": q_m3, "c": cmi_cobrado, "g": segmento})
+        "INSERT INTO bcr_serie(empresa_id,servicio,cod_dane,anio_tarifario,mes,q_m3,cmi_cobrado,cmi_corriente,segmento) "
+        "VALUES (:e,:s,:cd,:a,:m,:q,:c,:cc,:g) "
+        "ON CONFLICT (empresa_id,servicio,cod_dane,anio_tarifario,mes) DO UPDATE SET "
+        " q_m3=excluded.q_m3, cmi_cobrado=excluded.cmi_cobrado, cmi_corriente=excluded.cmi_corriente, "
+        " segmento=excluded.segmento"),
+        {"e": empresa_id, "s": servicio, "cd": (cod_dane or ""), "a": anio_tarifario, "m": int(mes or 0),
+         "q": q_m3, "c": cmi_cobrado, "cc": cmi_corriente, "g": segmento})
     return True, None
 
 
-def serie_del(conn, empresa_id, servicio, anio_tarifario, mes=None):
+def serie_del(conn, empresa_id, servicio, anio_tarifario, mes=None, cod_dane=None):
     sql = "DELETE FROM bcr_serie WHERE empresa_id=:e AND servicio=:s AND anio_tarifario=:a"
     p = {"e": empresa_id, "s": servicio, "a": anio_tarifario}
     if mes is not None:
         sql += " AND mes=:m"; p["m"] = int(mes)
+    if cod_dane is not None:
+        sql += " AND cod_dane=:cd"; p["cd"] = cod_dane
     conn.execute(text(sql), p)
 
 
 def cargar_serie_csv(conn, empresa_id, contenido):
-    """Cargue masivo de la serie de agua facturada de la 688 (una fila por año y servicio).
-    Columnas: servicio, anio (1-10), agua_facturada (m³), cmi_cobrado ($/m³), segmento (1|2, opcional).
-    Tolera encabezados en mayúsculas, separador coma o ';' y alias de columnas. Devuelve (ok, errores)."""
+    """Cargue masivo de la serie de agua facturada 688, SEPARADA POR APS. Columnas:
+    servicio, cod_dane|aps, anio (1-10), mes (1-12), agua_facturada_m3, cmi_cobrado (dic-2014),
+    cmi_corriente (opcional). Tolera mayúsculas, separador coma o ';' y alias. Devuelve (ok, errores)."""
     import ingesta as _ing
     rows = _ing._rows(contenido)
     if not rows:
@@ -389,6 +398,9 @@ def cargar_serie_csv(conn, empresa_id, contenido):
     A_ANIO = ("anio", "anio_tarifario", "año", "ano", "anio_688", "año_688")
     A_MES = ("mes", "month")
     A_Q = ("agua_facturada", "agua_facturada_m3", "q_m3", "q", "m3")
+    A_APS = ("cod_dane", "aps", "municipio", "area", "área")
+    A_CMI = ("cmi_cobrado", "cmi_dic2014", "cmi_dic_2014", "cmi_2014", "cmi", "cmi688", "cmi_688")
+    A_CMIC = ("cmi_corriente", "cmi_corr", "cmi_cte", "corriente")
     faltan = []
     if "servicio" not in cols:
         faltan.append("servicio")
@@ -400,12 +412,27 @@ def cargar_serie_csv(conn, empresa_id, contenido):
         faltan.append("agua_facturada")
     if faltan:
         return 0, ["faltan columnas: " + ", ".join(faltan)]
+    # Mapa de APS de la empresa: nombre / cod_dane -> cod_dane
+    aps_map = {}
+    for cd, nom in conn.execute(text(
+            "SELECT a.cod_dane, m.nombre FROM aps a LEFT JOIN municipio m ON m.cod_dane=a.cod_dane "
+            "WHERE a.empresa_id=:e"), {"e": empresa_id}).all():
+        aps_map[str(cd).strip()] = str(cd).strip()
+        if nom:
+            aps_map[str(nom).strip().lower()] = str(cd).strip()
 
     def _col(r, *names):
         for n in names:
             if n in r and (r.get(n) or "").strip() != "":
                 return r.get(n)
         return None
+
+    def _aps(r):
+        raw = _col(r, *A_APS)
+        if not raw:
+            return ""
+        raw = str(raw).strip()
+        return aps_map.get(raw) or aps_map.get(raw.lower()) or raw
 
     ok, err = 0, []
     for i, r in enumerate(rows, 2):
@@ -422,13 +449,13 @@ def cargar_serie_csv(conn, empresa_id, contenido):
             err.append(f"fila {i}: mes inválido '{_col(r, *A_MES)}' (debe ser 1–12 o nombre)")
             continue
         q = _ing._num(_col(r, *A_Q))
-        cmi = _ing._num(_col(r, "cmi_cobrado", "cmi", "cmi688", "cmi_688"))
-        seg = _ing._int(_col(r, "segmento", "segmento688", "segmento_688", "seg"))
-        if seg not in (1, 2):
-            seg = None
+        cmi = _ing._num(_col(r, *A_CMI))          # CMI en precios dic-2014 (obligatorio para el VP)
+        cmic = _ing._num(_col(r, *A_CMIC))        # CMI en precios corrientes (opcional)
+        cd = _aps(r)
         try:
             with conn.begin_nested():
-                serie_set(conn, empresa_id, serv, anio, q, cmi, seg, mes=mes)
+                serie_set(conn, empresa_id, serv, anio, q, cmi, None, mes=mes,
+                          cod_dane=cd, cmi_corriente=cmic)
             ok += 1
         except Exception as ex:
             err.append(f"fila {i}: {type(ex).__name__}")
@@ -458,7 +485,9 @@ def ingresos_vp(conn, empresa_id, servicio):
         d = por_anio.setdefault(i, {"ingreso": 0.0, "n": 0})
         if ingreso is not None:
             d["ingreso"] += ingreso; d["n"] += 1
-        meses.append({"anio": i, "mes": mes, "q": q, "cmi": cmi, "ingreso": ingreso})
+        meses.append({"anio": i, "mes": mes, "cod_dane": s["cod_dane"], "q": q, "cmi": cmi,
+                      "cmi_corriente": (float(s["cmi_corriente"]) if s["cmi_corriente"] is not None else None),
+                      "ingreso": ingreso})
     filas, total = [], 0.0
     for i in sorted(por_anio):
         ingreso_i = por_anio[i]["ingreso"] if por_anio[i]["n"] else None
