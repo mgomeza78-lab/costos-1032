@@ -39,6 +39,7 @@ import territorio_service as terr
 import aps_service as aps
 import costos_service as cpart
 import ref688_service as ref688
+import metas_service as mt
 import bcr_service as bcr
 import poir_cmi_service as poir
 import cmict_service as cmict
@@ -2284,30 +2285,32 @@ def metas(request: Request, eid: int):
             return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
         servicios_emp = [s for s, on in (("acueducto", emp["presta_ac"]),
                                          ("alcantarillado", emp["presta_al"])) if on] or ["acueducto"]
-        cat = conn.execute(text(
-            "SELECT c.id, c.codigo, c.servicio, c.objetivo, c.factor, c.nombre, c.tipo, "
-            "       c.valor_estandar, c.articulo, "
-            "       me.linea_base, me.meta_valor, me.anio_meta, me.estado, me.observacion "
-            "FROM meta_catalogo c "
-            "LEFT JOIN meta_empresa me ON me.meta_id=c.id AND me.empresa_id=:e "
-            "WHERE c.servicio = ANY(:ss) ORDER BY c.orden"),
-            {"e": eid, "ss": servicios_emp}).mappings().all()
+        pa = _periodo_activo(conn, eid)
+        anio = pa["anio"]                      # año de aplicación del período activo
+        cat = mt.catalogo(conn, eid, servicios_emp, anio)      # reguladas, evaluadas para el año
+        prop = mt.propias(conn, eid, servicios_emp, anio)      # propias de la empresa, evaluadas
         arch = {}
         for a in conn.execute(text(
                 "SELECT id, meta_id, nombre, tamano FROM meta_archivo WHERE empresa_id=:e ORDER BY subido_en"),
                 {"e": eid}).mappings().all():
             arch.setdefault(a["meta_id"], []).append(dict(a))
+    modo = req.metas_modo(pa["clave"])         # 'identificar' (inicio) | 'cuantificar' (año 1+)
     grupos = {}   # servicio -> objetivo -> [metas]
     n_est = n_bp = 0
     for m in cat:
-        grupos.setdefault(m["servicio"], {}).setdefault(m["objetivo"], []).append(dict(m))
+        grupos.setdefault(m["servicio"], {}).setdefault(m["objetivo"], []).append(m)
         if m["tipo"] == "estandar":
             n_est += 1
-        else:
+        elif m["tipo"] == "buena_practica":
             n_bp += 1
+    for m in prop:
+        grupos.setdefault(m["servicio"], {}).setdefault(m["objetivo"], []).append(m)
+    res_cumpl = mt.resumen_cumplimiento(cat + prop)
     return tpl.TemplateResponse(request, "metas.html", _ctx(
         request, emp=emp, grupos=grupos, archivos=arch, estados=ESTADOS_META,
-        n_est=n_est, n_bp=n_bp, puede=rbac.can(user, "cargar_mensual")))
+        n_est=n_est, n_bp=n_bp, modo=modo, anio=anio, periodo_activo=pa,
+        es_inicio=req.es_inicio(pa["clave"]), sentidos=mt.SENTIDOS, res_cumpl=res_cumpl,
+        puede=rbac.can(user, "cargar_mensual")))
 
 
 @app.post("/empresa/{eid}/metas/{mid}/editar")
@@ -2343,6 +2346,77 @@ def meta_editar(request: Request, eid: int, mid: int, linea_base: str = Form("")
         return RedirectResponse(dflt + f"?err=No+se+pudo+guardar+({type(e).__name__})", status_code=303)
     db.audit(scope_of(user), "meta_editar", "empresa", eid, f"{mid}:{est}")
     return RedirectResponse(dflt + f"?msg=Meta+actualizada#m{mid}", status_code=303)
+
+
+@app.post("/empresa/{eid}/metas/seguimiento")
+def meta_seguimiento(request: Request, eid: int, origen: str = Form(...), ref_id: int = Form(...),
+                     anio: int = Form(...), valor_real: str = Form(""), estado: str = Form(""),
+                     observacion: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    dflt = f"/empresa/{eid}/metas"
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(dflt + "?err=No+autorizado", status_code=303)
+    anchor = ("p" if origen == "propia" else "m") + str(ref_id)
+    try:
+        with db.scope_conn(scope_of(user)) as conn:
+            if not _emp_or_redirect(conn, eid):
+                return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+            err = mt.seguimiento_set(conn, eid, origen, ref_id, anio, _fnum(valor_real),
+                                     estado, observacion, user.get("user_id"))
+        if err:
+            return RedirectResponse(dflt + "?err=" + err.replace(" ", "+"), status_code=303)
+    except Exception as e:
+        return RedirectResponse(dflt + f"?err=No+se+pudo+guardar+({type(e).__name__})", status_code=303)
+    db.audit(scope_of(user), "meta_seguimiento", "empresa", eid, f"{origen}:{ref_id}:{anio}")
+    return RedirectResponse(dflt + f"?msg=Seguimiento+guardado#{anchor}", status_code=303)
+
+
+@app.post("/empresa/{eid}/metas/propia")
+def meta_propia_add(request: Request, eid: int, servicio: str = Form(...), nombre: str = Form(...),
+                    codigo: str = Form(""), descripcion: str = Form(""), objetivo_num: str = Form(""),
+                    unidad: str = Form(""), sentido: str = Form("ge"), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    dflt = f"/empresa/{eid}/metas"
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(dflt + "?err=No+autorizado", status_code=303)
+    try:
+        with db.scope_conn(scope_of(user)) as conn:
+            if not _emp_or_redirect(conn, eid):
+                return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+            _pid, err = mt.propia_add(conn, eid, {
+                "servicio": servicio, "nombre": nombre, "codigo": codigo, "descripcion": descripcion,
+                "objetivo_num": _fnum(objetivo_num), "unidad": unidad, "sentido": sentido},
+                user.get("user_id"))
+        if err:
+            return RedirectResponse(dflt + "?err=" + err.replace(" ", "+"), status_code=303)
+    except Exception as e:
+        return RedirectResponse(dflt + f"?err=No+se+pudo+guardar+({type(e).__name__})", status_code=303)
+    db.audit(scope_of(user), "meta_propia", "empresa", eid, f"{servicio}: {nombre}")
+    return RedirectResponse(dflt + "?msg=Meta+propia+agregada", status_code=303)
+
+
+@app.post("/empresa/{eid}/metas/propia/{pid}/eliminar")
+def meta_propia_del(request: Request, eid: int, pid: int, csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    dflt = f"/empresa/{eid}/metas"
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(dflt + "?err=No+autorizado", status_code=303)
+    with db.scope_conn(scope_of(user)) as conn:
+        mt.propia_eliminar(conn, eid, pid)
+    db.audit(scope_of(user), "meta_propia_eliminar", "empresa", eid, str(pid))
+    return RedirectResponse(dflt + "?msg=Meta+propia+eliminada", status_code=303)
 
 
 @app.post("/empresa/{eid}/metas/{mid}/archivo")

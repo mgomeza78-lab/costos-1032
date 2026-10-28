@@ -1,25 +1,33 @@
 {% extends "base.html" %}
 {% block title %}Seguimiento de metas · {{ emp.nombre }}{% endblock %}
 {% block body %}
+{% set cuant = (modo == 'cuantificar') %}
 <div class="page-head">
   <a class="back" href="/empresa/{{ emp.id }}">← {{ emp.nombre }}</a>
   <h1>Seguimiento a las metas de la Resolución CRA 1032</h1>
-  <p class="sub">Estándares de prestación y buenas prácticas (Capítulo 2, arts. 2.1.2.1.2.1 y 2.1.2.1.2.2).
-  En el <b>período de inicio</b> (1-jul a 31-dic-2026) las metas solo se <b>identifican y enuncian</b>; su
-  <b>cuantificación</b> —línea base al cierre de 2026 y metas anuales hasta el año tarifario 10— se realiza
-  en el <b>primer recálculo</b>, a más tardar el 31 de mayo de 2027 (art. 2.1.2.1.2.1, parágrafo 2). La
-  primera meta será para el año tarifario 2027.</p>
+  <p class="sub">Estándares de prestación y buenas prácticas (Capítulo 2, arts. 2.1.2.1.2.1 y 2.1.2.1.2.2),
+  más las <b>metas propias</b> de la empresa. Las reguladas dependen del <b>segmento</b> (aquí, segundo
+  segmento).
+  {% if cuant %}Estás en <b>{{ periodo_activo.etiqueta }}</b>: ingresa el <b>valor real</b> del indicador del
+  año <b>{{ anio }}</b> y el sistema <b>evalúa el nivel de cumplimiento</b> (real vs objetivo).
+  {% else %}En el <b>período de inicio</b> (1-jul a 31-dic-2026) las metas solo se <b>identifican y
+  enuncian</b>; su <b>cuantificación y evaluación</b> aplican desde el <b>año tarifario 1 (2027)</b>, con la
+  línea base al cierre de 2026 (art. 2.1.2.1.2.1, parágrafo 2).{% endif %}</p>
   <div class="cards" style="margin-top:.6rem">
     <div class="card"><div class="k">Estándares</div><div class="v">{{ n_est }}</div><div class="muted2">valor obligatorio</div></div>
     <div class="card"><div class="k">Buenas prácticas</div><div class="v">{{ n_bp }}</div><div class="muted2">potestativas (parágrafo 2)</div></div>
+    {% if cuant %}<div class="card"><div class="k">Evaluadas {{ anio }}</div><div class="v">{{ res_cumpl.n_evaluadas }}</div><div class="muted2">de {{ res_cumpl.n_total }} metas</div></div>
+    <div class="card"><div class="k">Cumplidas</div><div class="v">{{ res_cumpl.n_cumplidas }}</div><div class="muted2">año {{ anio }}</div></div>{% endif %}
   </div>
 </div>
 
-{% macro estado_tag(e) %}
-  {% if e == 'cumplido' %}<span class="tag ac">Cumplido</span>
-  {% elif e == 'en_proceso' %}<span class="tag" style="background:#f0ead7;color:#8a6d1f">En proceso</span>
-  {% elif e == 'no_aplica' %}<span class="tag">No aplica</span>
-  {% else %}<span class="tag">Pendiente</span>{% endif %}
+{% macro cumpl_tag(m) %}
+  {% if m.valor_real is none %}<span class="tag">sin dato</span>
+  {% elif m.cumplido %}<span class="tag ac">Cumplido{% if m.cumplimiento_pct is not none %} · {{ m.cumplimiento_pct|round(0)|int }} %{% endif %}</span>
+  {% elif m.cumplimiento_pct is not none %}<span class="tag" style="background:#f0ead7;color:#8a6d1f">En proceso · {{ m.cumplimiento_pct|round(0)|int }} %</span>
+  {% elif m.estado == 'cumplido' %}<span class="tag ac">Cumplido</span>
+  {% elif m.estado == 'no_aplica' %}<span class="tag">No aplica</span>
+  {% else %}<span class="tag" style="background:#f0ead7;color:#8a6d1f">En proceso</span>{% endif %}
 {% endmacro %}
 
 {% for servicio, objetivos in grupos.items() %}
@@ -27,44 +35,74 @@
 {% for objetivo, metas in objetivos.items() %}
 <h3 style="font-family:var(--head);font-size:14px;color:var(--teal-deep);margin:14px 0 4px">{{ objetivo }}</h3>
 <table class="tabla">
-  <thead><tr><th>Indicador</th><th>Tipo</th><th>Estándar</th><th class="r">Línea base (2026)</th>
-    <th class="r">Meta</th><th class="c">Estado</th></tr></thead>
+  <thead><tr><th>Indicador</th><th>Tipo</th><th>Objetivo</th>
+    {% if cuant %}<th class="r">Valor real {{ anio }}</th><th class="c">Cumplimiento</th>
+    {% else %}<th class="r">Línea base (2026)</th><th class="r">Meta</th><th class="c">Estado</th>{% endif %}</tr></thead>
   <tbody>
     {% for m in metas %}
-    <tr id="m{{ m.id }}">
-      <td class="comp"><b>{{ m.codigo }}</b> · {{ m.nombre }}{% if m.factor %}<br><span class="muted2">{{ m.factor }}</span>{% endif %}</td>
-      <td>{% if m.tipo == 'estandar' %}<span class="tag ac">Estándar</span>{% else %}<span class="tag">Buena práctica</span>{% endif %}</td>
+    {% set anchor = ('p' if m.origen=='propia' else 'm') ~ m.id %}
+    <tr id="{{ anchor }}">
+      <td class="comp"><b>{{ m.codigo or '—' }}</b> · {{ m.nombre }}{% if m.factor %}<br><span class="muted2">{{ m.factor }}</span>{% endif %}</td>
+      <td>{% if m.tipo == 'estandar' %}<span class="tag ac">Estándar</span>{% elif m.tipo == 'propia' %}<span class="tag" style="background:#e7eef6;color:#2d5a86">Propia</span>{% else %}<span class="tag">Buena práctica</span>{% endif %}</td>
       <td class="muted2">{{ m.valor_estandar }}</td>
+      {% if cuant %}
+      <td class="num">{% if m.valor_real is not none %}{{ m.valor_real|round(2) }}{% if m.unidad %} <span class="muted2">{{ m.unidad }}</span>{% endif %}{% else %}—{% endif %}</td>
+      <td class="c">{{ cumpl_tag(m) }}</td>
+      {% else %}
       <td class="num">{{ m.linea_base or '—' }}</td>
       <td class="num">{{ m.meta_valor or '—' }}{% if m.anio_meta %} <span class="muted2">({{ m.anio_meta }})</span>{% endif %}</td>
-      <td class="c">{{ estado_tag(m.estado or 'pendiente') }}</td>
+      <td class="c">{{ cumpl_tag(m) }}</td>
+      {% endif %}
     </tr>
-    {% if m.observacion %}<tr><td colspan="6" class="muted2" style="padding-top:0">{{ m.observacion }}</td></tr>{% endif %}
+    {% set ncols = 5 if cuant else 6 %}
+    {% if m.obs_seg or m.obs_ident %}<tr><td colspan="{{ ncols }}" class="muted2" style="padding-top:0">{{ m.obs_seg or m.obs_ident }}</td></tr>{% endif %}
     {% if puede %}
-    <tr><td colspan="6" style="padding:0 0 6px">
-      <details id="e{{ m.id }}" class="meta-edit">
-        <summary>Editar seguimiento y soporte</summary>
+    <tr><td colspan="{{ ncols }}" style="padding:0 0 6px">
+      <details id="e{{ anchor }}" class="meta-edit">
+        <summary>{% if cuant %}Registrar valor real y cumplimiento{% else %}Identificar / editar seguimiento{% endif %}{% if m.origen=='propia' %} · meta propia{% endif %}</summary>
+
+        {% if cuant %}
+        <form method="post" action="/empresa/{{ emp.id }}/metas/seguimiento" class="form-grid" style="margin:6px 0">
+          <input type="hidden" name="csrf" value="{{ csrf_token }}">
+          <input type="hidden" name="origen" value="{{ m.origen }}"><input type="hidden" name="ref_id" value="{{ m.id }}">
+          <input type="hidden" name="anio" value="{{ anio }}">
+          {% if m.cuantitativa %}
+          <label>Valor real {{ anio }} {% if m.unidad %}<span class="muted2">({{ m.unidad }})</span>{% endif %}
+            <input name="valor_real" inputmode="decimal" value="{{ m.valor_real if m.valor_real is not none else '' }}" style="width:150px"></label>
+          <span class="muted2" style="align-self:end;padding-bottom:6px">Objetivo: {{ m.valor_estandar }}</span>
+          {% else %}
+          <label>Estado
+            <select name="estado">{% for k, v in estados.items() %}<option value="{{ k }}" {{ 'selected' if (m.estado or 'pendiente')==k }}>{{ v }}</option>{% endfor %}</select></label>
+          {% endif %}
+          <label class="wide">Observación <input name="observacion" value="{{ m.obs_seg or '' }}" placeholder="opcional"></label>
+          <button class="btn" type="submit">Guardar valor real</button>
+        </form>
+        {% else %}
+        {% if m.origen != 'propia' %}
         <form method="post" action="/empresa/{{ emp.id }}/metas/{{ m.id }}/editar" class="form-grid" style="margin:6px 0">
           <input type="hidden" name="csrf" value="{{ csrf_token }}">
           <label>Línea base (cierre 2026) <input name="linea_base" value="{{ m.linea_base or '' }}" placeholder="pendiente" style="width:160px"></label>
           <label>Meta <input name="meta_valor" value="{{ m.meta_valor or '' }}" placeholder="se define en 2027" style="width:160px"></label>
           <label>Año meta <input type="number" name="anio_meta" value="{{ m.anio_meta or '' }}" min="2026" max="2040" style="width:90px"></label>
           <label>Estado
-            <select name="estado">
-              {% for k, v in estados.items() %}<option value="{{ k }}" {{ 'selected' if (m.estado or 'pendiente')==k }}>{{ v }}</option>{% endfor %}
-            </select>
-          </label>
-          <label class="wide">Observación <input name="observacion" value="{{ m.observacion or '' }}" placeholder="opcional"></label>
+            <select name="estado">{% for k, v in estados.items() %}<option value="{{ k }}" {{ 'selected' if (m.estado_ident or 'pendiente')==k }}>{{ v }}</option>{% endfor %}</select></label>
+          <label class="wide">Observación <input name="observacion" value="{{ m.obs_ident or '' }}" placeholder="opcional"></label>
           <button class="btn" type="submit">Guardar</button>
         </form>
+        {% else %}<p class="muted2" style="margin:4px 0">Meta propia: su cuantificación se registra desde el año tarifario 1.</p>{% endif %}
+        {% endif %}
+
+        {% if m.origen == 'propia' %}
+        <form method="post" action="/empresa/{{ emp.id }}/metas/propia/{{ m.id }}/eliminar" style="display:inline"
+              onsubmit="return confirm('¿Eliminar esta meta propia y su seguimiento?')">
+          <input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="btn-link" type="submit">Eliminar meta propia</button></form>
+        {% else %}
         {% set fs = archivos.get(m.id, []) %}
         {% if fs %}
         <div class="muted2" style="margin:2px 0">Soportes:
-          {% for f in fs %}
-          <a href="/empresa/{{ emp.id }}/metas/archivo/{{ f.id }}">{{ f.nombre }}</a><form
+          {% for f in fs %}<a href="/empresa/{{ emp.id }}/metas/archivo/{{ f.id }}">{{ f.nombre }}</a><form
              method="post" action="/empresa/{{ emp.id }}/metas/archivo/{{ f.id }}/eliminar" style="display:inline"
-             onsubmit="return confirm('¿Eliminar este soporte?')"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="btn-link" type="submit">×</button></form>{% if not loop.last %} · {% endif %}
-          {% endfor %}
+             onsubmit="return confirm('¿Eliminar este soporte?')"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="btn-link" type="submit">×</button></form>{% if not loop.last %} · {% endif %}{% endfor %}
         </div>
         {% endif %}
         <form method="post" action="/empresa/{{ emp.id }}/metas/{{ m.id }}/archivo" enctype="multipart/form-data" class="up-form">
@@ -72,6 +110,7 @@
           <label>Adjuntar soporte (PDF, Excel, imagen…) <input type="file" name="archivo" required></label>
           <button class="btn" type="submit">Subir soporte</button>
         </form>
+        {% endif %}
       </details>
     </td></tr>
     {% endif %}
@@ -81,10 +120,28 @@
 {% endfor %}
 {% endfor %}
 
-<p class="hint">Las <b>buenas prácticas</b> son potestativas de la persona prestadora (art. 2.1.2.1.2.2,
-parágrafo 2). Los <b>estándares</b> con gradualidad (art. 2.1.2.1.2.3) se alcanzan por senda anual; cuando
-el indicador no tiene gradualidad, la meta anual se fija en el valor del estándar. El cumplimiento de las
-metas se reporta a la SSPD en los formatos y plazos que esta defina (art. 2.1.2.1.6.1.3).</p>
+{% if puede %}
+<h2 class="serv-h" style="margin-top:20px">Agregar meta propia de la empresa</h2>
+<p class="muted2">Metas adicionales que la empresa se fija (además de las reguladas). Si indicas un
+<b>objetivo numérico</b>, el sistema evaluará el cumplimiento con el valor real que cargues cada año.</p>
+<form method="post" action="/empresa/{{ emp.id }}/metas/propia" class="form-grid">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <label>Servicio <select name="servicio">{% if emp.presta_ac %}<option value="acueducto">Acueducto</option>{% endif %}{% if emp.presta_al %}<option value="alcantarillado">Alcantarillado</option>{% endif %}</select></label>
+  <label>Código <input name="codigo" placeholder="opcional" style="width:110px"></label>
+  <label>Nombre de la meta <input name="nombre" required></label>
+  <label>Objetivo numérico <input name="objetivo_num" inputmode="decimal" placeholder="opcional" style="width:120px"></label>
+  <label>Unidad <input name="unidad" placeholder="%, m³…" style="width:110px"></label>
+  <label>Sentido <select name="sentido">{% for k, v in sentidos.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</select></label>
+  <label class="wide">Descripción <input name="descripcion" placeholder="opcional"></label>
+  <button class="btn" type="submit">Agregar meta propia</button>
+</form>
+{% endif %}
+
+<p class="hint">Las <b>buenas prácticas</b> son potestativas (art. 2.1.2.1.2.2, parágrafo 2). Los
+<b>estándares</b> con gradualidad (art. 2.1.2.1.2.3) se alcanzan por senda anual; cuando el indicador no
+tiene gradualidad, la meta anual se fija en el valor del estándar. El nivel de cumplimiento se calcula
+comparando el valor real con el objetivo según su sentido (≥, ≤ o =). El reporte a la SSPD se hace en los
+formatos y plazos que esta defina (art. 2.1.2.1.6.1.3).</p>
 
 <style>
 .meta-edit{padding:2px 8px;background:var(--paper);border-left:2px solid var(--line)}
