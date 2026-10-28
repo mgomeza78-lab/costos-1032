@@ -44,19 +44,45 @@ año i se obtiene el <b>VP(CMI×Q)</b>, que se resta al VIA688 para el VPR₀ (a
 <h3 style="font-family:var(--head);font-size:14.5px;color:var(--teal-deep);margin:16px 0 6px">{{ bcr_serv[s] }}</h3>
 {% set ing = bcr_ingresos.get(s) %}
 {% if ing and ing.filas %}
+<div style="overflow-x:auto">
 <table class="tabla">
-  <thead><tr><th>Año 688</th><th class="r">Ingreso anual Σ(CMI·Q)</th>
-    <th class="r">Factor 1/(1+r688)^i</th><th class="r">VP del año</th></tr></thead>
+  <thead><tr><th>Año 688 →</th>
+    {% for x in ing.filas %}<th class="r">Año {{ x.anio }}{% if x.proy %}*{% endif %}</th>{% endfor %}
+    <th class="r">Total</th></tr></thead>
   <tbody>
-    {% for x in ing.filas %}
-    <tr><td class="comp">{{ x.anio }}</td>
-      <td class="num">{{ x.ingreso|valor('$') if x.ingreso is not none else '—' }}</td>
-      <td class="num">{{ x.factor|round(4) if x.factor is not none else '—' }}</td>
-      <td class="num">{{ x.vp|valor('$') if x.vp is not none else '—' }}</td></tr>{% endfor %}
-    <tr><td colspan="3" class="r"><b>VP de los ingresos — VP(CMI×Q)</b></td>
-      <td class="num"><b>{{ ing.total|valor('$') if ing.total is not none else 'falta r688' }}</b></td></tr>
+    <tr><td>Agua facturada (m³)</td>
+      {% for x in ing.filas %}<td class="num">{{ x.q|valor if x.q is not none else '—' }}</td>{% endfor %}
+      <td class="num"><b>{{ ing.total_q|valor if ing.total_q is not none else '—' }}</b></td></tr>
+    <tr><td>Ingreso anual Σ(CMI·Q) <span class="muted2">(millones $)</span></td>
+      {% for x in ing.filas %}<td class="num">{{ x.ingreso|millones if x.ingreso is not none else '—' }}</td>{% endfor %}
+      <td class="num"><b>{{ ing.total_ingreso|millones if ing.total_ingreso is not none else '—' }}</b></td></tr>
+    <tr><td><b>VP del año — VP(CMI×Q)</b> <span class="muted2">(millones $)</span></td>
+      {% for x in ing.filas %}<td class="num">{{ x.vp|millones if x.vp is not none else '—' }}</td>{% endfor %}
+      <td class="num"><b>{{ ing.total|millones if ing.total is not none else 'falta r688' }}</b></td></tr>
   </tbody>
 </table>
+</div>
+{% if ing.filas|selectattr('proy')|list %}<p class="muted2" style="margin:2px 0 0">* el año incluye meses con m³ proyectados.</p>{% endif %}
+{% set tr = bcr_tramos.get(s) if bcr_tramos else none %}
+{% if tr and (tr.poir or tr.bcr or tr.total) %}
+<details style="margin:6px 0 2px">
+  <summary class="muted2" style="cursor:pointer">Periodos en que el CMI688 se mantuvo estable (precios dic-2014)</summary>
+  <table class="tabla" style="margin-top:6px">
+    <thead><tr><th>Componente</th><th class="r">CMI ($/m³)</th><th>Desde</th><th>Hasta</th><th class="c">Meses</th></tr></thead>
+    <tbody>
+      {% for camp, lbl in [('poir','CMI_POIR'), ('bcr','CMI_BCR'), ('total','CMI total')] %}
+        {% for x in tr[camp] %}
+        <tr{% if camp=='total' %} style="background:var(--teal-bg,#f0f6f6)"{% endif %}>
+          <td>{% if loop.first %}<b>{{ lbl }}</b>{% endif %}</td>
+          <td class="num">{{ x.valor|valor('$') }}</td>
+          <td>{{ x.desde }}</td><td>{{ x.hasta }}</td><td class="c">{{ x.meses }}</td></tr>
+        {% endfor %}
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted2" style="margin:4px 0 0">El CMI total cambia cuando cambia cualquiera de sus componentes; por eso tiene más tramos que POIR o BCR por separado.</p>
+</details>
+{% endif %}
 {% if ing.meses %}
 <details style="margin:4px 0 2px">
   <summary class="muted2" style="cursor:pointer">Ver detalle mensual ({{ ing.meses|length }} registro(s))</summary>
