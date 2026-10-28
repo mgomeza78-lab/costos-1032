@@ -83,6 +83,11 @@ regulado</a> para reconstruir la BCR₀ del marco 688 (art. 2.1.2.1.5 y ss. de l
   </tbody>
 </table>
 {% endfor %}
+{% elif not es_inicio %}
+<h2 class="serv-h">Base de capital regulado — {{ periodo_activo.etiqueta }}</h2>
+<p class="hint">En este año tarifario <b>ya no aplican</b> la BCR₀ ni el POIR 688 (fueron insumos del
+período de inicio). Aquí corresponde el <b>POIR 1032</b> (plan de inversiones) y la <b>ejecución de obras
+del año</b>, que se habilitan en la Fase 3. Siguen aplicando los activos administrativos y operativos.</p>
 {% endif %}
 
 <p class="hint">✓ = ese mes está cargado para el servicio. Para corregir cargues erróneos, usa el botón

@@ -23,7 +23,7 @@
       {% set p = request.url.path %}
       <a class="rail-back" href="/panel">← Empresas</a>
       <div class="rail-emp">{{ emp.nombre }}</div>
-      <div class="sublabel">Estudio de costos · período de inicio</div>
+      <div class="sublabel">Estudio de costos · {{ per.por_clave(emp.periodo_activo).etiqueta }}</div>
       {% if rbac.can(user,'editar_empresa') %}<a class="rail-edit" href="/empresa/{{ emp.id }}/editar">✎ Editar empresa / áreas</a>{% endif %}
 
       {% set en_gi = '/aps' in p or '/cargar' in p or '/mensual' in p %}
@@ -44,11 +44,14 @@
       {% set en_bcr = '/inversiones' in p %}
       <details class="rail-group" {{ 'open' if en_bcr }}>
         <summary>Base de capital regulado</summary>
+        {% set pc = emp.periodo_activo %}
         <ol class="rail-nav">
-          <li><a class="link {{ 'active' if en_bcr and sec|default('')=='agua' }}" href="/empresa/{{ emp.id }}/inversiones?sec=agua">Agua facturada (688) y segmento</a></li>
-          <li><a class="link {{ 'active' if en_bcr and sec|default('')=='bcr' }}" href="/empresa/{{ emp.id }}/inversiones?sec=bcr">BCR de inicio</a></li>
-          <li><a class="link {{ 'active' if en_bcr and sec|default('')=='poir' }}" href="/empresa/{{ emp.id }}/inversiones?sec=poir">POIR 688 · planeado</a></li>
-          <li><a class="link {{ 'active' if en_bcr and sec|default('')=='poir_ejec' }}" href="/empresa/{{ emp.id }}/inversiones?sec=poir_ejec">POIR 688 · ejecutado</a></li>
+          {% if req.aplica(pc,'bcr_agua688') %}<li><a class="link {{ 'active' if en_bcr and sec|default('')=='agua' }}" href="/empresa/{{ emp.id }}/inversiones?sec=agua">Agua facturada (688) y segmento</a></li>{% endif %}
+          {% if req.aplica(pc,'bcr0') %}<li><a class="link {{ 'active' if en_bcr and sec|default('')=='bcr' }}" href="/empresa/{{ emp.id }}/inversiones?sec=bcr">BCR de inicio</a></li>{% endif %}
+          {% if req.aplica(pc,'poir688_plan') %}<li><a class="link {{ 'active' if en_bcr and sec|default('')=='poir' }}" href="/empresa/{{ emp.id }}/inversiones?sec=poir">POIR 688 · planeado</a></li>{% endif %}
+          {% if req.aplica(pc,'poir688_ejec') %}<li><a class="link {{ 'active' if en_bcr and sec|default('')=='poir_ejec' }}" href="/empresa/{{ emp.id }}/inversiones?sec=poir_ejec">POIR 688 · ejecutado</a></li>{% endif %}
+          {% if req.aplica(pc,'poir1032_plan') %}<li><span class="link muted2" title="Disponible en la Fase 3">POIR 1032 · plan de inversiones <small>(próximamente)</small></span></li>{% endif %}
+          {% if req.aplica(pc,'poir1032_ejec') %}<li><span class="link muted2" title="Disponible en la Fase 3">Ejecución de obras del año <small>(próximamente)</small></span></li>{% endif %}
           <li><a class="link {{ 'active' if en_bcr and sec|default('')=='activos' }}" href="/empresa/{{ emp.id }}/inversiones?sec=activos">Activos administrativos y operativos</a></li>
           <li><a class="link {{ 'active' if en_bcr and sec|default('')=='provision' }}" href="/empresa/{{ emp.id }}/inversiones?sec=provision">Provisión POIR (Res. 950)</a></li>
         </ol>

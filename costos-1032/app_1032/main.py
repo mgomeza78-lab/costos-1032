@@ -42,6 +42,7 @@ import poir_cmi_service as poir
 import cmict_service as cmict
 import ccp_service as ccp
 import periodos as per
+import requisitos as req
 import ingesta
 import lector_balance as lb
 import clasificador as clf
@@ -96,6 +97,8 @@ tpl.env.filters["anio_tar"] = per.corto          # etiqueta corta del año tarif
 tpl.env.filters["anio_tar_full"] = per.etiqueta  # etiqueta completa
 tpl.env.filters["anio_tar_base"] = per.etiqueta_base  # período al que pertenece un AÑO de línea base
 tpl.env.globals["PERIODOS"] = per.PERIODOS
+tpl.env.globals["per"] = per                     # período activo → etiqueta (por_clave)
+tpl.env.globals["req"] = req                     # matriz de requisitos por período (aplica/…)
 
 
 # ------------------------------------------------------------------ helpers
@@ -1945,7 +1948,9 @@ def validacion(request: Request, eid: int):
     serv_agua = [s for s in servicios if s == "acueducto"]
     # La línea base depende del año tarifario ACTIVO de la empresa (inicio → 2024–2025).
     with db.scope_conn(scope_of(user)) as _c:
-        anios = _periodo_activo(_c, eid)["anios_base"]
+        _pa = _periodo_activo(_c, eid)
+    anios = _pa["anios_base"]
+    _es_inicio_p = req.es_inicio(_pa["clave"])
     matriz = [
         {"clave": "comercial", "nombre": "Comercial (suscriptores y consumos)", "cel": com_m, "serv": servicios},
         {"clave": "agua", "nombre": "Agua producida / macromedición (solo acueducto)", "cel": agua_m, "serv": serv_agua},
@@ -1969,8 +1974,9 @@ def validacion(request: Request, eid: int):
     _pkeys = ("r688", "ipc_dic_2014", "ipc_dic_2025", "fecha_inicio_688")
     _plabel = {"r688": "r688", "ipc_dic_2014": "IPC dic‑2014",
                "ipc_dic_2025": "IPC dic‑2025", "fecha_inicio_688": "inicio 688"}
+    # La BCR₀ / POIR 688 solo se valida en el período de inicio; desde el año 1 aplica POIR 1032.
     bcr_val = []
-    for s in servicios:
+    for s in (servicios if _es_inicio_p else []):
         p = bparams.get(s) or {}
         faltan = [_plabel[k] for k in _pkeys if p.get(k) in (None, "")]
         nf, nm = bserie_f.get(s, 0), bserie_m.get(s, 0)
@@ -1994,7 +2000,8 @@ def validacion(request: Request, eid: int):
         ]})
     return tpl.TemplateResponse(request, "validacion.html", _ctx(
         request, emp=emp, matriz=matriz, bal_anual=bal_anual, resumen=resumen, servicios=servicios,
-        bcr_val=bcr_val, anios=anios, meses_num=list(range(1, 13)), meses=ops.MESES))
+        bcr_val=bcr_val, anios=anios, meses_num=list(range(1, 13)), meses=ops.MESES,
+        periodo_activo=_pa, es_inicio=_es_inicio_p))
 
 
 # ------------------------------------------------------------------ Resultados · Costos de referencia por año tarifario
