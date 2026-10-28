@@ -1954,18 +1954,24 @@ def validacion(request: Request, eid: int):
         ref688_rows = ref688.por_servicio(conn, eid)   # punto de partida 688 (solo inicio)
         # --- insumos de la base de capital regulado (BCR₀) y del POIR 688, por servicio ---
         bparams = bcr.params(conn, eid)
+        ipc14, ipc25 = bcr.ipc_dic(conn, 2014), bcr.ipc_dic(conn, 2025)   # IPC dic del módulo de indexación
         bserie_f, bserie_m = {}, {}
         for s, nf, nm in conn.execute(text(
                 "SELECT servicio, count(*), count(DISTINCT mes) FROM bcr_serie WHERE empresa_id=:e GROUP BY servicio"),
                 {"e": eid}).all():
             bserie_f[s] = nf; bserie_m[s] = nm
+        # Meses con m³ facturados cargados por servicio (serie 688): para validar la cobertura
+        # desde el inicio de la 688 hasta jun‑2026 (mes anterior al inicio de la 1032).
+        bserie_q = dict(conn.execute(text(
+            "SELECT servicio, count(*) FROM bcr_serie WHERE empresa_id=:e AND q_m3 IS NOT NULL GROUP BY servicio"),
+            {"e": eid}).all())
         bact = dict(conn.execute(text(
             "SELECT servicio, count(*) FROM bcr_activo WHERE empresa_id=:e GROUP BY servicio"), {"e": eid}).all())
         bproy = dict(conn.execute(text(
-            "SELECT servicio, count(*) FROM proyecto_inversion WHERE empresa_id=:e GROUP BY servicio"), {"e": eid}).all())
+            "SELECT servicio, count(*) FROM proyecto_inversion WHERE empresa_id=:e AND marco='688' GROUP BY servicio"), {"e": eid}).all())
         bav = dict(conn.execute(text(
             "SELECT p.servicio, count(a.id) FROM proyecto_inversion p "
-            "JOIN avance_inversion a ON a.proyecto_id=p.id WHERE p.empresa_id=:e GROUP BY p.servicio"),
+            "JOIN avance_inversion a ON a.proyecto_id=p.id WHERE p.empresa_id=:e AND p.marco='688' GROUP BY p.servicio"),
             {"e": eid}).all())
     servicios = [s for s, on in (("acueducto", emp["presta_ac"]), ("alcantarillado", emp["presta_al"])) if on] or ["acueducto"]
     # El agua producida (macromedición) solo aplica a acueducto; el alcantarillado no la carga.
@@ -2017,24 +2023,48 @@ def validacion(request: Request, eid: int):
     resumen.append({"nombre": f"Subsidios y contribuciones · acuerdo del concejo {_pa['anio']}",
                     "valor": _sval, "ok": _sok,
                     "nota": "lo fija el concejo por anualidad; se carga en «Cargar información › Subsidios y contribuciones»"})
-    # Checklist de insumos de la BCR₀ / POIR 688 por servicio (art. 2.1.2.1.5 y ss.).
-    _pkeys = ("r688", "ipc_dic_2014", "ipc_dic_2025", "fecha_inicio_688")
-    _plabel = {"r688": "r688", "ipc_dic_2014": "IPC dic‑2014",
-               "ipc_dic_2025": "IPC dic‑2025", "fecha_inicio_688": "inicio 688"}
-    # La BCR₀ / POIR 688 solo se valida en el período de inicio; desde el año 1 aplica POIR 1032.
+    # Insumos de la BCR₀ / POIR 688 por servicio (art. 2.1.2.1.5 y ss.). Solo en el período de inicio.
+    # r688 se deriva del SEGMENTO de la empresa; los IPC salen del módulo de indexación y la fecha de
+    # inicio 688 de la empresa. El usuario no digita esos valores (solo la fecha y el segmento).
+    seg688 = bcr.segmento_688(emp["suscriptores_seg"])
+    r688_auto = bcr.r688_de_segmento(seg688)
+    ipc_sis_ok = bool(ipc14 and ipc25)
+    # Meses esperados con m³ facturados 688: del inicio de la 688 al mes anterior al inicio de la 1032
+    # (la 1032 pudo aplicarse más tarde que jul‑2026; se toma la fecha de inicio 1032 de la empresa).
+    _ini1032 = emp["fecha_inicio_1032"]
+    meses_688 = 0
+    if emp["fecha_inicio_688"]:
+        _fy, _fm = emp["fecha_inicio_688"].year, emp["fecha_inicio_688"].month
+        _ey, _em = (_ini1032.year, _ini1032.month) if _ini1032 else (2026, 7)
+        meses_688 = max((_ey - _fy) * 12 + (_em - 1 - _fm) + 1, 0)
     bcr_val = []
     for s in (servicios if _es_inicio_p else []):
         p = bparams.get(s) or {}
-        faltan = [_plabel[k] for k in _pkeys if p.get(k) in (None, "")]
-        nf, nm = bserie_f.get(s, 0), bserie_m.get(s, 0)
+        r688_res = p["r688"] if p.get("r688") not in (None, "") else r688_auto
+        fecha_res = p["fecha_inicio_688"] if p.get("fecha_inicio_688") else emp["fecha_inicio_688"]
+        ipc_ok = ipc_sis_ok or bool(p.get("ipc_dic_2014") and p.get("ipc_dic_2025"))
+        nq = bserie_q.get(s, 0)
         na, np_, nav = bact.get(s, 0), bproy.get(s, 0), bav.get(s, 0)
         bcr_val.append({"servicio": s, "checks": [
-            {"nombre": "Parámetros 688 (r688, IPC dic‑2014/2025, inicio 688)",
-             "ok": not faltan, "articulo": "art. 2.1.2.1.5.2",
-             "detalle": "completos" if not faltan else "faltan: " + ", ".join(faltan)},
-            {"nombre": "Serie de agua facturada 688 / CMI cobrado (mensual)",
-             "ok": nf > 0, "articulo": "art. 2.1.2.1.5.2.1",
-             "detalle": (f"{nf} registro(s) · {nm} mes(es) con dato" if nf else "sin datos cargados")},
+            {"nombre": "Segmento 688 y tasa r688",
+             "ok": (r688_auto is not None) or (p.get("r688") not in (None, "")),
+             "articulo": "art. 2.1.2.1.5.2",
+             "detalle": (f"segmento {seg688} → r688 = {('%.2f' % (float(r688_auto) * 100)).replace('.', ',')} %"
+                         if r688_auto is not None
+                         else (f"r688 cargado = {('%.2f' % (float(p['r688']) * 100)).replace('.', ',')} %"
+                               if p.get("r688") not in (None, "")
+                               else "falta: registra los suscriptores del segmento 688 en «Punto de partida 688»"))},
+            {"nombre": "IPC dic‑2014 y dic‑2025 (factor de actualización fa₀)",
+             "ok": ipc_ok, "articulo": "art. 2.1.2.1.5.3.1",
+             "detalle": ("tomados del módulo de IPC / indexación (no se digitan aquí)" if ipc_ok
+                         else "falta: cárgalos en «IPC / indexación»")},
+            {"nombre": "Fecha de inicio de la 688",
+             "ok": bool(fecha_res), "articulo": "art. 2.1.2.1.5.2",
+             "detalle": (f"{fecha_res}" if fecha_res else "falta: regístrala (abajo en «Punto de partida 688» o en «Editar empresa»)")},
+            {"nombre": "Agua facturada 688 por servicio (del inicio 688 al mes previo a la 1032)",
+             "ok": meses_688 > 0 and nq >= meses_688, "articulo": "art. 2.1.2.1.5.2.1",
+             "detalle": (f"{nq}/{meses_688} meses con m³ facturados" if meses_688
+                         else "define la fecha de inicio 688 para validar la cobertura mensual")},
             {"nombre": "Activos de la BCR₀ (VPR₀ / VA₀)",
              "ok": na > 0, "articulo": "art. 2.1.2.1.5.2.1.1",
              "detalle": (f"{na} activo(s)" if na else "sin activos registrados")},
@@ -2790,6 +2820,8 @@ def cargar_info(request: Request, eid: int):
         meses=ops.MESES, anios_tar=ANIOS_TAR, cat_cp=cpart.CATEGORIAS,
         serv_cp=cpart.SERVICIOS, periodos_carga=per.periodos_cargables(),
         ref688=ref688_rows, ref688_serv=ref688.SERVICIOS,
+        ref688_seg=bcr.segmento_688(emp["suscriptores_seg"]),
+        ref688_r=bcr.r688_de_segmento(bcr.segmento_688(emp["suscriptores_seg"])),
         sub_factores=sub_factores, sub_acuerdos=sub_acuerdos, sub_clases=ops.CLASES,
         sub_subsidiables=subc.SUBSIDIABLES, sub_contribuyentes=subc.CONTRIBUYENTES,
         periodo_activo=pa, periodos_todos=per.periodos_cargables(),
@@ -2911,6 +2943,49 @@ def eliminar_costo_ref688(request: Request, eid: int, servicio: str,
         ref688.eliminar(conn, eid, servicio)
     db.audit(scope_of(user), "costo_ref688_eliminar", "empresa", eid, servicio)
     return RedirectResponse(_dest(next, dflt, "msg=Costo+de+referencia+688+eliminado"), status_code=303)
+
+
+@app.post("/empresa/{eid}/ref688-datos")
+def guardar_ref688_datos(request: Request, eid: int, fecha_inicio_688: str = Form(""),
+                         fecha_inicio_1032: str = Form(""), suscriptores_seg: str = Form(""),
+                         next: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    dflt = f"/empresa/{eid}/cargar?fuente=ref688"
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
+
+    def _mes(s):   # 'YYYY-MM' → 'YYYY-MM-01'; 'YYYY-MM-DD' queda igual
+        s = (s or "").strip()
+        return (s + "-01") if len(s) == 7 else (s or None)
+    try:
+        susc = int(suscriptores_seg) if suscriptores_seg.strip() else None
+    except ValueError:
+        susc = None
+    upd, p = [], {"e": eid}
+    if _mes(fecha_inicio_688):
+        upd.append("fecha_inicio_688=:f688"); p["f688"] = _mes(fecha_inicio_688)
+    if _mes(fecha_inicio_1032):
+        upd.append("fecha_inicio_1032=:f1032"); p["f1032"] = _mes(fecha_inicio_1032)
+    if susc is not None:
+        upd.append("suscriptores_seg=:susc"); p["susc"] = susc
+    if not upd:
+        return RedirectResponse(_dest(next, dflt, "err=Nada+que+guardar"), status_code=303)
+    try:
+        with db.scope_conn(scope_of(user)) as conn:
+            if not _emp_or_redirect(conn, eid):
+                return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+            if _estudio_aprobado(conn, eid):
+                return RedirectResponse(_dest(next, dflt, _APROBADO_MSG), status_code=303)
+            conn.execute(text("UPDATE empresa SET " + ", ".join(upd) + " WHERE id=:e"), p)
+    except Exception as e:
+        return RedirectResponse(_dest(next, dflt, f"err=No+se+pudo+guardar+({type(e).__name__})"),
+                                status_code=303)
+    db.audit(scope_of(user), "ref688_datos", "empresa", eid, ", ".join(upd))
+    return RedirectResponse(_dest(next, dflt, "msg=Datos+de+transición+guardados"), status_code=303)
 
 
 # ---- Subsidios y contribuciones: factores + acuerdo del concejo, por año (vigencia) ----

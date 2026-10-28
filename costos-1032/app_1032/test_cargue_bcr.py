@@ -90,7 +90,8 @@ print("== Plan / real / cumplimiento por año tarifario ==")
 tok = csrf(adm, f"/empresa/{EID}/inversiones")
 adm.post(f"/empresa/{EID}/inversion-nueva", data={
     "csrf": tok, "codigo_poir": "POIR-T", "nombre": "Proyecto prueba", "servicio": "acueducto",
-    "clasificacion": "CMI_POIR", "valor_planeado": "1000", "fecha_planeada_operacion": "2027-06-30"},
+    "clasificacion": "CMI_POIR", "marco": "1032", "valor_planeado": "1000",
+    "fecha_planeada_operacion": "2027-06-30"},
     follow_redirects=False)
 # el proyecto_id real:
 with db.engine_owner.connect() as cn:

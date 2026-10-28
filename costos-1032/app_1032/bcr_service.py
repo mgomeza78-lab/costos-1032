@@ -235,12 +235,14 @@ def plantilla_activos_bytes():
 
 
 # ---------------- Parámetros 688 y series (agua facturada / CMI cobrado) ----------------
-def _t_anios(fecha_inicio_688):
-    """Años de aplicación de la 688 hasta el 30-jun-2026 (meses/12)."""
+def _t_anios(fecha_inicio_688, fecha_inicio_1032=None):
+    """Años de aplicación de la 688: desde su inicio hasta el mes anterior al inicio de la 1032
+    (por defecto 30-jun-2026, pero la empresa puede haber aplicado la 1032 más tarde). meses/12."""
     if not fecha_inicio_688:
         return 0.0
+    ey, em = (fecha_inicio_1032.year, fecha_inicio_1032.month) if fecha_inicio_1032 else (2026, 7)
     y, m = fecha_inicio_688.year, fecha_inicio_688.month
-    meses = (2026 - y) * 12 + (6 - m)
+    meses = (ey - y) * 12 + (em - 1 - m)
     return max(meses, 0) / 12.0
 
 
@@ -510,7 +512,7 @@ def bcr0_calculo(conn, empresa_id, r_emp=None):
     CI = Σcak + BCR₀·r; CMI_BCR = CI/CCP.
     """
     emp_row = conn.execute(text(
-        "SELECT r, suscriptores_seg, fecha_inicio_688 FROM empresa WHERE id=:e"),
+        "SELECT r, suscriptores_seg, fecha_inicio_688, fecha_inicio_1032 FROM empresa WHERE id=:e"),
         {"e": empresa_id}).mappings().first()
     if r_emp is None:
         r_emp = float(emp_row["r"]) if (emp_row and emp_row["r"] is not None) else 0.0
@@ -521,6 +523,7 @@ def bcr0_calculo(conn, empresa_id, r_emp=None):
     i14, i25 = ipc_dic(conn, 2014), ipc_dic(conn, 2025)
     fa0_auto = (float(i25) / float(i14)) if (i14 and i25) else None
     fecha_auto = emp_row["fecha_inicio_688"] if emp_row else None
+    fecha_1032 = emp_row["fecha_inicio_1032"] if emp_row else None   # fin de la 688 = mes anterior
     ps = params(conn, empresa_id)
     activos = lista(conn, empresa_id)
     out = {}
@@ -528,7 +531,7 @@ def bcr0_calculo(conn, empresa_id, r_emp=None):
         p = ps.get(s)
         r688 = float(p["r688"]) if (p and p["r688"] is not None) else r688_auto
         fecha_inicio = (p["fecha_inicio_688"] if (p and p["fecha_inicio_688"]) else fecha_auto)
-        t = _t_anios(fecha_inicio) if fecha_inicio else None
+        t = _t_anios(fecha_inicio, fecha_1032) if fecha_inicio else None
         fa0 = _fa0(p) if (p and p["ipc_dic_2014"] and p["ipc_dic_2025"]) else fa0_auto
         ccp = float(p["ccp_2025"]) if (p and p["ccp_2025"] is not None) else ccp_desde_consumos(conn, empresa_id, s)
         vping = ingresos_vp(conn, empresa_id, s)["total"]          # VP de los ingresos (agregado)

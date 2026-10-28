@@ -75,6 +75,25 @@ Es el <b>punto de partida</b> de la transición del período de inicio (art. 2.1
 cálculo de los costos de la nueva metodología, sino que sirve de comparación y control. Captura la tarifa
 (cargo fijo = CMA; cargo por consumo = CMO+CMI+tasas) y, si la tienes, su desagregación por componente.</p>
 {% if periodo_activo.es_inicio %}
+
+<h3 class="serv-h">Datos de transición 688 → 1032</h3>
+<p class="muted2">El sistema usa estos datos para derivar el <b>r688</b> (por el segmento), traer el VPR₀ a valor
+presente y validar la cobertura mensual de m³ facturados 688. Los <b>IPC</b> salen del módulo de indexación
+(no se digitan). La <b>1032 pudo aplicarse más tarde</b> que jul‑2026: ajusta su fecha si es el caso.</p>
+{% if puede_cargar %}
+<form method="post" action="/empresa/{{ emp.id }}/ref688-datos" class="form-grid">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+  <label>Inicio de aplicación de la 688 <input type="month" name="fecha_inicio_688" value="{{ emp.fecha_inicio_688.strftime('%Y-%m') if emp.fecha_inicio_688 else '' }}"></label>
+  <label>Inicio de aplicación de la 1032 <input type="month" name="fecha_inicio_1032" value="{{ emp.fecha_inicio_1032.strftime('%Y-%m') if emp.fecha_inicio_1032 else '2026-07' }}"></label>
+  <label>Suscriptores (segmento 688) <input name="suscriptores_seg" inputmode="numeric" value="{{ emp.suscriptores_seg or '' }}"></label>
+  <button class="btn" type="submit">Guardar datos de transición</button>
+</form>
+{% endif %}
+<p class="muted2">Segmento 688 derivado:
+  {% if ref688_seg %}<b>segmento {{ ref688_seg }} → r688 = {{ '%.2f'|format(ref688_r*100)|replace('.', ',') }} %</b>{% else %}<b>sin definir</b> (ingresa los suscriptores){% endif %}
+  · agua facturada 688 esperada: desde el inicio de la 688 hasta el <b>mes anterior</b> al inicio de la 1032.</p>
+
+<h3 class="serv-h">Último costo de referencia aplicado (688)</h3>
 {% if puede_cargar %}
 <form method="post" action="/empresa/{{ emp.id }}/costo-ref688" class="form-grid">
   <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
