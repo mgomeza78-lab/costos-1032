@@ -1,16 +1,19 @@
 {% extends "base.html" %}
 {% block title %}Validación de información · {{ emp.nombre }}{% endblock %}
 {% block body %}
+{% set MM = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'] %}
+{% set pa = periodo_activo %}
 <div class="page-head">
   <a class="back" href="/empresa/{{ emp.id }}">← {{ emp.nombre }}</a>
-  <h1>Validación de información</h1>
-  <p class="sub">Cobertura de la información de <b>línea base</b> del <b>período de inicio</b> (jul–dic 2026),
-  que se calcula con los años <b>2024 y 2025</b>. La información <b>comercial</b> y de <b>agua</b> se carga por
-  <b>mes</b> (la meta son los 12 meses de cada año, por servicio); el <b>balance de prueba</b> se carga por
-  <b>año</b> y se valida por año base.</p>
+  <h1>Validación de información · {{ pa.etiqueta }}</h1>
+  <p class="sub">Cobertura de la información de <b>línea base</b> del <b>{{ pa.etiqueta|lower }}</b>
+  ({{ MM[pa.mes_ini-1]|lower }}–{{ MM[pa.mes_fin-1]|lower }} {{ pa.anio }}), que se calcula con
+  {% if anios|length > 1 %}los años <b>{{ anios|join(' y ') }}</b>{% else %}el año <b>{{ anios[0] }}</b>{% endif %}.
+  La información <b>comercial</b> y de <b>agua</b> se carga por <b>mes</b> (la meta son los 12 meses de cada
+  año, por servicio); el <b>balance de prueba</b> se carga por <b>año</b> y se valida por año base.
+  {% if not es_inicio %}<br><span class="muted2">Solo se muestran los insumos del <b>año tarifario activo</b>;
+  cambie el año tarifario en «Cargar información» si necesita validar otro.</span>{% endif %}</p>
 </div>
-
-{% set MM = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'] %}
 {% for c in matriz %}
 <h2 class="serv-h">{{ c.nombre }}</h2>
 <table class="tabla compact">
@@ -31,8 +34,8 @@
 <h2 class="serv-h">Balance de prueba (numeradores del CMO / CMI / CMICT)</h2>
 <p class="muted2" style="margin:-4px 0 6px">El balance se carga por <b>año</b> y cubre ambos servicios (el reparto
 —clase 5 por % y clase 7 por cuenta— se ve en <a href="/empresa/{{ emp.id }}/balance">Balance clasificado</a>).
-Para el período de inicio se validan los dos años base. Totales de control por clase: cuenta 5 (administración) y
-cuenta 7 (operación).</p>
+Para el {{ pa.etiqueta|lower }} se valida{{ 'n los dos años base' if anios|length > 1 else ' el año base' }}.
+Totales de control por clase: cuenta 5 (administración) y cuenta 7 (operación).</p>
 <table class="tabla compact">
   <thead><tr><th>Año base</th><th class="c">Estado</th><th class="r">Total cuenta 5</th>
     <th class="r">Total cuenta 7</th><th>Archivo(s)</th></tr></thead>
@@ -51,11 +54,12 @@ cuenta 7 (operación).</p>
 <table class="tabla">
   <tbody>
     {% for r in resumen %}
-    <tr><td class="comp">{{ r.nombre }}</td>
+    <tr><td class="comp">{{ r.nombre }}{% if r.nota %}<br><span class="muted2" style="font-size:12px">{{ r.nota }}</span>{% endif %}</td>
       <td>
         {% if r.pendiente %}<span class="muted2">Módulo por implementar (próxima fase)</span>
         {% elif r.valor is defined %}{% if r.ok %}<span class="tag ac">{{ r.valor }}</span>{% else %}<span class="tag" style="background:#f0ead7;color:#8a6d1f">{{ r.valor }}</span>{% endif %}
-        {% elif r.datos is defined %}{% for an in anios %}<span class="tag {{ 'ac' if r.datos.get(an) else 'neg' }}" style="margin-right:4px">{{ an }}: {{ r.datos.get(an, 0) }} registros</span>{% endfor %}{% endif %}
+        {% elif r.datos is defined %}{% for an in anios %}<span class="tag {{ 'ac' if r.datos.get(an) else 'neg' }}" style="margin-right:4px">{{ an }}: {{ r.datos.get(an, 0) }} concepto(s){% if r.tot is defined and r.datos.get(an) %} · {{ r.tot.get(an, 0)|valor('$') }}{% endif %}</span>{% endfor %}
+        {% elif r.datos_serv is defined %}{% for s, ok in r.datos_serv.items() %}<span class="tag {{ 'ac' if ok else 'neg' }}" style="margin-right:4px">{{ s }}: {{ '✓ cargado' if ok else 'falta' }}</span>{% endfor %}{% endif %}
       </td></tr>
     {% endfor %}
   </tbody>
@@ -91,6 +95,7 @@ del año</b>, que se habilitan en la Fase 3. Siguen aplicando los activos admini
 {% endif %}
 
 <p class="hint">✓ = ese mes está cargado para el servicio. Para corregir cargues erróneos, usa el botón
-«eliminar» en cada fila cargada de <a href="/empresa/{{ emp.id }}/cargar">Cargar información</a>. Los costos
-particulares y las metas se desarrollan en el primer recálculo, con la línea base al cierre de 2026.</p>
+«eliminar» en cada fila cargada de <a href="/empresa/{{ emp.id }}/cargar">Cargar información</a>.
+{% if es_inicio %}Las <b>metas</b> solo se identifican y enuncian en el período de inicio; su cuantificación
+corresponde al primer recálculo, con la línea base al cierre de 2026.{% endif %}</p>
 {% endblock %}

@@ -33,10 +33,12 @@ import costo_referencia_view as crv
 import recalculo_service as rc
 import inversiones_service as inv
 import subsidios_service as subs
+import subsidios_cargue_service as subc
 import dashboard_service as dash
 import territorio_service as terr
 import aps_service as aps
 import costos_service as cpart
+import ref688_service as ref688
 import bcr_service as bcr
 import poir_cmi_service as poir
 import cmict_service as cmict
@@ -1276,7 +1278,8 @@ PLANTILLAS = {
         ["2026,7,acueducto,1,1200,19200,19200", "2026,7,acueducto,5,900,21600,0"]),
     "factores": ("plantilla_factores_subsidio.csv",
         "vigencia,servicio,clase,factor_cargofijo,factor_consumo",
-        ["2026-07,acueducto,1,-0.70,-0.70", "2026-07,acueducto,5,0.50,0.50"]),
+        ["2026,acueducto,1,-0.70,-0.70", "2026,acueducto,5,0.50,0.50",
+         "2026,alcantarillado,1,-0.70,-0.70", "2026,alcantarillado,5,0.50,0.50"]),
     "indicadores": ("plantilla_indicadores.csv",
         "anio,mes,servicio,ipuf_real,continuidad_h,irca,reclamaciones,cortes,reconexiones",
         ["2026,7,acueducto,6.0,24,0,,,"]),
@@ -1928,6 +1931,13 @@ def validacion(request: Request, eid: int):
         fsub = dict(conn.execute(text(
             "SELECT vigencia, count(*) FROM factor_subsidio WHERE empresa_id=:e GROUP BY vigencia"),
             {"e": eid}).all())
+        # Costos particulares (COP, art. 2.1.2.1.3.4.5): nº de conceptos y total $ por año base.
+        cpart_cnt, cpart_tot = {}, {}
+        for a, n, tt in conn.execute(text(
+                "SELECT anio, count(*), coalesce(sum(valor),0) FROM costo_particular "
+                "WHERE empresa_id=:e GROUP BY anio"), {"e": eid}).all():
+            cpart_cnt[a] = n; cpart_tot[a] = tt
+        ref688_rows = ref688.por_servicio(conn, eid)   # punto de partida 688 (solo inicio)
         # --- insumos de la base de capital regulado (BCR₀) y del POIR 688, por servicio ---
         bparams = bcr.params(conn, eid)
         bserie_f, bserie_m = {}, {}
@@ -1949,6 +1959,7 @@ def validacion(request: Request, eid: int):
     # La línea base depende del año tarifario ACTIVO de la empresa (inicio → 2024–2025).
     with db.scope_conn(scope_of(user)) as _c:
         _pa = _periodo_activo(_c, eid)
+        _sub_estado = subc.estado_anio(_c, eid, _pa["anio"])   # subsidios por año de aplicación
     anios = _pa["anios_base"]
     _es_inicio_p = req.es_inicio(_pa["clave"])
     matriz = [
@@ -1967,9 +1978,27 @@ def validacion(request: Request, eid: int):
     resumen = [
         {"nombre": "Configuración del APS", "valor": f"{apsres['n_completos']}/{apsres['n_municipios']} completos",
          "ok": apsres["n_municipios"] > 0 and apsres["n_completos"] == apsres["n_municipios"]},
-        {"nombre": "Factores de subsidio y contribución", "datos": fsub},
-        {"nombre": "Costos particulares (art. Res. 1032)", "pendiente": True},
+        {"nombre": "Costos particulares (COP, art. 2.1.2.1.3.4.5)", "datos": cpart_cnt, "tot": cpart_tot,
+         "nota": "conceptos cargados por año base; el valor contable registrado se descuenta del COC"},
     ]
+    # Punto de partida 688: solo en el período de inicio (art. 2.1.2.1.1.8).
+    if _es_inicio_p:
+        _r688ok = {}
+        for s in servicios:
+            _r = ref688_rows.get(s) or {}
+            _r688ok[s] = bool((_r.get("cargo_fijo") is not None or _r.get("cargo_consumo") is not None)
+                              and _r.get("fecha_indexacion"))
+        resumen.append({"nombre": "Punto de partida · último costo de referencia 688 (art. 2.1.2.1.1.8)",
+                        "datos_serv": _r688ok,
+                        "nota": "última tarifa/costo del marco 688 y su fecha de indexación, por servicio"})
+    # Subsidios y contribuciones: el acuerdo del concejo del año de aplicación del período activo.
+    _sok = _sub_estado["n_factores"] > 0 and _sub_estado["acuerdo"]
+    _sval = (f"{_sub_estado['n_factores']} factor(es) · "
+             + (f"acuerdo {_sub_estado['numero'] or 'registrado'}" if _sub_estado["acuerdo"] else "sin acuerdo")
+             + ("" if (not _sub_estado["acuerdo"] or _sub_estado["tiene_soporte"]) else " · sin documento"))
+    resumen.append({"nombre": f"Subsidios y contribuciones · acuerdo del concejo {_pa['anio']}",
+                    "valor": _sval, "ok": _sok,
+                    "nota": "lo fija el concejo por anualidad; se carga en «Cargar información › Subsidios y contribuciones»"})
     # Checklist de insumos de la BCR₀ / POIR 688 por servicio (art. 2.1.2.1.5 y ss.).
     _pkeys = ("r688", "ipc_dic_2014", "ipc_dic_2025", "fecha_inicio_688")
     _plabel = {"r688": "r688", "ipc_dic_2014": "IPC dic‑2014",
@@ -2566,7 +2595,7 @@ def cargar_info(request: Request, eid: int):
     fuente = request.query_params.get("fuente") or "comercial"
     if fuente == "ccp":          # CCP/Fap se fusionó en "Producción y Suministro de Agua y Fap"
         fuente = "agua"
-    if fuente not in ("comercial", "agua", "balance", "costos", "cmict"):
+    if fuente not in ("comercial", "agua", "balance", "costos", "cmict", "subsidios"):
         fuente = "comercial"
     # Vista comercial: "total" (conjunto, resumen) o "aps" (desglose por APS desde el detalle);
     # y filtro opcional por año. Orden cronológico en toda la vista "Cargado".
@@ -2621,6 +2650,9 @@ def cargar_info(request: Request, eid: int):
         munis = aps.municipios_empresa(conn, eid)
         costos = cpart.lista(conn, eid)
         ajuste_coc = cpart.ajuste_coc(conn, eid)
+        ref688_rows = ref688.por_servicio(conn, eid)   # punto de partida 688 (solo período de inicio)
+        sub_factores = subc.factores_por_anio(conn, eid)   # factores subsidio/contribución por vigencia
+        sub_acuerdos = subc.acuerdos_por_anio(conn, eid)   # acuerdo del concejo por vigencia
         energia = eq.energia_lista(conn, eid)
         quimicos = eq.quimico_lista(conn, eid)
         eq_tot = eq.totales(conn, eid)
@@ -2664,6 +2696,9 @@ def cargar_info(request: Request, eid: int):
         ivh_opc=ccp.IVH_OPC, met_opc=ccp.MET_OPC,
         meses=ops.MESES, anios_tar=ANIOS_TAR, cat_cp=cpart.CATEGORIAS,
         serv_cp=cpart.SERVICIOS, periodos_carga=per.periodos_cargables(),
+        ref688=ref688_rows, ref688_serv=ref688.SERVICIOS,
+        sub_factores=sub_factores, sub_acuerdos=sub_acuerdos, sub_clases=ops.CLASES,
+        sub_subsidiables=subc.SUBSIDIABLES, sub_contribuyentes=subc.CONTRIBUYENTES,
         periodo_activo=pa, periodos_todos=per.periodos_cargables(),
         bal_ajustes=bal_ajustes, conceptos_manual=bv.CONCEPTOS_MANUAL,
         tipos_cac=bv.TIPOS_CAC, tipo_label=bv.TIPO_LABEL, art_manual=bv.ART_MANUAL,
@@ -2726,6 +2761,210 @@ def eliminar_costo_particular(request: Request, eid: int, cid: int,
         cpart.eliminar(conn, eid, cid)
     db.audit(scope_of(user), "costo_particular_eliminar", "empresa", eid, str(cid))
     return RedirectResponse(_dest(next, dflt, "msg=Costo+particular+eliminado"), status_code=303)
+
+
+# -------- Último costo de referencia 688 (punto de partida · solo período de inicio) --------
+@app.post("/empresa/{eid}/costo-ref688")
+def guardar_costo_ref688(request: Request, eid: int, servicio: str = Form(...),
+                         cargo_fijo: str = Form(""), cargo_consumo: str = Form(""),
+                         cma: str = Form(""), cmo: str = Form(""), cmi: str = Form(""),
+                         cmict: str = Form(""), fecha_indexacion: str = Form(""),
+                         indice_base: str = Form(""), acto_admin: str = Form(""),
+                         observacion: str = Form(""), origen: str = Form("empresa"),
+                         next: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    dflt = f"/empresa/{eid}/cargar?fuente=costos"
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
+    try:
+        with db.scope_conn(scope_of(user)) as conn:
+            if not _emp_or_redirect(conn, eid):
+                return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+            if _estudio_aprobado(conn, eid):
+                return RedirectResponse(_dest(next, dflt, _APROBADO_MSG), status_code=303)
+            _cid, err = ref688.guardar(conn, eid, servicio, {
+                "cargo_fijo": _fnum(cargo_fijo), "cargo_consumo": _fnum(cargo_consumo),
+                "cma": _fnum(cma), "cmo": _fnum(cmo), "cmi": _fnum(cmi), "cmict": _fnum(cmict),
+                "fecha_indexacion": fecha_indexacion, "indice_base": _fnum(indice_base),
+                "acto_admin": acto_admin, "observacion": observacion, "origen": origen},
+                user["user_id"])
+        if err:
+            return RedirectResponse(_dest(next, dflt, "err=" + err.replace(" ", "+")), status_code=303)
+    except Exception as e:
+        return RedirectResponse(_dest(next, dflt, f"err=No+se+pudo+guardar+({type(e).__name__})"),
+                                status_code=303)
+    db.audit(scope_of(user), "costo_ref688", "empresa", eid, servicio)
+    return RedirectResponse(_dest(next, dflt, "msg=Costo+de+referencia+688+guardado"), status_code=303)
+
+
+@app.post("/empresa/{eid}/costo-ref688/{servicio}/eliminar")
+def eliminar_costo_ref688(request: Request, eid: int, servicio: str,
+                          next: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    dflt = f"/empresa/{eid}/cargar?fuente=costos"
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
+    with db.scope_conn(scope_of(user)) as conn:
+        if _estudio_aprobado(conn, eid):
+            return RedirectResponse(_dest(next, dflt, _APROBADO_MSG), status_code=303)
+        ref688.eliminar(conn, eid, servicio)
+    db.audit(scope_of(user), "costo_ref688_eliminar", "empresa", eid, servicio)
+    return RedirectResponse(_dest(next, dflt, "msg=Costo+de+referencia+688+eliminado"), status_code=303)
+
+
+# ---- Subsidios y contribuciones: factores + acuerdo del concejo, por año (vigencia) ----
+# Los factores los fija el Concejo Municipal por anualidad (no se derivan del comercial).
+_SUB_DFLT = "/empresa/{}/cargar?fuente=subsidios"
+
+
+@app.post("/empresa/{eid}/subsidio-factor")
+def guardar_subsidio_factor(request: Request, eid: int, vigencia: str = Form(...),
+                            servicio: str = Form(...), clase: str = Form(...),
+                            factor_cargofijo: str = Form(""), factor_consumo: str = Form(""),
+                            next: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    dflt = _SUB_DFLT.format(eid)
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
+    try:
+        with db.scope_conn(scope_of(user)) as conn:
+            if not _emp_or_redirect(conn, eid):
+                return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+            _fid, err = subc.factor_guardar(conn, eid, vigencia, servicio, clase,
+                                            _fnum(factor_cargofijo), _fnum(factor_consumo), user["user_id"])
+        if err:
+            return RedirectResponse(_dest(next, dflt, "err=" + err.replace(" ", "+")), status_code=303)
+    except Exception as e:
+        return RedirectResponse(_dest(next, dflt, f"err=No+se+pudo+guardar+({type(e).__name__})"),
+                                status_code=303)
+    db.audit(scope_of(user), "subsidio_factor", "empresa", eid, f"{vigencia} {servicio} clase {clase}")
+    return RedirectResponse(_dest(next, dflt, "msg=Factor+guardado"), status_code=303)
+
+
+@app.post("/empresa/{eid}/subsidio-factor/{fid}/eliminar")
+def eliminar_subsidio_factor(request: Request, eid: int, fid: int,
+                             next: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    dflt = _SUB_DFLT.format(eid)
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
+    with db.scope_conn(scope_of(user)) as conn:
+        subc.factor_eliminar(conn, eid, fid)
+    db.audit(scope_of(user), "subsidio_factor_eliminar", "empresa", eid, str(fid))
+    return RedirectResponse(_dest(next, dflt, "msg=Factor+eliminado"), status_code=303)
+
+
+@app.post("/empresa/{eid}/subsidio-factores-masivo")
+def subir_subsidio_factores(request: Request, eid: int, archivo: UploadFile = File(...),
+                            next: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    dflt = _SUB_DFLT.format(eid)
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
+    texto = _decodificar(archivo.file.read())
+    try:
+        with db.scope_conn(scope_of(user)) as conn:
+            if not _emp_or_redirect(conn, eid):
+                return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+            n, err = ingesta.cargar_factores(conn, eid, texto)
+    except Exception as e:
+        return RedirectResponse(_dest(next, dflt, f"err=No+se+pudo+cargar+({type(e).__name__})"),
+                                status_code=303)
+    msg = f"msg={n}+factor(es)+cargado(s)" + ("+con+avisos" if err else "")
+    db.audit(scope_of(user), "subsidio_factores_masivo", "empresa", eid, f"{n} filas")
+    return RedirectResponse(_dest(next, dflt, msg), status_code=303)
+
+
+@app.post("/empresa/{eid}/subsidio-acuerdo")
+def guardar_subsidio_acuerdo(request: Request, eid: int, vigencia: str = Form(...),
+                             numero_acuerdo: str = Form(""), fecha_acuerdo: str = Form(""),
+                             concejo: str = Form(""), observacion: str = Form(""),
+                             archivo: UploadFile = File(None), next: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    dflt = _SUB_DFLT.format(eid)
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
+    soporte = None
+    if archivo is not None and (archivo.filename or "").strip():
+        raw = archivo.file.read()
+        nombre = archivo.filename.strip()
+        ext = nombre.rsplit(".", 1)[-1].lower() if "." in nombre else ""
+        if ext not in subc.EXT_PERMITIDAS:
+            return RedirectResponse(_dest(next, dflt, f"err=Formato+no+admitido+({ext})"), status_code=303)
+        if len(raw) > subc.MAX_BYTES:
+            return RedirectResponse(_dest(next, dflt, "err=El+archivo+supera+25+MB"), status_code=303)
+        soporte = (nombre, ext, len(raw), raw)
+    try:
+        with db.scope_conn(scope_of(user)) as conn:
+            if not _emp_or_redirect(conn, eid):
+                return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+            _aid, err = subc.acuerdo_guardar(conn, eid, vigencia, {
+                "numero_acuerdo": numero_acuerdo, "fecha_acuerdo": fecha_acuerdo,
+                "concejo": concejo, "observacion": observacion}, soporte, user["user_id"])
+        if err:
+            return RedirectResponse(_dest(next, dflt, "err=" + err.replace(" ", "+")), status_code=303)
+    except Exception as e:
+        return RedirectResponse(_dest(next, dflt, f"err=No+se+pudo+guardar+({type(e).__name__})"),
+                                status_code=303)
+    db.audit(scope_of(user), "subsidio_acuerdo", "empresa", eid, f"{vigencia} {numero_acuerdo}")
+    return RedirectResponse(_dest(next, dflt, "msg=Acuerdo+del+concejo+guardado"), status_code=303)
+
+
+@app.get("/empresa/{eid}/subsidio-acuerdo/{vigencia}/soporte")
+def bajar_subsidio_acuerdo(request: Request, eid: int, vigencia: int):
+    if (r := _need_login(request)):
+        return r
+    user = session_user(request)
+    with db.scope_conn(scope_of(user)) as conn:
+        f = subc.acuerdo_soporte(conn, eid, vigencia)
+    if not f or not f["contenido"]:
+        return RedirectResponse(f"/empresa/{eid}/cargar?fuente=subsidios&err=Sin+soporte", status_code=303)
+    import mimetypes
+    media = mimetypes.guess_type(f["nombre"] or "")[0] or "application/octet-stream"
+    seguro = (f["nombre"] or "acuerdo").replace('"', "")
+    return Response(content=bytes(f["contenido"]), media_type=media,
+                    headers={"Content-Disposition": f'attachment; filename="{seguro}"'})
+
+
+@app.post("/empresa/{eid}/subsidio-acuerdo/{vigencia}/eliminar")
+def eliminar_subsidio_acuerdo(request: Request, eid: int, vigencia: int,
+                              next: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    dflt = _SUB_DFLT.format(eid)
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
+    with db.scope_conn(scope_of(user)) as conn:
+        subc.acuerdo_eliminar(conn, eid, vigencia)
+    db.audit(scope_of(user), "subsidio_acuerdo_eliminar", "empresa", eid, str(vigencia))
+    return RedirectResponse(_dest(next, dflt, "msg=Acuerdo+eliminado"), status_code=303)
 
 
 # ---------------------------------------------------------- energía (CE) y químicos (CIQ)

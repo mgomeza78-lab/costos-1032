@@ -438,6 +438,58 @@ generando continuidad con las señales regulatorias de la Res. 688.</p>
 <p class="muted2">Por punto de toma/bombeo: <b>Ceb = Σ Kebⱼ·Pceⱼ</b>, con <b>Kebⱼ = mín[(Υ/(3600·η))·Vⱼ·Hⱼ, Krⱼ]</b>.
 Para <b>otros procesos</b> (no bombeo), el costo es <b>Ko·Pce</b>. Υ = 9,8 (acueducto) / 10,5 (alcantarillado);
 η = 0,60 (alcant.) o por volumen bombeado en acueducto (0,63 / 0,69 / 0,77).</p>
+
+{# ============ PUNTO DE PARTIDA 688 (solo período de inicio) ============ #}
+{% if periodo_activo.es_inicio %}
+<h3 class="serv-h">Punto de partida · último costo de referencia marco 688 (art. 2.1.2.1.1.8)</h3>
+<p class="muted2">Registra, <b>por servicio</b>, la última tarifa o costo de referencia que la empresa venía
+aplicando bajo la metodología anterior (Res. CRA 688 de 2014) y la <b>fecha a la que estaban indexados</b>.
+Es el punto de partida de la transición del período de inicio: no reemplaza el cálculo de los costos de la
+nueva metodología, sino que sirve de comparación y control. Captura la tarifa (cargo fijo = CMA; cargo por
+consumo = CMO+CMI+tasas) y, si la tienes, su desagregación por componente.</p>
+{% if puede_cargar %}
+<form method="post" action="/empresa/{{ emp.id }}/costo-ref688" class="form-grid">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+  <label>Servicio <select name="servicio" required>{{ servopts() }}</select></label>
+  <label>Cargo fijo 688 ($/suscriptor·mes) <input name="cargo_fijo" inputmode="decimal"></label>
+  <label>Cargo por consumo 688 ($/m³) <input name="cargo_consumo" inputmode="decimal"></label>
+  <label>Fecha de indexación <input type="month" name="fecha_indexacion"></label>
+  <label>Índice base (IPC) <input name="indice_base" inputmode="decimal"></label>
+  <label>CMA ($/susc·mes) <span class="muted2">opcional</span><input name="cma" inputmode="decimal"></label>
+  <label>CMO ($/m³) <span class="muted2">opcional</span><input name="cmo" inputmode="decimal"></label>
+  <label>CMI ($/m³) <span class="muted2">opcional</span><input name="cmi" inputmode="decimal"></label>
+  <label>CMICT/tasas ($/m³) <span class="muted2">opcional</span><input name="cmict" inputmode="decimal"></label>
+  <label class="wide">Acto administrativo <input name="acto_admin" placeholder="Resolución/acuerdo con que se aplicó el marco 688"></label>
+  <label>Origen <select name="origen"><option value="empresa">Empresa</option><option value="SUI">SUI</option><option value="supuesto">Supuesto</option></select></label>
+  <label class="wide">Observación <input name="observacion"></label>
+  <button class="btn" type="submit">Guardar punto de partida 688</button>
+</form>
+{% endif %}
+{% set hay688 = ref688 and (ref688.values()|list) %}
+{% if hay688 %}
+<div style="overflow-x:auto"><table class="tabla compact" style="margin-top:6px">
+  <thead><tr><th>Servicio</th><th class="r">CF 688 ($/susc·mes)</th><th class="r">CC 688 ($/m³)</th>
+    <th class="r">CMA</th><th class="r">CMO</th><th class="r">CMI</th><th class="r">CMICT</th>
+    <th>Indexado a</th><th class="r">Índice</th><th>Acto admin.</th>{% if puede_cargar %}<th></th>{% endif %}</tr></thead>
+  <tbody>
+    {% for s, r in ref688.items() %}<tr>
+      <td class="comp">{{ ref688_serv.get(s, s) }}</td>
+      <td class="num">{{ r.cargo_fijo|valor('$') if r.cargo_fijo is not none else '—' }}</td>
+      <td class="num">{{ r.cargo_consumo|valor('$') if r.cargo_consumo is not none else '—' }}</td>
+      <td class="num">{{ r.cma|valor('$') if r.cma is not none else '—' }}</td>
+      <td class="num">{{ r.cmo|valor('$') if r.cmo is not none else '—' }}</td>
+      <td class="num">{{ r.cmi|valor('$') if r.cmi is not none else '—' }}</td>
+      <td class="num">{{ r.cmict|valor('$') if r.cmict is not none else '—' }}</td>
+      <td>{{ r.fecha_indexacion or '—' }}</td>
+      <td class="num">{{ r.indice_base|valor if r.indice_base is not none else '—' }}</td>
+      <td class="muted2" style="font-size:12px">{{ r.acto_admin or '—' }}</td>
+      {% if puede_cargar %}<td class="c"><form method="post" action="/empresa/{{ emp.id }}/costo-ref688/{{ s }}/eliminar" style="display:inline"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}"><button class="btn-link" type="submit" title="eliminar">×</button></form></td>{% endif %}
+    </tr>{% endfor %}
+  </tbody>
+</table></div>
+{% else %}<p class="empty">Aún no se ha registrado el punto de partida 688.</p>{% endif %}
+{% endif %}
+
 {% if puede_cargar %}
 <div class="carga-metodo">
   <div class="metodo-tabs">
@@ -622,6 +674,97 @@ para no doble contar (art. 2.1.2.1.3.4.4).</p>
 <p class="hint">Este valor contable se descuenta del COC del servicio y año respectivos para que el costo no se
 reconozca dos veces (una vía el COC comparable y otra vía el costo particular).</p>
 {% endif %}
+{% endif %}
+
+{# ---------------- SUBSIDIOS Y CONTRIBUCIONES (acuerdo del concejo) ---------------- #}
+{% if fuente=='subsidios' %}
+{% set vdef = periodo_activo.anio %}
+<h2 class="serv-h">Subsidios y contribuciones</h2>
+<p class="muted2">Los <b>porcentajes (factores)</b> de subsidio (−) y contribución (+) <b>no se derivan del
+formato comercial</b>: los fija el <b>Concejo Municipal por anualidad</b> mediante acuerdo (Ley 142 de 1994,
+art. 89.1; límites de la Ley 1450 de 2011, art. 125). Aquí se cargan <b>por año (vigencia)</b> y se adjunta
+el <b>acuerdo del concejo</b> que los soporta. El balance FSRI (menú «Suficiencia y subsidios») solo consume
+estos insumos. En el período de inicio aplica el acuerdo vigente para <b>{{ vdef }}</b>.</p>
+
+{# ---- Acuerdo del concejo por vigencia ---- #}
+<h3 class="serv-h">Acuerdo del concejo</h3>
+{% if puede_cargar %}
+<form method="post" action="/empresa/{{ emp.id }}/subsidio-acuerdo" enctype="multipart/form-data" class="form-grid">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+  <label>Vigencia (año) <input name="vigencia" type="number" value="{{ vdef }}" min="2015" max="2040" required></label>
+  <label>N.º de acuerdo <input name="numero_acuerdo" placeholder="p. ej. Acuerdo 035 de 2025"></label>
+  <label>Fecha del acuerdo <input type="date" name="fecha_acuerdo"></label>
+  <label>Concejo / municipio <input name="concejo" placeholder="Concejo Municipal de …"></label>
+  <label class="wide">Documento del acuerdo (PDF/imagen) <input type="file" name="archivo" accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff"></label>
+  <label class="wide">Observación <input name="observacion"></label>
+  <button class="btn" type="submit">Guardar acuerdo</button>
+</form>
+{% endif %}
+{% if sub_acuerdos %}
+<table class="tabla compact" style="margin-top:6px">
+  <thead><tr><th>Vigencia</th><th>N.º de acuerdo</th><th>Fecha</th><th>Concejo</th><th>Soporte</th>{% if puede_cargar %}<th></th>{% endif %}</tr></thead>
+  <tbody>
+    {% for v, a in sub_acuerdos.items() %}<tr>
+      <td class="comp">{{ v }}</td><td>{{ a.numero_acuerdo or '—' }}</td>
+      <td>{{ a.fecha_acuerdo or '—' }}</td><td>{{ a.concejo or '—' }}</td>
+      <td>{% if a.tiene_soporte %}<a href="/empresa/{{ emp.id }}/subsidio-acuerdo/{{ v }}/soporte">{{ a.soporte_nombre or 'documento' }}</a>{% else %}<span class="muted2">sin documento</span>{% endif %}</td>
+      {% if puede_cargar %}<td class="c"><form method="post" action="/empresa/{{ emp.id }}/subsidio-acuerdo/{{ v }}/eliminar" style="display:inline" onsubmit="return confirm('¿Eliminar el acuerdo de {{ v }}?')"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}"><button class="btn-link" type="submit">×</button></form></td>{% endif %}
+    </tr>{% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="empty">Aún no se ha registrado ningún acuerdo del concejo.</p>{% endif %}
+
+{# ---- Factores por clase, año y servicio ---- #}
+<h3 class="serv-h">Factores por clase de uso</h3>
+<p class="muted2">Subsidio con signo <b>negativo</b> (estratos 1–3) y contribución con signo <b>positivo</b>
+(estratos 5 y 6, industrial y comercial). Un factor por clase, servicio y vigencia.</p>
+{% if puede_cargar %}
+<div class="carga-metodo">
+  <div class="metodo-tabs">
+    <button type="button" class="metodo-tab active" data-m="manual">Cargue manual</button>
+    <button type="button" class="metodo-tab" data-m="masivo">Cargue masivo</button>
+  </div>
+  <div class="metodo-panel active" data-m="manual">
+    <form method="post" action="/empresa/{{ emp.id }}/subsidio-factor" class="form-grid">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+      <label>Vigencia (año) <input name="vigencia" type="number" value="{{ vdef }}" min="2015" max="2040" required></label>
+      <label>Servicio <select name="servicio">{{ servopts() }}</select></label>
+      <label>Clase de uso <select name="clase">{% for c, nom in sub_clases.items() %}<option value="{{ c }}">{{ nom }}</option>{% endfor %}</select></label>
+      <label>Factor cargo fijo <input name="factor_cargofijo" inputmode="decimal" placeholder="p. ej. -0,70 / 0,50"></label>
+      <label>Factor consumo <input name="factor_consumo" inputmode="decimal" placeholder="p. ej. -0,70 / 0,50"></label>
+      <button class="btn" type="submit">Guardar factor</button>
+    </form>
+  </div>
+  <div class="metodo-panel" data-m="masivo">
+    <form method="post" action="/empresa/{{ emp.id }}/subsidio-factores-masivo" enctype="multipart/form-data" class="up-form">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+      <label class="wide">Archivo de factores (CSV) <input type="file" name="archivo" accept=".csv" required></label>
+      <button class="btn primary" type="submit">Cargar factores</button>
+    </form>
+    <p class="muted2" style="margin:4px 0 0"><a href="/empresa/{{ emp.id }}/plantilla/factores">Descargar plantilla</a>
+     · columnas <code>vigencia, servicio, clase, factor_cargofijo, factor_consumo</code> (vigencia = año).</p>
+  </div>
+</div>
+{% endif %}
+{% if sub_factores %}
+{% for v, filas in sub_factores.items() %}
+<h4 class="serv-h" style="margin:12px 0 4px">Vigencia {{ v }}
+  {% set ac = sub_acuerdos.get(v) %}
+  {% if ac %}<span class="tag ac" style="margin-left:6px">acuerdo {{ ac.numero_acuerdo or 'registrado' }}</span>
+  {% else %}<span class="tag neg" style="margin-left:6px">falta acuerdo del concejo</span>{% endif %}</h4>
+<table class="tabla compact">
+  <thead><tr><th>Servicio</th><th>Clase</th><th class="r">Factor cargo fijo</th><th class="r">Factor consumo</th>{% if puede_cargar %}<th></th>{% endif %}</tr></thead>
+  <tbody>
+    {% for f in filas %}<tr>
+      <td class="comp">{{ f.servicio }}</td><td>{{ sub_clases.get(f.clase, f.clase) }}</td>
+      <td class="num {{ 'neg' if (f.factor_cargofijo or 0) < 0 }}">{{ '%.2f'|format(f.factor_cargofijo) if f.factor_cargofijo is not none else '—' }}</td>
+      <td class="num {{ 'neg' if (f.factor_consumo or 0) < 0 }}">{{ '%.2f'|format(f.factor_consumo) if f.factor_consumo is not none else '—' }}</td>
+      {% if puede_cargar %}<td class="c"><form method="post" action="/empresa/{{ emp.id }}/subsidio-factor/{{ f.id }}/eliminar" style="display:inline"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}"><button class="btn-link" type="submit" title="eliminar">×</button></form></td>{% endif %}
+    </tr>{% endfor %}
+  </tbody>
+</table>
+{% endfor %}
+{% else %}<p class="empty">Aún no hay factores de subsidio/contribución cargados.</p>{% endif %}
 {% endif %}
 
 {# ---------------- IMPUESTOS, CONTRIBUCIONES Y TASAS (CMICT) ---------------- #}
