@@ -257,6 +257,11 @@ def _pnum(s):
         return None
 
 
+def _pint(s):
+    v = _pnum(s)
+    return int(v) if v is not None else None
+
+
 def _leer_csv(texto):
     sample = (texto or "")[:3000]
     sep = ";" if sample.count(";") > sample.count(",") else ","
@@ -352,11 +357,15 @@ def tributo_masivo(conn, empresa_id, anio, componente, texto, cargado_por=None):
 
 
 def tua_masivo(conn, empresa_id, anio, texto, cargado_por=None):
+    """Toma el año de la columna `anio` de cada fila (si falta, el del selector) y reemplaza cada año presente."""
     filas = _leer_csv(texto)
-    conn.execute(text("DELETE FROM tasa_tua WHERE empresa_id=:e AND anio=:a"), {"e": empresa_id, "a": int(anio)})
+    anios = {(_pint(r.get("anio")) or int(anio)) for r in filas if any((r.get(c) or "").strip() for c in TUA_HDR)}
+    for a in anios:
+        conn.execute(text("DELETE FROM tasa_tua WHERE empresa_id=:e AND anio=:a"), {"e": empresa_id, "a": a})
     n, err = 0, []
     for i, r in enumerate(filas, start=2):
-        ok, e = tua_guardar(conn, empresa_id, anio, r, "masivo", cargado_por)
+        a = _pint(r.get("anio")) or int(anio)
+        ok, e = tua_guardar(conn, empresa_id, a, r, "masivo", cargado_por)
         if ok:
             n += 1
         elif any((r.get(c) or "").strip() for c in TUA_HDR):
@@ -365,12 +374,15 @@ def tua_masivo(conn, empresa_id, anio, texto, cargado_por=None):
 
 
 def retributiva_masivo(conn, empresa_id, anio, texto, cargado_por=None):
+    """Toma el año de la columna `anio` de cada fila (si falta, el del selector) y reemplaza cada año presente."""
     filas = _leer_csv(texto)
-    conn.execute(text("DELETE FROM tasa_retributiva WHERE empresa_id=:e AND anio=:a"),
-                 {"e": empresa_id, "a": int(anio)})
+    anios = {(_pint(r.get("anio")) or int(anio)) for r in filas if (r.get("punto") or "").strip()}
+    for a in anios:
+        conn.execute(text("DELETE FROM tasa_retributiva WHERE empresa_id=:e AND anio=:a"), {"e": empresa_id, "a": a})
     n, err = 0, []
     for i, r in enumerate(filas, start=2):
-        ok, e = retributiva_guardar(conn, empresa_id, anio, r, "masivo", cargado_por)
+        a = _pint(r.get("anio")) or int(anio)
+        ok, e = retributiva_guardar(conn, empresa_id, a, r, "masivo", cargado_por)
         if ok:
             n += 1
         elif (r.get("punto") or "").strip():
@@ -403,10 +415,11 @@ def soporte_lista(conn, empresa_id, anio=None):
 
 
 # -------------------------------------------------------------------- plantillas
-TUA_HDR = ["trimestre", "periodo", "predio", "codigo_predio", "concesion", "fuente", "n_factura",
+# Tasas: año base i-1 (2025). El `anio` va como primera columna para que el archivo quede autodescrito.
+TUA_HDR = ["anio", "trimestre", "periodo", "predio", "codigo_predio", "concesion", "fuente", "n_factura",
            "uso", "caudal_lts", "tarifa_unit", "factor_turno", "factor_op", "valor",
            "resolucion_pago", "fecha_pago", "estado"]
-RETRIB_HDR = ["punto", "carga_dbo", "carga_sst", "tm_dbo", "tm_sst", "fr_liquidado", "total_cfr"]
+RETRIB_HDR = ["anio", "punto", "carga_dbo", "carga_sst", "tm_dbo", "tm_sst", "fr_liquidado", "total_cfr"]
 
 
 def plantilla_tributo(componente):
@@ -416,12 +429,12 @@ def plantilla_tributo(componente):
 
 
 def plantilla_tua():
-    ej = ["I-2025,Ene-Mar 2025,EL ACUEDUCTO,101600000119,0000006827,Río Las Ceibas,2025021267,Doméstico,"
+    ej = ["2025,I-2025,Ene-Mar 2025,EL ACUEDUCTO,101600000119,0000006827,Río Las Ceibas,2025021267,Doméstico,"
           "800,10139,1,1,24333600,Res. 338 (25/07/2025),21/08/2025,pagado"]
     return "plantilla_tua.csv", ",".join(TUA_HDR) + "\n" + "\n".join(ej) + "\n"
 
 
 def plantilla_retributiva():
-    ej = ["Acrópolis,13452.69,5780.30,215.84,92.29,2.15,7389748.87",
-          "San Silvestre,8875.32,1716.99,215.84,92.29,1.43,2965977.41"]
+    ej = ["2025,Acrópolis,13452.69,5780.30,215.84,92.29,2.15,7389748.87",
+          "2025,San Silvestre,8875.32,1716.99,215.84,92.29,1.43,2965977.41"]
     return "plantilla_tasa_retributiva.csv", ",".join(RETRIB_HDR) + "\n" + "\n".join(ej) + "\n"

@@ -437,8 +437,9 @@ Para <b>otros procesos</b> (no bombeo), el costo es <b>Ko·Pce</b>. Υ = 9,8 (ac
       <button class="btn primary" type="submit">Cargar energía</button>
     </form>
     <p class="muted2" style="margin:4px 0 0"><a href="/empresa/{{ emp.id }}/plantilla-energia">Descargar plantilla</a>
-     · columnas <code>servicio, tipo, no_sui, punto, actividad, volumen_m3, altura_m, consumo_real_kwh, precio_kwh</code>.
-     <b>tipo</b> = <code>bombeo</code> (usa V y H) u <code>otros</code> (usa consumo_real_kwh = Ko). Reemplaza todo el año base.</p>
+     · columnas <code>anio, mes, servicio, tipo, no_sui, punto, actividad, volumen_m3, altura_m, consumo_real_kwh, precio_kwh</code>.
+     Una fila <b>por punto y mes</b>; el sistema <b>suma los meses al año base</b> (<code>anio</code>).
+     <b>tipo</b> = <code>bombeo</code> (usa V y H) u <code>otros</code> (usa consumo_real_kwh = Ko). Reemplaza el año cargado.</p>
   </div>
   <div class="metodo-panel" data-m="manual">
     <form method="post" action="/empresa/{{ emp.id }}/energia-manual" class="form-grid">
@@ -506,7 +507,7 @@ Para <b>otros procesos</b> (no bombeo), el costo es <b>Ko·Pce</b>. Υ = 9,8 (ac
       <button class="btn primary" type="submit">Cargar químicos</button>
     </form>
     <p class="muted2" style="margin:4px 0 0"><a href="/empresa/{{ emp.id }}/plantilla-quimico">Descargar plantilla</a>
-     · columnas <code>servicio, no_sui, punto, insumo, estado, precio_kg, ene, feb … dic</code> (kg por mes). Reemplaza todo el año base.</p>
+     · columnas <code>anio, servicio, no_sui, punto, insumo, estado, precio_kg, ene, feb … dic</code> (kg por mes). Reemplaza el año cargado.</p>
   </div>
   <div class="metodo-panel" data-m="manual">
     <form method="post" action="/empresa/{{ emp.id }}/quimico-manual" class="form-grid">
@@ -694,7 +695,7 @@ por incumplimiento de metas no es trasladable).</p>
       <input type="file" name="archivo" accept=".csv" required>
       <button class="btn primary" type="submit">Cargar facturas TUA</button>
     </form>
-    <p class="muted2" style="margin:4px 0 0"><a href="/empresa/{{ emp.id }}/plantilla-cmict/tua">Descargar plantilla TUA</a></p>
+    <p class="muted2" style="margin:4px 0 0"><a href="/empresa/{{ emp.id }}/plantilla-cmict/tua">Descargar plantilla TUA</a> · primera columna <code>anio</code> (año base i−1).</p>
   </div>
   <div class="metodo-panel" data-m="manual">
     <form method="post" action="/empresa/{{ emp.id }}/tua-manual" class="up-form">
@@ -750,7 +751,7 @@ por la autoridad y el <b>total c/FR</b> (lo pagado) quedan como soporte, y la di
       <input type="file" name="archivo" accept=".csv" required>
       <button class="btn primary" type="submit">Cargar puntos</button>
     </form>
-    <p class="muted2" style="margin:4px 0 0"><a href="/empresa/{{ emp.id }}/plantilla-cmict/retributiva">Descargar plantilla retributiva</a> · columnas: punto, carga_dbo, carga_sst, tm_dbo, tm_sst, fr_liquidado, total_cfr</p>
+    <p class="muted2" style="margin:4px 0 0"><a href="/empresa/{{ emp.id }}/plantilla-cmict/retributiva">Descargar plantilla retributiva</a> · columnas: anio, punto, carga_dbo, carga_sst, tm_dbo, tm_sst, fr_liquidado, total_cfr</p>
   </div>
   <div class="metodo-panel" data-m="manual">
     <form method="post" action="/empresa/{{ emp.id }}/retributiva-manual" class="up-form">

@@ -138,9 +138,11 @@ def totales(conn, empresa_id, anio=None):
 
 # -------------------------------------------------------------------- cargue (manual + masivo)
 MES_HDR = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"]
-ENERGIA_HDR = ["servicio", "tipo", "no_sui", "punto", "actividad", "volumen_m3", "altura_m",
-               "consumo_real_kwh", "precio_kwh"]
-QUIMICO_HDR = ["servicio", "no_sui", "punto", "insumo", "estado", "precio_kg"] + MES_HDR
+# Energía: cargue POR MES (una fila por punto y mes). El sistema agrega al año base.
+ENERGIA_HDR = ["anio", "mes", "servicio", "tipo", "no_sui", "punto", "actividad", "volumen_m3",
+               "altura_m", "consumo_real_kwh", "precio_kwh"]
+# Químicos: una fila por insumo y año; los kg van por mes (ene..dic).
+QUIMICO_HDR = ["anio", "servicio", "no_sui", "punto", "insumo", "estado", "precio_kg"] + MES_HDR
 
 
 def _pnum(s):
@@ -158,6 +160,12 @@ def _pnum(s):
         return float(s)
     except ValueError:
         return None
+
+
+def _pint(s):
+    """Entero tolerante (año); None si vacío/ inválido."""
+    v = _pnum(s)
+    return int(v) if v is not None else None
 
 
 def _leer_csv(texto):
@@ -222,27 +230,66 @@ def quimico_guardar(conn, empresa_id, anio, d, origen="empresa", cargado_por=Non
 
 
 def energia_masivo(conn, empresa_id, anio, texto, cargado_por=None):
-    """Cargue masivo de energía: reemplaza TODO el año y carga las filas del CSV. Devuelve (n, errores)."""
+    """Cargue masivo de energía POR MES: una fila por punto y mes. El sistema AGREGA por punto al
+    AÑO BASE (toma el año de la columna `anio`; si falta, usa el del selector). Para cada punto suma
+    el consumo y el volumen de los 12 meses; el costo reconocido de 'otros' es Σ(Ko_m·Pce_m) y el de
+    'bombeo' se calcula sobre el volumen anual. Reemplaza cada año presente. Devuelve (n_puntos, err)."""
     filas = _leer_csv(texto)
-    conn.execute(text("DELETE FROM energia_punto WHERE empresa_id=:e AND anio=:a"),
-                 {"e": empresa_id, "a": int(anio)})
-    n, err = 0, []
+    grupos, err = {}, []
     for i, r in enumerate(filas, start=2):
-        ok, e = energia_guardar(conn, empresa_id, anio, r, origen="masivo", cargado_por=cargado_por)
+        if not any((r.get(c) or "").strip() for c in ENERGIA_HDR):
+            continue
+        a = _pint(r.get("anio")) or int(anio)
+        serv = _serv(r.get("servicio"))
+        punto = (r.get("punto") or "").strip()
+        if serv not in ("acueducto", "alcantarillado") or not punto:
+            err.append(f"fila {i}: servicio y punto son obligatorios")
+            continue
+        key = (a, serv, (r.get("no_sui") or "").strip(), punto)
+        g = grupos.setdefault(key, {"tipo": _tipo(r.get("tipo")), "actividad": (r.get("actividad") or "").strip(),
+                                    "vol": 0.0, "alt": None, "kwh": 0.0, "costo": 0.0, "psum": 0.0, "np": 0})
+        k = _pnum(r.get("consumo_real_kwh")) or 0.0
+        p = _pnum(r.get("precio_kwh"))
+        g["vol"] += _pnum(r.get("volumen_m3")) or 0.0
+        g["kwh"] += k
+        if p is not None:
+            g["costo"] += k * p          # Σ Ko_m·Pce_m  →  Ceb 'otros' exacto por mes
+            g["psum"] += p; g["np"] += 1
+        h = _pnum(r.get("altura_m"))
+        if h is not None:
+            g["alt"] = h if g["alt"] is None else max(g["alt"], h)   # altura representativa del punto
+    for a in sorted({k[0] for k in grupos}):
+        conn.execute(text("DELETE FROM energia_punto WHERE empresa_id=:e AND anio=:a"), {"e": empresa_id, "a": a})
+    n = 0
+    for (a, serv, nosui, punto), g in grupos.items():
+        if g["kwh"] > 0 and g["costo"] > 0:
+            pce = g["costo"] / g["kwh"]              # Ceb_otros = kwh·pce = Σ(Ko_m·Pce_m)
+        elif g["np"]:
+            pce = g["psum"] / g["np"]                # sin consumo: precio promedio informado
+        else:
+            pce = None
+        d = {"servicio": serv, "tipo": g["tipo"], "no_sui": nosui, "punto": punto,
+             "actividad": g["actividad"], "volumen_m3": g["vol"] or None, "altura_m": g["alt"],
+             "consumo_real_kwh": g["kwh"] or None, "precio_kwh": pce}
+        ok, e = energia_guardar(conn, empresa_id, a, d, origen="masivo", cargado_por=cargado_por)
         if ok:
             n += 1
-        elif any((r.get(c) or "").strip() for c in ENERGIA_HDR):
-            err.append(f"fila {i}: {e}")
+        else:
+            err.append(f"{punto}: {e}")
     return n, err
 
 
 def quimico_masivo(conn, empresa_id, anio, texto, cargado_por=None):
+    """Cargue masivo de químicos: una fila por insumo y año (kg por mes). Toma el año de la columna
+    `anio` (si falta, el del selector) y reemplaza cada año presente."""
     filas = _leer_csv(texto)
-    conn.execute(text("DELETE FROM quimico_item WHERE empresa_id=:e AND anio=:a"),
-                 {"e": empresa_id, "a": int(anio)})
+    anios = {(_pint(r.get("anio")) or int(anio)) for r in filas if (r.get("insumo") or "").strip()}
+    for a in anios:
+        conn.execute(text("DELETE FROM quimico_item WHERE empresa_id=:e AND anio=:a"), {"e": empresa_id, "a": a})
     n, err = 0, []
     for i, r in enumerate(filas, start=2):
-        ok, e = quimico_guardar(conn, empresa_id, anio, r, origen="masivo", cargado_por=cargado_por)
+        a = _pint(r.get("anio")) or int(anio)
+        ok, e = quimico_guardar(conn, empresa_id, a, r, origen="masivo", cargado_por=cargado_por)
         if ok:
             n += 1
         elif any((r.get(c) or "").strip() for c in QUIMICO_HDR):
@@ -259,13 +306,15 @@ def quimico_eliminar(conn, empresa_id, qid):
 
 
 def plantilla_energia():
-    ej = ["acueducto,bombeo,5635,17 de diciembre,distribución,57688,65,62004,1000.88",
-          "acueducto,otros,15575,PTAP El Roble,producción,,,98085,1011.47"]
+    # Una fila por punto y mes; el sistema suma los meses al año base.
+    ej = ["2024,1,acueducto,otros,15575,PTAP El Roble,producción,,,98085,1011.47",
+          "2024,2,acueducto,otros,15575,PTAP El Roble,producción,,,95120,1015.30",
+          "2024,1,acueducto,bombeo,5635,17 de diciembre,distribución,57688,65,62004,1000.88"]
     return "plantilla_energia.csv", ",".join(ENERGIA_HDR) + "\n" + "\n".join(ej) + "\n"
 
 
 def plantilla_quimico():
-    ej = ["acueducto,15575,PTAP El Roble,Cloro,gaseoso,6214.18,2522,2474,2580,2432,2723,2442,2846,2824,2350,2215,2064,3154"]
+    ej = ["2024,acueducto,15575,PTAP El Roble,Cloro,gaseoso,6214.18,2522,2474,2580,2432,2723,2442,2846,2824,2350,2215,2064,3154"]
     return "plantilla_quimicos.csv", ",".join(QUIMICO_HDR) + "\n" + "\n".join(ej) + "\n"
 
 
