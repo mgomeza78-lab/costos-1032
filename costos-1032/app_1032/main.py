@@ -1945,6 +1945,12 @@ def validacion(request: Request, eid: int):
                 "SELECT anio, count(*), coalesce(sum(valor),0) FROM costo_particular "
                 "WHERE empresa_id=:e GROUP BY anio"), {"e": eid}).all():
             cpart_cnt[a] = n; cpart_tot[a] = tt
+        # Energía (CE) y químicos (CIQ) también son costos particulares (COP, art. 2.1.2.1.3.4.5/.6).
+        en_cnt = dict(conn.execute(text(
+            "SELECT anio, count(DISTINCT servicio||'|'||no_sui||'|'||punto) FROM energia_punto "
+            "WHERE empresa_id=:e GROUP BY anio"), {"e": eid}).all())
+        qu_cnt = dict(conn.execute(text(
+            "SELECT anio, count(*) FROM quimico_item WHERE empresa_id=:e GROUP BY anio"), {"e": eid}).all())
         ref688_rows = ref688.por_servicio(conn, eid)   # punto de partida 688 (solo inicio)
         # --- insumos de la base de capital regulado (BCR₀) y del POIR 688, por servicio ---
         bparams = bcr.params(conn, eid)
@@ -1970,6 +1976,12 @@ def validacion(request: Request, eid: int):
         _sub_estado = subc.estado_anio(_c, eid, _pa["anio"])   # subsidios por año de aplicación
     anios = _pa["anios_base"]
     _es_inicio_p = req.es_inicio(_pa["clave"])
+    # Costos particulares (COP) por año base: energía (CE), químicos (CIQ) y otros conceptos.
+    cop_anual = []
+    for an in anios:
+        en = int(en_cnt.get(an, 0)); qu = int(qu_cnt.get(an, 0)); ot = int(cpart_cnt.get(an, 0))
+        cop_anual.append({"anio": an, "energia": en, "quimicos": qu, "otros": ot,
+                          "cargado": (en + qu + ot) > 0})
     matriz = [
         {"clave": "comercial", "nombre": "Comercial (suscriptores y consumos)", "cel": com_m, "serv": servicios},
         {"clave": "agua", "nombre": "Agua producida / macromedición (solo acueducto)", "cel": agua_m, "serv": serv_agua},
@@ -1986,8 +1998,6 @@ def validacion(request: Request, eid: int):
     resumen = [
         {"nombre": "Configuración del APS", "valor": f"{apsres['n_completos']}/{apsres['n_municipios']} completos",
          "ok": apsres["n_municipios"] > 0 and apsres["n_completos"] == apsres["n_municipios"]},
-        {"nombre": "Costos particulares (COP, art. 2.1.2.1.3.4.5)", "datos": cpart_cnt, "tot": cpart_tot,
-         "nota": "conceptos cargados por año base; el valor contable registrado se descuenta del COC"},
     ]
     # Punto de partida 688: solo en el período de inicio (art. 2.1.2.1.1.8).
     if _es_inicio_p:
@@ -2038,6 +2048,8 @@ def validacion(request: Request, eid: int):
     return tpl.TemplateResponse(request, "validacion.html", _ctx(
         request, emp=emp, matriz=matriz, bal_anual=bal_anual, resumen=resumen, servicios=servicios,
         bcr_val=bcr_val, anios=anios, meses_num=list(range(1, 13)), meses=ops.MESES,
+        cop_anual=cop_anual, periodos_todos=per.periodos_cargables(),
+        puede_cargar=rbac.can(user, "cargar_mensual"),
         periodo_activo=_pa, es_inicio=_es_inicio_p))
 
 

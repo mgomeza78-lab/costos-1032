@@ -11,9 +11,23 @@
   {% if anios|length > 1 %}los años <b>{{ anios|join(' y ') }}</b>{% else %}el año <b>{{ anios[0] }}</b>{% endif %}.
   La información <b>comercial</b> y de <b>agua</b> se carga por <b>mes</b> (la meta son los 12 meses de cada
   año, por servicio); el <b>balance de prueba</b> se carga por <b>año</b> y se valida por año base.
-  {% if not es_inicio %}<br><span class="muted2">Solo se muestran los insumos del <b>año tarifario activo</b>;
-  cambie el año tarifario en «Cargar información» si necesita validar otro.</span>{% endif %}</p>
+  {% if not es_inicio %}<br><span class="muted2">Solo se muestran los insumos del <b>año tarifario activo</b>
+  (selecciónalo abajo).</span>{% endif %}</p>
 </div>
+
+{% if periodo_activo %}
+<form method="post" action="/empresa/{{ emp.id }}/periodo-activo" class="pa-bar">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="/empresa/{{ emp.id }}/validacion">
+  <span class="pa-k">Año tarifario</span>
+  {% if puede_cargar %}
+  <select name="clave" onchange="this.form.submit()">
+    {% for p in periodos_todos %}<option value="{{ p.clave }}"{{ ' selected' if p.clave==periodo_activo.clave else '' }}>{{ p.etiqueta }}</option>{% endfor %}
+  </select>
+  <noscript><button class="btn" type="submit">Cambiar</button></noscript>
+  {% else %}<b>{{ periodo_activo.etiqueta }}</b>{% endif %}
+  <span class="pa-base">Línea base <b>{{ periodo_activo.anios_base[0] }}–{{ periodo_activo.anios_base[1] }}</b></span>
+</form>
+{% endif %}
 {% for c in matriz %}
 <h2 class="serv-h">{{ c.nombre }}</h2>
 <table class="tabla compact">
@@ -46,6 +60,24 @@ Totales de control por clase: cuenta 5 (administración) y cuenta 7 (operación)
       <td class="num">{% if b.cargado %}{{ b.total5|valor('$') }}{% else %}—{% endif %}</td>
       <td class="num">{% if b.cargado %}{{ b.total7|valor('$') }}{% else %}—{% endif %}</td>
       <td class="muted2" style="font-size:12px">{% if b.archivos %}{{ b.archivos|join(', ') }}{% elif b.cargado %}— (cargado antes){% else %}—{% endif %}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h2 class="serv-h">Costos particulares (COP · energía, químicos y otros)</h2>
+<p class="muted2" style="margin:-4px 0 6px">Costos operativos que la metodología reconoce <b>aparte</b> del COC
+(art. 2.1.2.1.3.4.5 y .6): <b>energía</b> (CE), <b>insumos químicos</b> (CIQ) y <b>otros</b> conceptos. Se cargan
+por año base en <a href="/empresa/{{ emp.id }}/cargar?fuente=costos">Cargar información › Costos Particulares</a>.</p>
+<table class="tabla compact">
+  <thead><tr><th>Año base</th><th class="c">Estado</th><th class="r">Energía (puntos)</th>
+    <th class="r">Químicos (insumos)</th><th class="r">Otros (conceptos)</th></tr></thead>
+  <tbody>
+    {% for c in cop_anual %}
+    <tr><td class="comp">{{ c.anio }}</td>
+      <td class="c">{% if c.cargado %}<span class="tag ac">✓ cargado</span>{% else %}<span class="tag neg">falta</span>{% endif %}</td>
+      <td class="num">{{ c.energia or '—' }}</td>
+      <td class="num">{{ c.quimicos or '—' }}</td>
+      <td class="num">{{ c.otros or '—' }}</td></tr>
     {% endfor %}
   </tbody>
 </table>
@@ -98,4 +130,13 @@ del año</b>, que se habilitan en la Fase 3. Siguen aplicando los activos admini
 «eliminar» en cada fila cargada de <a href="/empresa/{{ emp.id }}/cargar">Cargar información</a>.
 {% if es_inicio %}Las <b>metas</b> solo se identifican y enuncian en el período de inicio; su cuantificación
 corresponde al primer recálculo, con la línea base al cierre de 2026.{% endif %}</p>
+
+<style>
+.pa-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 16px;padding:8px 14px;
+  background:var(--paper,#f1f7f4);border:1px solid var(--teal,#1f7a6b);border-radius:var(--r,8px);font-size:13.5px}
+.pa-bar .pa-k{font-weight:600;color:var(--teal-deep,#15604f)}
+.pa-bar select{font:inherit;font-size:13.5px;padding:3px 8px;border:1px solid var(--line,#d8d2c4);
+  border-radius:6px;background:var(--bg,#fff);color:inherit}
+.pa-bar .pa-base{color:var(--muted,#6b6659)}
+</style>
 {% endblock %}
