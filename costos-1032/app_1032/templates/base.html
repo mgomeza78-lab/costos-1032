@@ -51,8 +51,8 @@
           {% if req.aplica(pc,'bcr0') %}<li><a class="link {{ 'active' if en_bcr and sec|default('')=='bcr' }}" href="/empresa/{{ emp.id }}/inversiones?sec=bcr">BCR de inicio</a></li>{% endif %}
           {% if req.aplica(pc,'poir688_plan') %}<li><a class="link {{ 'active' if en_bcr and sec|default('')=='poir' }}" href="/empresa/{{ emp.id }}/inversiones?sec=poir">POIR 688 · planeado</a></li>{% endif %}
           {% if req.aplica(pc,'poir688_ejec') %}<li><a class="link {{ 'active' if en_bcr and sec|default('')=='poir_ejec' }}" href="/empresa/{{ emp.id }}/inversiones?sec=poir_ejec">POIR 688 · ejecutado</a></li>{% endif %}
-          {% if req.aplica(pc,'poir1032_plan') %}<li><span class="link muted2" title="Disponible en la Fase 3">POIR 1032 · plan de inversiones <small>(próximamente)</small></span></li>{% endif %}
-          {% if req.aplica(pc,'poir1032_ejec') %}<li><span class="link muted2" title="Disponible en la Fase 3">Ejecución de obras del año <small>(próximamente)</small></span></li>{% endif %}
+          {% if req.aplica(pc,'poir1032_plan') %}<li><a class="link {{ 'active' if en_bcr and sec|default('')=='poir1032' }}" href="/empresa/{{ emp.id }}/inversiones?sec=poir1032">POIR 1032 · plan de inversiones</a></li>{% endif %}
+          {% if req.aplica(pc,'poir1032_ejec') %}<li><a class="link {{ 'active' if en_bcr and sec|default('')=='poir1032_ejec' }}" href="/empresa/{{ emp.id }}/inversiones?sec=poir1032_ejec">Ejecución de obras del año</a></li>{% endif %}
           <li><a class="link {{ 'active' if en_bcr and sec|default('')=='activos' }}" href="/empresa/{{ emp.id }}/inversiones?sec=activos">Activos administrativos y operativos</a></li>
           <li><a class="link {{ 'active' if en_bcr and sec|default('')=='provision' }}" href="/empresa/{{ emp.id }}/inversiones?sec=provision">Provisión POIR (Res. 950)</a></li>
         </ol>

@@ -634,35 +634,40 @@ def resumen(conn, empresa_id):
 
 
 # ---------------- Plan / ejecución / cumplimiento por año tarifario ----------------
-def plan_por_anio(conn, empresa_id, servicio=None):
+def plan_por_anio(conn, empresa_id, servicio=None, marco=None):
     sql = ("SELECT EXTRACT(YEAR FROM fecha_planeada_operacion)::int AS anio, "
            "       coalesce(sum(valor_planeado),0) AS planeado, count(*) AS n "
            "FROM proyecto_inversion WHERE empresa_id=:e AND fecha_planeada_operacion IS NOT NULL")
     p = {"e": empresa_id}
     if servicio:
         sql += " AND servicio=:s"; p["s"] = servicio
+    if marco:
+        sql += " AND marco=:marco"; p["marco"] = marco
     sql += " GROUP BY 1 ORDER BY 1"
     return {int(r[0]): {"planeado": float(r[1] or 0), "n": r[2]}
             for r in conn.execute(text(sql), p).all() if r[0]}
 
 
-def real_por_anio(conn, empresa_id, servicio=None):
+def real_por_anio(conn, empresa_id, servicio=None, marco=None):
     """Ejecutado acumulado por año = suma del último corte (mes mayor) de cada proyecto en el año."""
     sql = ("SELECT a.anio, coalesce(sum(a.avance_financiero),0) AS ejecutado "
            "FROM (SELECT DISTINCT ON (ai.proyecto_id, ai.anio) ai.proyecto_id, ai.anio, "
            "             ai.avance_financiero "
            "      FROM avance_inversion ai JOIN proyecto_inversion p ON p.id=ai.proyecto_id "
-           "      WHERE ai.empresa_id=:e" + (" AND p.servicio=:s" if servicio else "") +
+           "      WHERE ai.empresa_id=:e" + (" AND p.servicio=:s" if servicio else "")
+           + (" AND p.marco=:marco" if marco else "") +
            "      ORDER BY ai.proyecto_id, ai.anio, ai.mes DESC) a GROUP BY a.anio ORDER BY a.anio")
     p = {"e": empresa_id}
     if servicio:
         p["s"] = servicio
+    if marco:
+        p["marco"] = marco
     return {int(r[0]): float(r[1] or 0) for r in conn.execute(text(sql), p).all()}
 
 
-def cumplimiento(conn, empresa_id, servicio=None, umbral=0.80):
-    plan = plan_por_anio(conn, empresa_id, servicio)
-    real = real_por_anio(conn, empresa_id, servicio)
+def cumplimiento(conn, empresa_id, servicio=None, umbral=0.80, marco=None):
+    plan = plan_por_anio(conn, empresa_id, servicio, marco=marco)
+    real = real_por_anio(conn, empresa_id, servicio, marco=marco)
     anios = sorted(set(plan) | set(real))
     out = []
     for a in anios:
@@ -688,12 +693,15 @@ def demanda_anual(conn, empresa_id, servicio):
     return m3 * (12.0 / n) if n < 12 else m3
 
 
-def proyeccion(conn, empresa_id, servicio, r, demanda=None, horizonte=5, anio0=2027, vida_util=20.0):
-    """Proyección indicativa del CMI ($/m³) para `horizonte` años desde `anio0`.
+def proyeccion(conn, empresa_id, servicio, r, demanda=None, horizonte=5, anio0=2027, vida_util=20.0,
+               marco="1032"):
+    """Proyección indicativa del CMI ($/m³) para `horizonte` años desde `anio0` — evolución de la BCR.
 
-    Supuestos: la BCR₀ se remunera a la tasa r y recupera su cuota anual; los
-    proyectos del POIR entran a la BCR en su año planeado (se asume ejecución ≥80 %)
-    y aportan CMI_POIR como anualidad (remuneración + depreciación lineal a `vida_util`).
+    Supuestos: la BCR₀ se remunera a la tasa r y recupera su cuota anual; los proyectos del
+    POIR del marco `marco` (por defecto el POIR 1032, prospectivo) entran a la BCR en su año
+    planeado (se asume ejecución ≥80 %) y aportan CMI_POIR como anualidad (remuneración +
+    depreciación lineal a `vida_util`). El POIR 688 no se suma aquí: su valor ya está incorporado
+    en la BCR₀, de modo que la evolución hacia adelante la gobierna el POIR 1032.
     """
     calc = bcr0_calculo(conn, empresa_id, r).get(servicio, {"bcr": 0.0, "cak": 0.0})
     bcr = float(calc.get("bcr") or 0.0); cuota = float(calc.get("cak") or 0.0)
@@ -703,7 +711,7 @@ def proyeccion(conn, empresa_id, servicio, r, demanda=None, horizonte=5, anio0=2
         p = param_get(conn, empresa_id, servicio)   # fallback: CCP 2025 cargado en los parámetros 688
         if p and p["ccp_2025"]:
             demanda = float(p["ccp_2025"])
-    plan = plan_por_anio(conn, empresa_id, servicio)
+    plan = plan_por_anio(conn, empresa_id, servicio, marco=marco)
     poir_acum = 0.0
     filas = []
     for k in range(horizonte):

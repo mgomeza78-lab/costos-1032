@@ -39,15 +39,18 @@ def crear_proyecto(conn, empresa_id, d):
     if clasif not in CLASIFICACIONES:
         return None, "clasificación inválida"
     origen = (d.get("origen") or "POIR_nuevo").strip()
+    marco = (d.get("marco") or "688").strip()
+    if marco not in ("688", "1032"):
+        marco = "688"
     row = conn.execute(text(
         "INSERT INTO proyecto_inversion(empresa_id,codigo_poir,nombre,servicio,aps,"
-        " componente_sistema,meta_asociada,clasificacion,origen,valor_planeado,"
+        " componente_sistema,meta_asociada,clasificacion,origen,marco,valor_planeado,"
         " fecha_planeada_operacion,via688,vp_recaudo,vida_util,observacion,creado_por) "
-        "VALUES (:e,:cod,:nom,:s,:aps,:comp,:meta,:cl,:org,:vp,:fpo,:via,:vpr,:vu,:obs,:u) "
+        "VALUES (:e,:cod,:nom,:s,:aps,:comp,:meta,:cl,:org,:marco,:vp,:fpo,:via,:vpr,:vu,:obs,:u) "
         "ON CONFLICT (empresa_id,codigo_poir) DO UPDATE SET "
         " nombre=excluded.nombre, servicio=excluded.servicio, aps=excluded.aps, "
         " componente_sistema=excluded.componente_sistema, meta_asociada=excluded.meta_asociada, "
-        " clasificacion=excluded.clasificacion, origen=excluded.origen, "
+        " clasificacion=excluded.clasificacion, origen=excluded.origen, marco=excluded.marco, "
         " valor_planeado=excluded.valor_planeado, "
         " fecha_planeada_operacion=excluded.fecha_planeada_operacion, via688=excluded.via688, "
         " vp_recaudo=excluded.vp_recaudo, vida_util=excluded.vida_util, "
@@ -56,7 +59,7 @@ def crear_proyecto(conn, empresa_id, d):
         {"e": empresa_id, "cod": (d.get("codigo_poir") or "").strip(),
          "nom": (d.get("nombre") or "").strip(), "s": serv, "aps": d.get("aps"),
          "comp": d.get("componente_sistema"), "meta": d.get("meta_asociada"),
-         "cl": clasif, "org": origen, "vp": d.get("valor_planeado"),
+         "cl": clasif, "org": origen, "marco": marco, "vp": d.get("valor_planeado"),
          "fpo": d.get("fecha_planeada_operacion"), "via": d.get("via688"),
          "vpr": d.get("vp_recaudo"), "vu": d.get("vida_util"),
          "obs": d.get("observacion"), "u": d.get("creado_por")}).scalar()
@@ -101,8 +104,13 @@ def registrar_avance(conn, empresa_id, proyecto_id, anio, mes, fisico, financier
     return True, None
 
 
-def tablero(conn, empresa_id):
-    """Proyectos con su último avance y el % de ejecución financiera."""
+def tablero(conn, empresa_id, marco=None):
+    """Proyectos con su último avance y el % de ejecución financiera.
+    `marco` opcional ('688'/'1032') limita al POIR de ese marco; None = todos."""
+    p = {"e": empresa_id}
+    filtro = ""
+    if marco:
+        filtro = " AND p.marco=:marco"; p["marco"] = marco
     rows = conn.execute(text(
         "SELECT p.*, "
         " a.anio AS corte_anio, a.mes AS corte_mes, a.avance_fisico, a.avance_financiero "
@@ -110,8 +118,8 @@ def tablero(conn, empresa_id):
         "LEFT JOIN LATERAL ("
         "  SELECT anio, mes, avance_fisico, avance_financiero FROM avance_inversion "
         "  WHERE proyecto_id=p.id ORDER BY anio DESC, mes DESC LIMIT 1) a ON true "
-        "WHERE p.empresa_id=:e ORDER BY p.servicio, p.codigo_poir"),
-        {"e": empresa_id}).mappings().all()
+        "WHERE p.empresa_id=:e" + filtro + " ORDER BY p.servicio, p.codigo_poir"),
+        p).mappings().all()
     out = []
     for r in rows:
         d = dict(r)
@@ -122,9 +130,9 @@ def tablero(conn, empresa_id):
     return out
 
 
-def resumen(conn, empresa_id):
+def resumen(conn, empresa_id, marco=None):
     """Totales por clasificación, por estado, % de ejecución global y chequeo del 80 % por servicio."""
-    proys = tablero(conn, empresa_id)
+    proys = tablero(conn, empresa_id, marco=marco)
     por_clasif = {}
     por_estado = {}
     por_servicio = {}

@@ -1583,14 +1583,17 @@ def inversiones(request: Request, eid: int):
         return r
     user = session_user(request)
     sec = request.query_params.get("sec") or "agua"
-    if sec not in ("agua", "bcr", "poir", "poir_ejec", "activos", "provision"):
+    if sec not in ("agua", "bcr", "poir", "poir_ejec", "poir1032", "poir1032_ejec", "activos", "provision"):
         sec = "agua"
+    # El POIR del marco 1032 (prospectivo, desde el año 1) se separa del POIR 688 (histórico, inicio).
+    marco_sec = "1032" if sec in ("poir1032", "poir1032_ejec") else "688"
     with db.scope_conn(scope_of(user)) as conn:
         emp = conn.execute(text("SELECT * FROM empresa WHERE id=:e"), {"e": eid}).mappings().first()
         if not emp:
             return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
-        proyectos = inv.tablero(conn, eid)
-        res = inv.resumen(conn, eid)
+        pa = _periodo_activo(conn, eid)
+        proyectos = inv.tablero(conn, eid, marco=marco_sec)
+        res = inv.resumen(conn, eid, marco=marco_sec)
         servicios = [s for s, on in (("acueducto", emp["presta_ac"]), ("alcantarillado", emp["presta_al"])) if on] or ["acueducto"]
         bcr_activos = bcr.lista(conn, eid)
         r_emp = float(emp["r"]) if emp["r"] is not None else 0.0903
@@ -1600,10 +1603,11 @@ def inversiones(request: Request, eid: int):
         bcr_ingresos = {s: bcr.ingresos_vp(conn, eid, s) for s in servicios}
         bcr_mods = {s: poir.mods_list(conn, eid, s) for s in servicios}
         bcr_cmi = {s: poir.resumen_cmi(conn, eid, s) for s in servicios}
-        cumpl = bcr.cumplimiento(conn, eid)
+        cumpl = bcr.cumplimiento(conn, eid, marco=marco_sec)
         proy = {s: bcr.proyeccion(conn, eid, s, r_emp) for s in servicios}
     return tpl.TemplateResponse(request, "inversiones.html", _ctx(
-        request, emp=emp, proyectos=proyectos, resumen=res, sec=sec,
+        request, emp=emp, proyectos=proyectos, resumen=res, sec=sec, marco=marco_sec,
+        periodo_activo=pa, es_inicio=req.es_inicio(pa["clave"]),
         clasificaciones=inv.CLASIFICACIONES, estados=inv.ESTADOS,
         comp_ac=inv.COMPONENTES_AC, comp_al=inv.COMPONENTES_AL,
         servicios=servicios, bcr_activos=bcr_activos, bcr0=bcr0, bcr_comp=bcr.COMPONENTES,
@@ -1625,6 +1629,7 @@ def inversion_nueva(request: Request, eid: int, codigo_poir: str = Form(...),
                     nombre: str = Form(...), servicio: str = Form(...), aps: str = Form(""),
                     componente_sistema: str = Form(""), meta_asociada: str = Form(""),
                     clasificacion: str = Form("CMI_POIR"), origen: str = Form("POIR_nuevo"),
+                    marco: str = Form("688"),
                     valor_planeado: str = Form(""), fecha_planeada_operacion: str = Form(""),
                     via688: str = Form(""), vp_recaudo: str = Form(""), vida_util: str = Form(""),
                     observacion: str = Form(""), csrf: str = Form("")):
@@ -1633,8 +1638,9 @@ def inversion_nueva(request: Request, eid: int, codigo_poir: str = Form(...),
     if (bad := _bad_csrf(request, csrf)):
         return bad
     user = session_user(request)
+    dest_sec = "poir1032" if marco == "1032" else "poir"
     if not rbac.can(user, "cargar_mensual"):
-        return RedirectResponse(f"/empresa/{eid}/inversiones?err=No+autorizado", status_code=303)
+        return RedirectResponse(f"/empresa/{eid}/inversiones?sec={dest_sec}&err=No+autorizado", status_code=303)
     with db.scope_conn(scope_of(user)) as conn:
         emp = conn.execute(text("SELECT id FROM empresa WHERE id=:e"), {"e": eid}).mappings().first()
         if not emp:
@@ -1642,17 +1648,17 @@ def inversion_nueva(request: Request, eid: int, codigo_poir: str = Form(...),
         pid, err = inv.crear_proyecto(conn, eid, {
             "codigo_poir": codigo_poir, "nombre": nombre, "servicio": servicio, "aps": aps,
             "componente_sistema": componente_sistema, "meta_asociada": meta_asociada,
-            "clasificacion": clasificacion, "origen": origen,
+            "clasificacion": clasificacion, "origen": origen, "marco": marco,
             "valor_planeado": _fnum(valor_planeado),
             "fecha_planeada_operacion": fecha_planeada_operacion.strip() or None,
             "via688": _fnum(via688), "vp_recaudo": _fnum(vp_recaudo),
             "vida_util": _fnum(vida_util), "observacion": observacion.strip() or None,
             "creado_por": user["user_id"]})
     if err:
-        return RedirectResponse(f"/empresa/{eid}/inversiones?err=" + err.replace(" ", "+"),
+        return RedirectResponse(f"/empresa/{eid}/inversiones?sec={dest_sec}&err=" + err.replace(" ", "+"),
                                 status_code=303)
-    db.audit(scope_of(user), "crear_proyecto", "empresa", eid, f"POIR {codigo_poir}")
-    return RedirectResponse(f"/empresa/{eid}/inversiones?msg=Proyecto+{codigo_poir}+guardado",
+    db.audit(scope_of(user), "crear_proyecto", "empresa", eid, f"POIR {marco} {codigo_poir}")
+    return RedirectResponse(f"/empresa/{eid}/inversiones?sec={dest_sec}&msg=Proyecto+{codigo_poir}+guardado",
                             status_code=303)
 
 
@@ -1660,14 +1666,15 @@ def inversion_nueva(request: Request, eid: int, codigo_poir: str = Form(...),
 def inversion_avance(request: Request, eid: int, proyecto_id: int = Form(...),
                      anio: int = Form(...), mes: int = Form(...), avance_fisico: str = Form(""),
                      avance_financiero: str = Form(""), fecha_real_operacion: str = Form(""),
-                     observacion: str = Form(""), csrf: str = Form("")):
+                     observacion: str = Form(""), next: str = Form(""), csrf: str = Form("")):
     if (r := _need_login(request)):
         return r
     if (bad := _bad_csrf(request, csrf)):
         return bad
     user = session_user(request)
+    dflt = f"/empresa/{eid}/inversiones?sec=poir_ejec"
     if not rbac.can(user, "cargar_mensual"):
-        return RedirectResponse(f"/empresa/{eid}/inversiones?err=No+autorizado", status_code=303)
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
     with db.scope_conn(scope_of(user)) as conn:
         emp = conn.execute(text("SELECT id FROM empresa WHERE id=:e"), {"e": eid}).mappings().first()
         if not emp:
@@ -1677,11 +1684,11 @@ def inversion_avance(request: Request, eid: int, proyecto_id: int = Form(...),
                                        observacion.strip() or None,
                                        fecha_real_operacion.strip() or None, user["user_id"])
     if not ok:
-        return RedirectResponse(f"/empresa/{eid}/inversiones?err=" + (err or "no+se+pudo").replace(" ", "+"),
+        return RedirectResponse(_dest(next, dflt, "err=" + (err or "no+se+pudo").replace(" ", "+")),
                                 status_code=303)
     db.audit(scope_of(user), "registrar_avance", "empresa", eid,
              f"proyecto {proyecto_id} {ops.MESES.get(mes,mes)}-{anio}")
-    return RedirectResponse(f"/empresa/{eid}/inversiones?msg=Avance+registrado", status_code=303)
+    return RedirectResponse(_dest(next, dflt, "msg=Avance+registrado"), status_code=303)
 
 
 # ------------------------------------------------------------------ tablero de indicadores

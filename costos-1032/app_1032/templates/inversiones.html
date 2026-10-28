@@ -13,13 +13,21 @@
   cuando los proyectos alcanzan el <b>80 %</b> de ejecución (art. 2.1.2.1.3.5.14). Se desarrolla por pasos.</p>
 </div>
 
+{% set s688 = es_inicio or sec in ('agua','bcr','poir','poir_ejec') %}
+{% set s1032 = (not es_inicio) or sec in ('poir1032','poir1032_ejec') %}
 <div class="paso-nav">
-  <a class="paso {{ 'on' if sec=='agua' }}" href="/empresa/{{ emp.id }}/inversiones?sec=agua">1 · Agua facturada (688) y segmento</a>
-  <a class="paso {{ 'on' if sec=='bcr' }}" href="/empresa/{{ emp.id }}/inversiones?sec=bcr">2 · BCR de inicio</a>
-  <a class="paso {{ 'on' if sec=='poir' }}" href="/empresa/{{ emp.id }}/inversiones?sec=poir">3 · POIR planeado</a>
-  <a class="paso {{ 'on' if sec=='poir_ejec' }}" href="/empresa/{{ emp.id }}/inversiones?sec=poir_ejec">4 · POIR ejecutado</a>
-  <a class="paso {{ 'on' if sec=='activos' }}" href="/empresa/{{ emp.id }}/inversiones?sec=activos">5 · Activos admin. y operativos</a>
-  <a class="paso {{ 'on' if sec=='provision' }}" href="/empresa/{{ emp.id }}/inversiones?sec=provision">6 · Provisión POIR</a>
+  {% if s688 %}
+  <a class="paso {{ 'on' if sec=='agua' }}" href="/empresa/{{ emp.id }}/inversiones?sec=agua">Agua facturada (688) y segmento</a>
+  <a class="paso {{ 'on' if sec=='bcr' }}" href="/empresa/{{ emp.id }}/inversiones?sec=bcr">BCR de inicio</a>
+  <a class="paso {{ 'on' if sec=='poir' }}" href="/empresa/{{ emp.id }}/inversiones?sec=poir">POIR 688 planeado</a>
+  <a class="paso {{ 'on' if sec=='poir_ejec' }}" href="/empresa/{{ emp.id }}/inversiones?sec=poir_ejec">POIR 688 ejecutado</a>
+  {% endif %}
+  {% if s1032 %}
+  <a class="paso {{ 'on' if sec=='poir1032' }}" href="/empresa/{{ emp.id }}/inversiones?sec=poir1032">POIR 1032 · plan</a>
+  <a class="paso {{ 'on' if sec=='poir1032_ejec' }}" href="/empresa/{{ emp.id }}/inversiones?sec=poir1032_ejec">Ejecución de obras del año</a>
+  {% endif %}
+  <a class="paso {{ 'on' if sec=='activos' }}" href="/empresa/{{ emp.id }}/inversiones?sec=activos">Activos admin. y operativos</a>
+  <a class="paso {{ 'on' if sec=='provision' }}" href="/empresa/{{ emp.id }}/inversiones?sec=provision">Provisión POIR</a>
 </div>
 
 {# ============================ PASO 1 · AGUA FACTURADA 688 ============================ #}
@@ -287,7 +295,7 @@ incorpora a la BCR del año siguiente (art. 2.1.2.1.3.5.14). Los proyectos se de
 {% if puede_cargar %}
 <h3 class="serv-h" style="margin-top:14px">Registrar ejecución / avance</h3>
 <form method="post" action="/empresa/{{ emp.id }}/inversion-avance" class="form-grid">
-  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
   <label>Proyecto <select name="proyecto_id" required>{% for p in proyectos %}<option value="{{ p.id }}">{{ p.codigo_poir }} — {{ p.nombre }}</option>{% endfor %}</select></label>
   <label>Año tarifario <input type="number" name="anio" value="2027" style="width:100px"></label>
   <label>Mes <select name="mes">{% for m in range(1,13) %}<option value="{{ m }}">{{ m }}</option>{% endfor %}</select></label>
@@ -315,6 +323,132 @@ BCR del año siguiente; la no ejecución activa el mecanismo de provisión que l
 del quinto año tarifario.</p>
 {% else %}<p class="empty">Aún no hay plan ni ejecución para evaluar el cumplimiento.</p>{% endif %}
 {% endif %}{# fin sec=poir_ejec #}
+
+{# ===================== POIR 1032 · PLAN DE INVERSIONES (desde el año 1) ===================== #}
+{% if sec=='poir1032' %}
+<h2 class="serv-h">POIR 1032 · plan de inversiones</h2>
+<p class="muted2">Plan de Obras e Inversiones Regulado de la <b>nueva metodología</b> (Res. CRA 1032), que la
+empresa ejecuta desde el <b>año tarifario 1 (2027)</b>. Cada proyecto entra a la BCR en su año de operación y
+aporta <b>CMI_POIR</b> (remuneración del capital a la tasa r + recuperación del capital; arts. 2.1.2.1.3.5.10,
+.11 y .14). La ejecución real y el cumplimiento se registran en
+<a href="/empresa/{{ emp.id }}/inversiones?sec=poir1032_ejec">Ejecución de obras del año</a>. Este es el POIR
+que reemplaza al del marco 688 a partir del primer año tarifario.</p>
+{% if es_inicio %}<p class="hint">Estás en el <b>período de inicio</b>: el POIR 1032 aplica desde el año
+tarifario 1. Puedes precargar el plan aquí; su efecto sobre la BCR y el CMI se evalúa desde 2027.</p>{% endif %}
+
+{% if proyectos %}
+<table class="tabla">
+  <thead><tr><th>Código</th><th>Proyecto</th><th>Servicio</th><th>Componente</th><th>Meta asociada</th>
+    <th>Año operación</th><th class="r">Valor planeado</th><th>Clasificación</th><th>Estado</th></tr></thead>
+  <tbody>
+    {% for p in proyectos %}<tr><td class="comp">{{ p.codigo_poir }}</td><td>{{ p.nombre }}</td><td>{{ p.servicio }}</td>
+      <td>{{ p.componente_sistema or '—' }}</td><td>{{ p.meta_asociada or '—' }}</td>
+      <td class="c">{{ p.fecha_planeada_operacion.year if p.fecha_planeada_operacion else '—' }}</td>
+      <td class="num">{{ p.valor_planeado|valor('$') if p.valor_planeado is not none else '—' }}</td>
+      <td><span class="tag {{ 'ac' if p.clasificacion=='CMI_POIR' else '' }}">{{ 'CMI_POIR' if p.clasificacion=='CMI_POIR' else 'expost' }}</span></td>
+      <td><span class="tag {{ {'en_operacion':'ac','en_ejecucion':'al','suspendido':'neg'}.get(p.estado,'') }}">{{ estados[p.estado] }}</span></td></tr>{% endfor %}
+  </tbody>
+</table>
+<p class="muted2">Total planeado del POIR 1032: <b>{{ resumen.tot_plan|valor('$') }}</b> en {{ resumen.n }} proyecto(s).</p>
+{% else %}<p class="empty">Aún no hay proyectos del POIR 1032.</p>{% endif %}
+
+{% if puede_cargar %}
+<h3 class="serv-h" style="margin-top:16px">Registrar / actualizar un proyecto del POIR 1032</h3>
+<form method="post" action="/empresa/{{ emp.id }}/inversion-nueva" class="form-grid">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="marco" value="1032">
+  <label>Código POIR <input name="codigo_poir" required></label>
+  <label>Nombre <input name="nombre" required></label>
+  <label>Servicio <select name="servicio">{% for s in servicios %}<option value="{{ s }}">{{ bcr_serv[s] }}</option>{% endfor %}</select></label>
+  <label>Componente del sistema <input name="componente_sistema" list="comp_sys" placeholder="captación, red, PTAR…">
+    <datalist id="comp_sys">{% for c in comp_ac %}<option value="{{ c }}">{% endfor %}{% for c in comp_al %}<option value="{{ c }}">{% endfor %}</datalist></label>
+  <label>Meta asociada <input name="meta_asociada" placeholder="cobertura, continuidad, IRCA, pérdidas…"></label>
+  <label>Clasificación <select name="clasificacion">{% for k,v in clasificaciones.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</select></label>
+  <label>Valor planeado ($) <input name="valor_planeado" inputmode="decimal"></label>
+  <label>Año/fecha planeada de operación <input type="date" name="fecha_planeada_operacion"></label>
+  <label>Vida útil (años) <input name="vida_util" inputmode="decimal"></label>
+  <label class="wide">Observación <input name="observacion"></label>
+  <button class="btn" type="submit">Crear / actualizar proyecto</button>
+</form>
+{% endif %}
+{% endif %}{# fin sec=poir1032 (plan) #}
+
+{# ===================== EJECUCIÓN DE OBRAS DEL AÑO (POIR 1032) ===================== #}
+{% if sec=='poir1032_ejec' %}
+<h2 class="serv-h">Ejecución de obras del año (POIR 1032)</h2>
+<p class="muted2">Registra la <b>ejecución real</b> de las obras del POIR 1032 por año tarifario y revisa el
+nivel de cumplimiento. Al entrar en operación, el valor incurrido se incorpora a la <b>BCR del año siguiente</b>
+(arts. 2.1.2.1.3.5.14 y ss.). Los proyectos se definen primero en
+<a href="/empresa/{{ emp.id }}/inversiones?sec=poir1032">POIR 1032 · plan</a>.</p>
+
+{% if proyectos %}
+<table class="tabla">
+  <thead><tr><th>Código</th><th>Proyecto</th><th>Servicio</th><th>Año operación</th><th class="r">Valor planeado</th>
+    <th class="r">Últ. avance %</th><th class="r">Ejecutado</th><th>Estado</th></tr></thead>
+  <tbody>
+    {% for p in proyectos %}<tr><td class="comp">{{ p.codigo_poir }}</td><td>{{ p.nombre }}</td><td>{{ p.servicio }}</td>
+      <td class="c">{{ p.fecha_planeada_operacion.year if p.fecha_planeada_operacion else '—' }}</td>
+      <td class="num">{{ p.valor_planeado|valor('$') if p.valor_planeado is not none else '—' }}</td>
+      <td class="num">{{ p.avance_fisico|round(1) ~ ' %' if p.avance_fisico is not none else '—' }}</td>
+      <td class="num">{{ p.avance_financiero|valor('$') if p.avance_financiero is not none else '—' }}</td>
+      <td><span class="tag {{ {'en_operacion':'ac','en_ejecucion':'al','suspendido':'neg'}.get(p.estado,'') }}">{{ estados[p.estado] }}</span></td></tr>{% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="empty">Aún no hay proyectos del POIR 1032. Créalos en POIR 1032 · plan.</p>{% endif %}
+
+{% if puede_cargar and proyectos %}
+<h3 class="serv-h" style="margin-top:14px">Registrar ejecución / avance</h3>
+<form method="post" action="/empresa/{{ emp.id }}/inversion-avance" class="form-grid">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+  <label>Proyecto <select name="proyecto_id" required>{% for p in proyectos %}<option value="{{ p.id }}">{{ p.codigo_poir }} — {{ p.nombre }}</option>{% endfor %}</select></label>
+  <label>Año tarifario <input type="number" name="anio" value="{{ periodo_activo.anio if not es_inicio else 2027 }}" style="width:110px"></label>
+  <label>Mes <select name="mes">{% for m in range(1,13) %}<option value="{{ m }}">{{ m }}</option>{% endfor %}</select></label>
+  <label>Avance físico (%) <input name="avance_fisico" inputmode="decimal"></label>
+  <label>Ejecutado acumulado ($) <input name="avance_financiero" inputmode="decimal"></label>
+  <label>Fecha real de operación <input type="date" name="fecha_real_operacion"></label>
+  <button class="btn" type="submit">Registrar ejecución</button>
+</form>
+{% endif %}
+
+<h2 class="serv-h">Nivel de cumplimiento por año tarifario</h2>
+{% if cumpl %}
+<div class="cards">
+  {% for c in cumpl %}
+  <div class="card"><div class="k">Año tarifario {{ c.anio }}</div>
+    <div class="v" style="font-size:22px">{{ (c.pct)|round(1) ~ ' %' if c.pct is not none else '—' }}</div>
+    <div style="margin:6px 0">{{ bar(c.pct or 0, 'var(--good)' if c.supera else ('var(--amber)' if c.en_curso else 'var(--line)')) }}</div>
+    <div class="muted2">Planeado {{ c.planeado|valor('$') }} · Ejecutado {{ c.ejecutado|valor('$') }}</div>
+    <div style="margin-top:6px">{% if c.supera %}<span class="tag ac">≥ 80 % · entra a la BCR</span>{% elif c.en_curso %}<span class="tag" style="background:#f0ead7;color:#8a6d1f">en ejecución</span>{% else %}<span class="tag neg">pendiente</span>{% endif %}</div>
+  </div>
+  {% endfor %}
+</div>
+<p class="hint">La ejecución efectiva de las obras del año determina cuánto del POIR 1032 entra a la BCR del año
+siguiente y, con ello, el CMI_POIR reconocido; la no ejecución se somete al mecanismo de provisión y a la
+evaluación de cumplimiento de metas.</p>
+{% else %}<p class="empty">Aún no hay plan ni ejecución del POIR 1032 para evaluar.</p>{% endif %}
+
+<h2 class="serv-h" style="margin-top:22px">Evolución de la BCR y CMI · proyección por año tarifario</h2>
+<p class="muted2">Evolución <b>indicativa</b> de la Base de Capital Regulada: <b>BCR<sub>t</sub> = (BCR<sub>t−1</sub>
+− recuperación de capital) + obras del POIR 1032 que entran en operación</b>. Cada año la BCR se remunera a la
+tasa r y recupera su cuota; las obras del POIR 1032 aportan CMI_POIR (arts. 2.1.2.1.3.5.10, .11 y .14). El POIR
+688 no se suma aquí: su valor ya está incorporado en la BCR₀.</p>
+{% for s in servicios %}{% set pr = proy.get(s) %}
+<h3 style="font-family:var(--head);font-size:14px;color:var(--teal-deep);margin:14px 0 4px">{{ bcr_serv[s] }}
+  <span class="muted2">· demanda {{ pr.demanda|valor('m³') if pr.demanda else 'sin dato' }} · vida útil {{ pr.vida_util|round(0)|int }} años</span></h3>
+<table class="tabla">
+  <thead><tr><th>Año tarifario</th><th class="r">POIR 1032 entra</th><th class="r">BCR al cierre</th>
+    <th class="r">CMI_BCR ($/m³)</th><th class="r">CMI_POIR ($/m³)</th><th class="r">CMI total ($/m³)</th></tr></thead>
+  <tbody>
+    {% for f in pr.filas %}<tr><td class="comp">{{ f.anio }}</td>
+      <td class="num">{{ f.poir_entra|valor('$') if f.poir_entra else '—' }}</td>
+      <td class="num">{{ f.bcr|valor('$') }}</td>
+      <td class="num">{{ f.cmi_bcr|valor('$') if f.cmi_bcr is not none else '—' }}</td>
+      <td class="num">{{ f.cmi_poir|valor('$') if f.cmi_poir is not none else '—' }}</td>
+      <td class="num"><b>{{ f.cmi_total|valor('$') if f.cmi_total is not none else '—' }}</b></td></tr>{% endfor %}
+  </tbody>
+</table>
+{% if not pr.demanda %}<p class="hint">Carga el CCP 2025 o la información comercial de {{ bcr_serv[s] }} para estimar el CMI por m³.</p>{% endif %}
+{% endfor %}
+{% endif %}{# fin sec=poir1032_ejec #}
 
 {# ============================ PASO 4 · ACTIVOS ADMIN. Y OPERATIVOS ============================ #}
 {% if sec=='activos' %}
