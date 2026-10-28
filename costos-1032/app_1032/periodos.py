@@ -66,6 +66,11 @@ for _p in PERIODOS:
         POR_BASE[_y] = _p
 
 
+def por_clave(clave):
+    """Período por su clave ('inicio', 'a1'…'a10'); el período de inicio si no existe."""
+    return POR_CLAVE.get(clave or "inicio", POR_CLAVE["inicio"])
+
+
 def periodo_por_base(anio):
     """Período cuyo cargue corresponde a este año calendario de línea base."""
     return POR_BASE.get(int(anio))

@@ -1943,8 +1943,9 @@ def validacion(request: Request, eid: int):
     servicios = [s for s, on in (("acueducto", emp["presta_ac"]), ("alcantarillado", emp["presta_al"])) if on] or ["acueducto"]
     # El agua producida (macromedición) solo aplica a acueducto; el alcantarillado no la carga.
     serv_agua = [s for s in servicios if s == "acueducto"]
-    # El período de inicio se calcula con la línea base 2024–2025 (dos años completos).
-    anios = per.PERIODOS[0]["anios_base"]              # [2024, 2025]
+    # La línea base depende del año tarifario ACTIVO de la empresa (inicio → 2024–2025).
+    with db.scope_conn(scope_of(user)) as _c:
+        anios = _periodo_activo(_c, eid)["anios_base"]
     matriz = [
         {"clave": "comercial", "nombre": "Comercial (suscriptores y consumos)", "cel": com_m, "serv": servicios},
         {"clave": "agua", "nombre": "Agua producida / macromedición (solo acueducto)", "cel": agua_m, "serv": serv_agua},
@@ -2571,6 +2572,7 @@ def cargar_info(request: Request, eid: int):
         emp = _emp_or_redirect(conn, eid)
         if not emp:
             return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        pa = _periodo_activo(conn, eid)          # año tarifario activo → línea base y años a cargar
         _yf = " AND anio=:a" if cm_anio else ""
         _yp = {"e": eid, "a": cm_anio} if cm_anio else {"e": eid}
         # Totales (conjunto, cod_dane='') — cubre cargue SUI y entradas manuales.
@@ -2624,7 +2626,7 @@ def cargar_info(request: Request, eid: int):
         # CMICT (impuestos, contribuciones y tasas) del año base i-1.
         #   ICTA/ICTO: cuentas del balance clasificadas, con su valor CONTABLE y un AJUSTE opcional
         #   por cuenta (p. ej. impuesto parcialmente excluido). Excluidos: lista taxativa del par.
-        cmict_anio = per.PERIODOS[0]["anios_base"][-1]
+        cmict_anio = pa["anios_base"][-1]
         cmict_icta = cmict.cuentas_componente(conn, eid, cmict_anio, "ICTA")
         cmict_icto = cmict.cuentas_componente(conn, eid, cmict_anio, "ICTO")
         cmict_excl = cmict.excluidos(conn, eid, cmict_anio)
@@ -2655,9 +2657,10 @@ def cargar_info(request: Request, eid: int):
         ivh_opc=ccp.IVH_OPC, met_opc=ccp.MET_OPC,
         meses=ops.MESES, anios_tar=ANIOS_TAR, cat_cp=cpart.CATEGORIAS,
         serv_cp=cpart.SERVICIOS, periodos_carga=per.periodos_cargables(),
+        periodo_activo=pa, periodos_todos=per.periodos_cargables(),
         bal_ajustes=bal_ajustes, conceptos_manual=bv.CONCEPTOS_MANUAL,
         tipos_cac=bv.TIPOS_CAC, tipo_label=bv.TIPO_LABEL, art_manual=bv.ART_MANUAL,
-        anios_base=per.PERIODOS[0]["anios_base"],
+        anios_base=pa["anios_base"],
         energia=energia, quimicos=quimicos, eq_tot=eq_tot, meses_hdr=eq.MES_HDR,
         cmict_anio=cmict_anio, cmict_icta=cmict_icta, cmict_icto=cmict_icto, cmict_tua=cmict_tua,
         cmict_retrib=cmict_retrib, cmict_soportes=cmict_soportes, cmict_excl=cmict_excl,
@@ -2726,6 +2729,33 @@ def _decodificar(raw):
         except UnicodeDecodeError:
             continue
     return raw.decode("latin-1", errors="replace")
+
+
+def _periodo_activo(conn, eid):
+    """Período (año tarifario) ACTIVO de la empresa; el de inicio por defecto. Gobierna la línea base
+    (años a cargar) y, en fases siguientes, qué secciones del cargue aplican."""
+    clave = conn.execute(text("SELECT periodo_activo FROM empresa WHERE id=:e"), {"e": eid}).scalar()
+    return per.por_clave(clave or "inicio")
+
+
+@app.post("/empresa/{eid}/periodo-activo")
+def periodo_activo_set(request: Request, eid: int, clave: str = Form(...),
+                       next: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    dflt = f"/empresa/{eid}/cargar?fuente=comercial"
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
+    cl = clave if clave in per.POR_CLAVE else "inicio"
+    with db.scope_conn(scope_of(user)) as conn:
+        if not _emp_or_redirect(conn, eid):
+            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        conn.execute(text("UPDATE empresa SET periodo_activo=:c WHERE id=:e"), {"c": cl, "e": eid})
+    db.audit(scope_of(user), "periodo_activo", "empresa", eid, cl)
+    return RedirectResponse(_dest(next, dflt, "msg=Año+tarifario+activo:+" + per.por_clave(cl)["etiqueta"].replace(" ", "+")), status_code=303)
 
 
 def _estudio_aprobado(conn, eid, anio_tarifario=None):
@@ -2902,13 +2932,13 @@ async def cmict_ajustes(request: Request, eid: int):
     nxt = form.get("next", "")
     if not rbac.can(user, "cargar_mensual"):
         return RedirectResponse(_dest(nxt, dflt, "err=No+autorizado"), status_code=303)
-    try:
-        anio = int(form.get("anio"))
-    except (TypeError, ValueError):
-        anio = per.PERIODOS[0]["anios_base"][-1]
     with db.scope_conn(scope_of(user)) as conn:
         if not _emp_or_redirect(conn, eid):
             return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        try:
+            anio = int(form.get("anio"))
+        except (TypeError, ValueError):
+            anio = _periodo_activo(conn, eid)["anios_base"][-1]
         g, b = cmict.ajustes_guardar(conn, eid, anio, form.get, cargado_por=user.get("user_id"))
         rc.recalcular(conn, eid)
     db.audit(scope_of(user), "cmict_ajustes", "empresa", eid, f"{anio}: {g} ajuste(s)")

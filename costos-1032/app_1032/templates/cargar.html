@@ -38,6 +38,21 @@
   Revisa la completitud en <a href="/empresa/{{ emp.id }}/validacion">Validación de información</a>.</p>
 </div>
 
+{% if periodo_activo %}
+<form method="post" action="/empresa/{{ emp.id }}/periodo-activo" class="pa-bar">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+  <span class="pa-k">Año tarifario activo</span>
+  {% if puede_cargar %}
+  <select name="clave" onchange="this.form.submit()">
+    {% for p in periodos_todos %}<option value="{{ p.clave }}"{{ ' selected' if p.clave==periodo_activo.clave else '' }}>{{ p.etiqueta }}</option>{% endfor %}
+  </select>
+  <noscript><button class="btn" type="submit">Cambiar</button></noscript>
+  {% else %}<b>{{ periodo_activo.etiqueta }}</b>{% endif %}
+  <span class="pa-base">Línea base <b>{{ periodo_activo.anios_base[0] }}–{{ periodo_activo.anios_base[1] }}</b>
+    · se carga {% if periodo_activo.es_inicio %}ambos años{% else %}solo <b>{{ periodo_activo.anios_cargar|join(', ') }}</b> (el otro viene del período anterior){% endif %}</span>
+</form>
+{% endif %}
+
 {% set pasos = [('comercial','Comercial'),('agua','Producción y Suministro de Agua y Fap'),('balance','Información Contable'),('costos','Costos Particulares'),('cmict','Impuestos, contribuciones y tasas')] %}
 {% set idx = namespace(i=0) %}
 {% for pp in pasos %}{% if pp[0]==fuente %}{% set idx.i = loop.index0 %}{% endif %}{% endfor %}
@@ -954,5 +969,11 @@ Array.prototype.forEach.call(document.querySelectorAll('[data-cmict]'), function
   border:1px solid var(--line,#d8d2c4);border-radius:6px;background:var(--bg,#fff);color:inherit}
 .tabla.cmict-aj input.aj::placeholder{color:var(--muted,#b4ae9f);font-style:italic}
 .tabla.cmict-aj input.aj:focus{border-color:var(--teal,#1f7a6b);outline:0}
+.pa-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 14px;padding:8px 14px;
+  background:var(--paper,#f1f7f4);border:1px solid var(--teal,#1f7a6b);border-radius:var(--r,8px);font-size:13.5px}
+.pa-bar .pa-k{font-weight:600;color:var(--teal-deep,#15604f)}
+.pa-bar select{font:inherit;font-size:13.5px;padding:3px 8px;border:1px solid var(--line,#d8d2c4);
+  border-radius:6px;background:var(--bg,#fff);color:inherit}
+.pa-bar .pa-base{color:var(--muted,#6b6659)}
 </style>
 {% endblock %}
