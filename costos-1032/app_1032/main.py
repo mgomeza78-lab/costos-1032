@@ -1288,9 +1288,9 @@ PLANTILLAS = {
         "anio,mes,ipc,ipcs",
         ["2026,7,112.34,110.20"]),
     "bcr_serie": ("plantilla_agua_facturada_688.csv",
-        "servicio,cod_dane,anio,mes,agua_facturada_m3,cmi_cobrado,cmi_corriente",
-        ["acueducto,41001,1,1,2040000,980.50,1250.00", "acueducto,41524,1,1,3500,980.50,1250.00",
-         "alcantarillado,41001,1,1,1840000,640.00,820.00"]),
+        "servicio,cod_dane,anio,mes,agua_facturada_m3,cmi_poir,cmi_bcr",
+        ["acueducto,41001,1,1,1417768,136.6823,179.7078", "acueducto,41524,1,1,3500,136.6823,179.7078",
+         "alcantarillado,41001,1,1,1840000,159.1791,248.4565"]),
     "balance": ("plantilla_balance_prueba.csv",
         "cuenta,nombre,saldo",
         ["511095,Gastos de personal administrativo,125000000",
@@ -1971,7 +1971,8 @@ def validacion(request: Request, eid: int):
             "WHERE empresa_id=:e AND q_m3 IS NOT NULL GROUP BY servicio"), {"e": eid}).all())
         bserie_cmi = dict(conn.execute(text(
             "SELECT servicio, count(DISTINCT (anio_tarifario, mes)) FROM bcr_serie "
-            "WHERE empresa_id=:e AND cmi_cobrado IS NOT NULL GROUP BY servicio"), {"e": eid}).all())
+            "WHERE empresa_id=:e AND (cmi_poir IS NOT NULL OR cmi_bcr IS NOT NULL OR cmi_cobrado IS NOT NULL) "
+            "GROUP BY servicio"), {"e": eid}).all())
         bact = dict(conn.execute(text(
             "SELECT servicio, count(*) FROM bcr_activo WHERE empresa_id=:e GROUP BY servicio"), {"e": eid}).all())
         bproy = dict(conn.execute(text(
@@ -3690,6 +3691,7 @@ def bcr_param_guardar(request: Request, eid: int, servicio: str = Form(...), r68
 @app.post("/empresa/{eid}/bcr-serie")
 def bcr_serie_guardar(request: Request, eid: int, servicio: str = Form(...), cod_dane: str = Form(""),
                       anio_tarifario: int = Form(...), mes: str = Form(""), q_m3: str = Form(""),
+                      cmi_poir: str = Form(""), cmi_bcr: str = Form(""),
                       cmi_cobrado: str = Form(""), cmi_corriente: str = Form(""),
                       next: str = Form(""), csrf: str = Form("")):
     if (r := _need_login(request)):
@@ -3707,8 +3709,9 @@ def bcr_serie_guardar(request: Request, eid: int, servicio: str = Form(...), cod
     with db.scope_conn(scope_of(user)) as conn:
         if not _emp_or_redirect(conn, eid):
             return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
-        bcr.serie_set(conn, eid, servicio, anio_tarifario, _fnum(q_m3), _fnum(cmi_cobrado),
-                      None, mes=mnum, cod_dane=(cod_dane or "").strip(), cmi_corriente=_fnum(cmi_corriente))
+        bcr.serie_set(conn, eid, servicio, anio_tarifario, _fnum(q_m3),
+                      _fnum(cmi_cobrado), mes=mnum, cod_dane=(cod_dane or "").strip(),
+                      cmi_poir=_fnum(cmi_poir), cmi_bcr=_fnum(cmi_bcr), cmi_corriente=_fnum(cmi_corriente))
     db.audit(scope_of(user), "bcr_serie", "empresa", eid, f"{servicio} año {anio_tarifario} mes {mnum}")
     return RedirectResponse(_dest(next, dflt, "msg=Serie+688+guardada"), status_code=303)
 

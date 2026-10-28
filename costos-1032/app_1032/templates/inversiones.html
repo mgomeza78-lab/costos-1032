@@ -62,14 +62,16 @@ año i se obtiene el <b>VP(CMI×Q)</b>, que se resta al VIA688 para el VPR₀ (a
   <summary class="muted2" style="cursor:pointer">Ver detalle mensual ({{ ing.meses|length }} registro(s))</summary>
   <table class="tabla" style="margin-top:6px">
     <thead><tr><th>Año</th><th class="c">Mes</th><th>APS</th><th class="r">Agua facturada (m³)</th>
-      <th class="r">CMI dic-2014</th><th class="r">CMI corriente</th><th class="r">Ingreso (CMI·Q)</th></tr></thead>
+      <th class="r">CMI_POIR dic-2014</th><th class="r">CMI_BCR dic-2014</th>
+      <th class="r">CMI total</th><th class="r">Ingreso (CMI·Q)</th></tr></thead>
     <tbody>
       {% for m in ing.meses %}
       <tr><td class="comp">{{ m.anio }}</td><td class="c">{{ m.mes if m.mes else '—' }}</td>
         <td>{{ aps_nom.get(m.cod_dane, m.cod_dane or 'conjunto') }}</td>
         <td class="num">{{ m.q|valor if m.q is not none else '—' }}</td>
+        <td class="num">{{ m.cmi_poir|valor('$') if m.cmi_poir is not none else '—' }}</td>
+        <td class="num">{{ m.cmi_bcr|valor('$') if m.cmi_bcr is not none else '—' }}</td>
         <td class="num">{{ m.cmi|valor('$') if m.cmi is not none else '—' }}</td>
-        <td class="num">{{ m.cmi_corriente|valor('$') if m.cmi_corriente is not none else '—' }}</td>
         <td class="num">{{ m.ingreso|valor('$') if m.ingreso is not none else '—' }}</td></tr>
       {% endfor %}
     </tbody>
@@ -89,12 +91,12 @@ año i se obtiene el <b>VP(CMI×Q)</b>, que se resta al VIA688 para el VPR₀ (a
   <div class="metodo-panel" data-m="masivo">
     <form method="post" action="/empresa/{{ emp.id }}/bcr-serie-csv" enctype="multipart/form-data" class="up-form">
       <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
-      <label>Serie 688 — CSV (columnas: <code>servicio, cod_dane, anio, mes, agua_facturada_m3, cmi_cobrado, cmi_corriente</code>). Una fila por mes, año, servicio y APS.
+      <label>Serie 688 — CSV (columnas: <code>servicio, cod_dane, anio, mes, agua_facturada_m3, cmi_poir, cmi_bcr</code>). Una fila por mes, año, servicio y APS.
         <input type="file" name="archivos" accept=".csv" multiple required></label>
       <button class="btn primary" type="submit">Cargar archivo(s)</button>
     </form>
     <p class="muted2" style="margin:4px 0 0"><a href="/empresa/{{ emp.id }}/plantilla/bcr_serie">Descargar plantilla</a>
-     · <code>cod_dane</code> = APS (p. ej. {% for a in aps_list %}{{ a.cod_dane }} {{ a.municipio }}{% if not loop.last %} · {% endif %}{% endfor %}). <code>cmi_cobrado</code> en <b>precios dic-2014</b> (obligatorio), <code>cmi_corriente</code> opcional.</p>
+     · <code>cod_dane</code> = APS (p. ej. {% for a in aps_list %}{{ a.cod_dane }} {{ a.municipio }}{% if not loop.last %} · {% endif %}{% endfor %}). El CMI688 va <b>por componente</b> en <b>precios dic-2014</b>: <code>cmi_poir</code> (POIR, hoja 06_3 Σactivos) y <code>cmi_bcr</code> (BCR₀, hoja 06_5); el VP usa la suma. También se admite <code>cmi_cobrado</code> (total) y <code>cmi_corriente</code> (opcional).</p>
   </div>
 
   <div class="metodo-panel" data-m="manual">
@@ -107,7 +109,8 @@ año i se obtiene el <b>VP(CMI×Q)</b>, que se resta al VIA688 para el VPR₀ (a
       <label>Año de la 688 (1-10) <input name="anio_tarifario" inputmode="numeric" style="width:90px" required></label>
       <label>Mes <select name="mes" required>{% for mm in range(1,13) %}<option value="{{ mm }}">{{ mm }}</option>{% endfor %}</select></label>
       <label>Agua facturada (m³) <input name="q_m3" inputmode="decimal"></label>
-      <label>CMI cobrado dic-2014 ($/m³) <input name="cmi_cobrado" inputmode="decimal"></label>
+      <label>CMI_POIR dic-2014 ($/m³) <input name="cmi_poir" inputmode="decimal"></label>
+      <label>CMI_BCR dic-2014 ($/m³) <input name="cmi_bcr" inputmode="decimal"></label>
       <label>CMI corriente ($/m³) <span class="muted2">opcional</span><input name="cmi_corriente" inputmode="decimal"></label>
       <button class="btn" type="submit">Guardar</button>
     </form>
