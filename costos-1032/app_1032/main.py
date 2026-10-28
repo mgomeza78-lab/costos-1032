@@ -2728,6 +2728,20 @@ def _decodificar(raw):
     return raw.decode("latin-1", errors="replace")
 
 
+def _estudio_aprobado(conn, eid, anio_tarifario=None):
+    """True si el estudio de costos de la empresa para el período (año tarifario) ya está aprobado
+    (hay un acto de aprobación de costos, no una simple indexación). Estando aprobado, no deben
+    modificarse los insumos del estudio."""
+    at = anio_tarifario or per.ANIO_INICIO
+    return bool(conn.execute(text(
+        "SELECT 1 FROM aprobacion_costos WHERE empresa_id=:e AND anio_tarifario=:a "
+        "AND fecha_indice IS NULL LIMIT 1"), {"e": eid, "a": at}).scalar())
+
+
+_APROBADO_MSG = ("err=El+estudio+ya+está+aprobado:+no+se+puede+modificar+la+información+base."
+                 "+Quite+la+aprobación+para+editar.")
+
+
 @app.post("/empresa/{eid}/energia-masivo")
 def energia_masivo_subir(request: Request, eid: int, anio: int = Form(...),
                          archivo: UploadFile = File(...), next: str = Form(""), csrf: str = Form("")):
@@ -2743,6 +2757,8 @@ def energia_masivo_subir(request: Request, eid: int, anio: int = Form(...),
     with db.scope_conn(scope_of(user)) as conn:
         if not _emp_or_redirect(conn, eid):
             return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        if _estudio_aprobado(conn, eid):
+            return RedirectResponse(_dest(next, dflt, _APROBADO_MSG), status_code=303)
         n, err = eq.energia_masivo(conn, eid, anio, texto, cargado_por=user.get("user_id"))
         rc.recalcular(conn, eid)
     db.audit(scope_of(user), "energia_masivo", "empresa", eid, f"{anio}: {n} puntos, {len(err)} errores")
@@ -2754,7 +2770,7 @@ def energia_masivo_subir(request: Request, eid: int, anio: int = Form(...),
 def energia_manual(request: Request, eid: int, anio: int = Form(...), servicio: str = Form("acueducto"),
                    tipo: str = Form("bombeo"), no_sui: str = Form(""), punto: str = Form(...),
                    actividad: str = Form(""), volumen_m3: str = Form(""), altura_m: str = Form(""),
-                   consumo_real_kwh: str = Form(""), precio_kwh: str = Form(""),
+                   consumo_real_kwh: str = Form(""), precio_kwh: str = Form(""), mes: str = Form(""),
                    observacion: str = Form(""), next: str = Form(""), csrf: str = Form("")):
     if (r := _need_login(request)):
         return r
@@ -2767,10 +2783,12 @@ def energia_manual(request: Request, eid: int, anio: int = Form(...), servicio: 
     with db.scope_conn(scope_of(user)) as conn:
         if not _emp_or_redirect(conn, eid):
             return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        if _estudio_aprobado(conn, eid):
+            return RedirectResponse(_dest(next, dflt, _APROBADO_MSG), status_code=303)
         ok, err = eq.energia_guardar(conn, eid, anio, {
             "servicio": servicio, "tipo": tipo, "no_sui": no_sui, "punto": punto, "actividad": actividad,
             "volumen_m3": volumen_m3, "altura_m": altura_m, "consumo_real_kwh": consumo_real_kwh,
-            "precio_kwh": precio_kwh, "observacion": observacion}, cargado_por=user.get("user_id"))
+            "precio_kwh": precio_kwh, "mes": mes, "observacion": observacion}, cargado_por=user.get("user_id"))
         rc.recalcular(conn, eid)
     if err:
         return RedirectResponse(_dest(next, dflt, "err=" + err.replace(" ", "+")), status_code=303)
@@ -2789,6 +2807,8 @@ def energia_del(request: Request, eid: int, pid: int, next: str = Form(""), csrf
     if not rbac.can(user, "cargar_mensual"):
         return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
     with db.scope_conn(scope_of(user)) as conn:
+        if _estudio_aprobado(conn, eid):
+            return RedirectResponse(_dest(next, dflt, _APROBADO_MSG), status_code=303)
         eq.energia_eliminar(conn, eid, pid)
         rc.recalcular(conn, eid)
     return RedirectResponse(_dest(next, dflt, "msg=Punto+eliminado"), status_code=303)

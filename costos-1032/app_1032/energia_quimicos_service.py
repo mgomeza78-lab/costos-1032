@@ -83,7 +83,10 @@ def calc_quimico_item(it):
 
 # -------------------------------------------------------------------- lectura + totales
 def energia_lista(conn, empresa_id, anio=None, servicio=None):
-    sql = ("SELECT id, anio, servicio, tipo, no_sui, punto, actividad, volumen_m3, altura_m, "
+    """Energía agregada POR PUNTO (suma de los meses cargados). Cada entrada trae el cálculo anual
+    (Ceb) y cuántos meses la componen. Para 'otros' el costo es Σ(Ko_m·Pce_m); para 'bombeo' se
+    calcula sobre el volumen anual."""
+    sql = ("SELECT id, anio, mes, servicio, tipo, no_sui, punto, actividad, volumen_m3, altura_m, "
            "consumo_real_kwh, precio_kwh, eta_reporte, origen, observacion "
            "FROM energia_punto WHERE empresa_id=:e")
     p = {"e": empresa_id}
@@ -91,12 +94,43 @@ def energia_lista(conn, empresa_id, anio=None, servicio=None):
         sql += " AND anio=:a"; p["a"] = anio
     if servicio:
         sql += " AND servicio=:s"; p["s"] = servicio
-    sql += " ORDER BY anio DESC, servicio, punto"
-    out = []
+    sql += " ORDER BY anio DESC, servicio, punto, mes"
+    g = {}
     for r in conn.execute(text(sql), p).mappings().all():
-        d = dict(r)
+        key = (r["anio"], r["servicio"], r["no_sui"], r["punto"])
+        a = g.get(key)
+        if a is None:
+            a = g[key] = {"anio": r["anio"], "servicio": r["servicio"], "tipo": r["tipo"],
+                          "no_sui": r["no_sui"], "punto": r["punto"], "actividad": r["actividad"],
+                          "origen": r["origen"], "observacion": r["observacion"],
+                          "vol": 0.0, "alt": None, "kwh": 0.0, "costo": 0.0, "psum": 0.0, "np": 0,
+                          "meses": set(), "ids": []}
+        a["ids"].append(r["id"])
+        if r["mes"]:
+            a["meses"].add(r["mes"])
+        k = _num(r["consumo_real_kwh"]); pce = _num(r["precio_kwh"])
+        a["vol"] += _num(r["volumen_m3"]); a["kwh"] += k
+        if r["precio_kwh"] is not None:
+            a["costo"] += k * pce; a["psum"] += pce; a["np"] += 1
+        if r["altura_m"] is not None:
+            a["alt"] = r["altura_m"] if a["alt"] is None else max(a["alt"], r["altura_m"])
+    out = []
+    for a in g.values():
+        if a["kwh"] > 0 and a["costo"] > 0:
+            pce = a["costo"] / a["kwh"]
+        elif a["np"]:
+            pce = a["psum"] / a["np"]
+        else:
+            pce = None
+        d = {"anio": a["anio"], "servicio": a["servicio"], "tipo": a["tipo"], "no_sui": a["no_sui"],
+             "punto": a["punto"], "actividad": a["actividad"], "origen": a["origen"],
+             "observacion": a["observacion"], "volumen_m3": a["vol"] or None, "altura_m": a["alt"],
+             "consumo_real_kwh": a["kwh"] or None, "precio_kwh": pce,
+             "meses": sorted(a["meses"]), "n_meses": len(a["meses"]),
+             "ids": a["ids"], "id": a["ids"][0] if a["ids"] else None}
         d["calc"] = calc_energia_punto(d)
         out.append(d)
+    out.sort(key=lambda d: (-d["anio"], d["servicio"], d["punto"]))
     return out
 
 
@@ -185,21 +219,24 @@ def _tipo(s):
 
 
 def energia_guardar(conn, empresa_id, anio, d, origen="empresa", cargado_por=None):
-    """Inserta/actualiza un punto de energía (upsert por servicio+no_sui+punto)."""
+    """Inserta/actualiza un punto de energía para un MES (upsert por año+mes+servicio+no_sui+punto).
+    mes = 0 = entrada anual/consolidada; 1..12 = mensual."""
     serv = _serv(d.get("servicio"))
     punto = (d.get("punto") or "").strip()
     if serv not in ("acueducto", "alcantarillado") or not punto:
         return None, "servicio y punto son obligatorios"
+    mes = _pint(d.get("mes")) or 0
+    mes = mes if 0 <= mes <= 12 else 0
     conn.execute(text(
-        "INSERT INTO energia_punto(empresa_id,anio,servicio,tipo,no_sui,punto,actividad,volumen_m3,"
+        "INSERT INTO energia_punto(empresa_id,anio,mes,servicio,tipo,no_sui,punto,actividad,volumen_m3,"
         " altura_m,consumo_real_kwh,precio_kwh,eta_reporte,observacion,origen,cargado_por) "
-        "VALUES (:e,:a,:s,:t,:ns,:p,:ac,:v,:h,:k,:pc,:er,:ob,:og,:u) "
-        "ON CONFLICT (empresa_id,anio,servicio,no_sui,punto) DO UPDATE SET tipo=excluded.tipo, "
+        "VALUES (:e,:a,:m,:s,:t,:ns,:p,:ac,:v,:h,:k,:pc,:er,:ob,:og,:u) "
+        "ON CONFLICT (empresa_id,anio,mes,servicio,no_sui,punto) DO UPDATE SET tipo=excluded.tipo, "
         "actividad=excluded.actividad, volumen_m3=excluded.volumen_m3, altura_m=excluded.altura_m, "
         "consumo_real_kwh=excluded.consumo_real_kwh, precio_kwh=excluded.precio_kwh, "
         "eta_reporte=excluded.eta_reporte, observacion=excluded.observacion, origen=excluded.origen, "
         "cargado_por=excluded.cargado_por, cargado_en=now()"),
-        {"e": empresa_id, "a": int(anio), "s": serv, "t": _tipo(d.get("tipo")),
+        {"e": empresa_id, "a": int(anio), "m": mes, "s": serv, "t": _tipo(d.get("tipo")),
          "ns": (d.get("no_sui") or "").strip(), "p": punto, "ac": (d.get("actividad") or "").strip(),
          "v": _pnum(d.get("volumen_m3")), "h": _pnum(d.get("altura_m")),
          "k": _pnum(d.get("consumo_real_kwh")), "pc": _pnum(d.get("precio_kwh")),
@@ -230,52 +267,53 @@ def quimico_guardar(conn, empresa_id, anio, d, origen="empresa", cargado_por=Non
 
 
 def energia_masivo(conn, empresa_id, anio, texto, cargado_por=None):
-    """Cargue masivo de energía POR MES: una fila por punto y mes. El sistema AGREGA por punto al
-    AÑO BASE (toma el año de la columna `anio`; si falta, usa el del selector). Para cada punto suma
-    el consumo y el volumen de los 12 meses; el costo reconocido de 'otros' es Σ(Ko_m·Pce_m) y el de
-    'bombeo' se calcula sobre el volumen anual. Reemplaza cada año presente. Devuelve (n_puntos, err)."""
+    """Cargue masivo de energía POR MES (una fila por punto y mes). Guarda cada fila tal cual, SIN
+    borrar el resto del año: solo reemplaza las combinaciones (año, mes) presentes en el archivo. Así:
+      · un archivo con los 12 meses reemplaza el año completo;
+      · un archivo de un solo mes reemplaza SOLO ese mes (los demás meses se conservan).
+    Si una fila no trae `mes`, es modo ANUAL (mes=0) y reemplaza todo el año. La CE de cada punto es
+    la suma de sus meses (se calcula en `energia_lista`). Devuelve (n_filas, errores)."""
     filas = _leer_csv(texto)
-    grupos, err = {}, []
+    datos, err = [], []
+    anios_anual = set()      # años cargados en modo anual (sin columna mes) → reemplaza todo el año
+    combos = set()           # (año, mes) mensuales a reemplazar
     for i, r in enumerate(filas, start=2):
         if not any((r.get(c) or "").strip() for c in ENERGIA_HDR):
             continue
         a = _pint(r.get("anio")) or int(anio)
+        m = _pint(r.get("mes")) or 0
         serv = _serv(r.get("servicio"))
         punto = (r.get("punto") or "").strip()
         if serv not in ("acueducto", "alcantarillado") or not punto:
             err.append(f"fila {i}: servicio y punto son obligatorios")
             continue
-        key = (a, serv, (r.get("no_sui") or "").strip(), punto)
-        g = grupos.setdefault(key, {"tipo": _tipo(r.get("tipo")), "actividad": (r.get("actividad") or "").strip(),
-                                    "vol": 0.0, "alt": None, "kwh": 0.0, "costo": 0.0, "psum": 0.0, "np": 0})
-        k = _pnum(r.get("consumo_real_kwh")) or 0.0
-        p = _pnum(r.get("precio_kwh"))
-        g["vol"] += _pnum(r.get("volumen_m3")) or 0.0
-        g["kwh"] += k
-        if p is not None:
-            g["costo"] += k * p          # Σ Ko_m·Pce_m  →  Ceb 'otros' exacto por mes
-            g["psum"] += p; g["np"] += 1
-        h = _pnum(r.get("altura_m"))
-        if h is not None:
-            g["alt"] = h if g["alt"] is None else max(g["alt"], h)   # altura representativa del punto
-    for a in sorted({k[0] for k in grupos}):
-        conn.execute(text("DELETE FROM energia_punto WHERE empresa_id=:e AND anio=:a"), {"e": empresa_id, "a": a})
-    n = 0
-    for (a, serv, nosui, punto), g in grupos.items():
-        if g["kwh"] > 0 and g["costo"] > 0:
-            pce = g["costo"] / g["kwh"]              # Ceb_otros = kwh·pce = Σ(Ko_m·Pce_m)
-        elif g["np"]:
-            pce = g["psum"] / g["np"]                # sin consumo: precio promedio informado
+        datos.append((a, m, serv, r))
+        if m:
+            combos.add((a, m))
         else:
-            pce = None
-        d = {"servicio": serv, "tipo": g["tipo"], "no_sui": nosui, "punto": punto,
-             "actividad": g["actividad"], "volumen_m3": g["vol"] or None, "altura_m": g["alt"],
-             "consumo_real_kwh": g["kwh"] or None, "precio_kwh": pce}
+            anios_anual.add(a)
+    # Borrado selectivo: modo anual borra el año entero; modo mensual borra solo ese (año, mes)
+    # y además limpia una posible entrada anual (mes=0) de ese año (lo mensual sustituye a lo anual).
+    for a in anios_anual:
+        conn.execute(text("DELETE FROM energia_punto WHERE empresa_id=:e AND anio=:a"), {"e": empresa_id, "a": a})
+    for a in {x for (x, _) in combos} - anios_anual:
+        conn.execute(text("DELETE FROM energia_punto WHERE empresa_id=:e AND anio=:a AND mes=0"),
+                     {"e": empresa_id, "a": a})
+    for (a, m) in combos:
+        if a in anios_anual:
+            continue
+        conn.execute(text("DELETE FROM energia_punto WHERE empresa_id=:e AND anio=:a AND mes=:m"),
+                     {"e": empresa_id, "a": a, "m": m})
+    n = 0
+    for (a, m, serv, r) in datos:
+        d = {"servicio": serv, "tipo": r.get("tipo"), "no_sui": r.get("no_sui"), "punto": r.get("punto"),
+             "actividad": r.get("actividad"), "volumen_m3": r.get("volumen_m3"), "altura_m": r.get("altura_m"),
+             "consumo_real_kwh": r.get("consumo_real_kwh"), "precio_kwh": r.get("precio_kwh"), "mes": m}
         ok, e = energia_guardar(conn, empresa_id, a, d, origen="masivo", cargado_por=cargado_por)
         if ok:
             n += 1
         else:
-            err.append(f"{punto}: {e}")
+            err.append(f"{r.get('punto')}: {e}")
     return n, err
 
 
@@ -298,7 +336,22 @@ def quimico_masivo(conn, empresa_id, anio, texto, cargado_por=None):
 
 
 def energia_eliminar(conn, empresa_id, pid):
-    conn.execute(text("DELETE FROM energia_punto WHERE empresa_id=:e AND id=:i"), {"e": empresa_id, "i": int(pid)})
+    """Elimina el PUNTO completo (todos sus meses) al que pertenece esa fila."""
+    row = conn.execute(text("SELECT anio, servicio, no_sui, punto FROM energia_punto "
+                            "WHERE empresa_id=:e AND id=:i"), {"e": empresa_id, "i": int(pid)}).mappings().first()
+    if not row:
+        return
+    conn.execute(text("DELETE FROM energia_punto WHERE empresa_id=:e AND anio=:a AND servicio=:s "
+                      "AND no_sui=:n AND punto=:p"),
+                 {"e": empresa_id, "a": row["anio"], "s": row["servicio"], "n": row["no_sui"], "p": row["punto"]})
+
+
+def energia_detalle_mes(conn, empresa_id, anio, servicio, no_sui, punto):
+    """Detalle por mes de un punto (para auditar la suma anual)."""
+    return [dict(r) for r in conn.execute(text(
+        "SELECT mes, consumo_real_kwh, precio_kwh, volumen_m3, altura_m FROM energia_punto "
+        "WHERE empresa_id=:e AND anio=:a AND servicio=:s AND no_sui=:n AND punto=:p ORDER BY mes"),
+        {"e": empresa_id, "a": anio, "s": servicio, "n": no_sui, "p": punto}).mappings().all()]
 
 
 def quimico_eliminar(conn, empresa_id, qid):
