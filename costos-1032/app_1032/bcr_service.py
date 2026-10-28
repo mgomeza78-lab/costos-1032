@@ -511,7 +511,9 @@ def ingresos_vp(conn, empresa_id, servicio):
             cmi = float(s["cmi_cobrado"]) if s["cmi_cobrado"] is not None else None
         ingreso = (cmi * q) if (q is not None and cmi is not None) else None
         proy = int(s["proyectado"] or 0)
-        d = por_anio.setdefault(i, {"ingreso": 0.0, "n": 0, "proy": 0})
+        d = por_anio.setdefault(i, {"ingreso": 0.0, "n": 0, "proy": 0, "q": 0.0, "nq": 0})
+        if q is not None:
+            d["q"] += q; d["nq"] += 1
         if ingreso is not None:
             d["ingreso"] += ingreso; d["n"] += 1
             if proy:
@@ -528,13 +530,76 @@ def ingresos_vp(conn, empresa_id, servicio):
         if vp is not None:
             total += vp
         filas.append({"anio": i, "ingreso": ingreso_i, "factor": factor, "vp": vp,
+                      "q": (por_anio[i]["q"] if por_anio[i]["nq"] else None),
                       "proy": por_anio[i].get("proy", 0)})
-    return {"total": (total if r is not None else None), "r688": r, "filas": filas, "meses": meses}
+    qs = [f["q"] for f in filas if f["q"] is not None]
+    ings = [f["ingreso"] for f in filas if f["ingreso"] is not None]
+    return {"total": (total if r is not None else None), "r688": r, "filas": filas, "meses": meses,
+            "total_q": (sum(qs) if qs else None),
+            "total_ingreso": (sum(ings) if ings else None)}
 
 
 # compatibilidad: VP agregado de lo recuperado vía CMI
 def vp_cmi_q_serie(conn, empresa_id, servicio):
     return ingresos_vp(conn, empresa_id, servicio)["total"]
+
+
+_MES_ABR = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"]
+
+
+def _mes_cal(fecha_inicio, i, m):
+    """Mes calendario del año‑688 i, mes m (m=1 ⇒ el mes de inicio de la 688)."""
+    if not fecha_inicio:
+        return None
+    off = (int(i) - 1) * 12 + (int(m) - 1)
+    tot = (fecha_inicio.year * 12 + (fecha_inicio.month - 1)) + off
+    return (tot // 12, tot % 12 + 1)                      # (año, mes) calendario
+
+
+def _fmt_mes(ym):
+    return f"{_MES_ABR[ym[1] - 1]}-{ym[0]}" if ym else None
+
+
+def cmi_tramos(conn, empresa_id, servicio):
+    """Tramos en los que cada componente del CMI688 se mantuvo ESTABLE (dic-2014).
+
+    Devuelve, para `poir`, `bcr` y `total`, la lista de tramos consecutivos con el mismo
+    valor: {valor, desde, hasta (mes calendario), meses, anio_desde/mes_desde…}. El CMI es
+    el mismo en todas las APS de un mes, así que se consolida por (año‑688, mes)."""
+    fecha = conn.execute(text("SELECT fecha_inicio_688 FROM empresa WHERE id=:e"),
+                         {"e": empresa_id}).scalar()
+    mm = {}
+    for s in serie_list(conn, empresa_id, servicio):
+        key = (int(s["anio_tarifario"]), int(s["mes"] or 0))
+        cp = float(s["cmi_poir"]) if s["cmi_poir"] is not None else None
+        cb = float(s["cmi_bcr"]) if s["cmi_bcr"] is not None else None
+        if cp is not None or cb is not None:
+            tot = (cp or 0.0) + (cb or 0.0)
+        else:
+            tot = float(s["cmi_cobrado"]) if s["cmi_cobrado"] is not None else None
+        mm.setdefault(key, {"poir": cp, "bcr": cb, "total": tot})
+    orden = sorted(mm)
+
+    def tramos(campo):
+        out, prev_idx = [], None
+        for (i, m) in orden:
+            v = mm[(i, m)][campo]
+            if v is None:
+                continue
+            idx = (i - 1) * 12 + (m - 1)
+            cal = _mes_cal(fecha, i, m)
+            cont = prev_idx is not None and idx == prev_idx + 1
+            if out and cont and abs(out[-1]["valor"] - v) < 1e-6:
+                out[-1]["hasta"] = _fmt_mes(cal); out[-1]["meses"] += 1
+                out[-1]["anio_hasta"] = i; out[-1]["mes_hasta"] = m
+            else:
+                out.append({"valor": v, "desde": _fmt_mes(cal), "hasta": _fmt_mes(cal),
+                            "meses": 1, "anio_desde": i, "mes_desde": m,
+                            "anio_hasta": i, "mes_hasta": m})
+            prev_idx = idx
+        return out
+
+    return {"poir": tramos("poir"), "bcr": tramos("bcr"), "total": tramos("total")}
 
 
 def _year_start(fecha_inicio, i):
