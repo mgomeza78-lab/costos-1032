@@ -15,6 +15,7 @@ Lo que falte se marca como «por cargar/calcular», con el artículo y para qué
 from sqlalchemy import text
 import balance_view as bv
 import ccp_view
+import cmict_service as cm
 import energia_quimicos_service as eq
 import ingesta
 import periodos as per
@@ -241,9 +242,24 @@ def variables(conn, empresa_id, servicios, emp=None, pclave="inicio"):
             v["CE"]["ref"] = ce_cont
         if ciq_cont is not None:
             v["CIQ"]["ref"] = ciq_cont
-        put("ICTA", (subict.get(s, {}).get("ICTA") if subict.get(s) else None), "balance clasificado")
-        put("ITO", (subict.get(s, {}).get("ICTO") if subict.get(s) else None), "balance clasificado")
-        put("TA", (subict.get(s, {}).get("TA") if subict.get(s) else None), "balance clasificado")
+        # ICTA/ITO/TA: del MÓDULO CMICT (efectivamente pagado; TA a Frec=1) cuando está cargado;
+        # si no, del balance. El valor contable del balance se muestra siempre como referencia.
+        icta_m, ito_m, ta_m = cm.cmict_de(conn, empresa_id, s, ab["CMICT"])
+        icta_c = (subict.get(s, {}).get("ICTA") if subict.get(s) else None)
+        ito_c = (subict.get(s, {}).get("ICTO") if subict.get(s) else None)
+        ta_c = (subict.get(s, {}).get("TA") if subict.get(s) else None)
+        put("ICTA", icta_m if icta_m is not None else icta_c,
+            "módulo CMICT (pagado)" if icta_m is not None else "balance clasificado")
+        put("ITO", ito_m if ito_m is not None else ito_c,
+            "módulo CMICT (pagado)" if ito_m is not None else "balance clasificado")
+        put("TA", ta_m if ta_m is not None else ta_c,
+            "módulo tasas (Frec=1)" if ta_m is not None else "balance clasificado")
+        if icta_m is not None and icta_c is not None:
+            v["ICTA"]["ref"] = icta_c
+        if ito_m is not None and ito_c is not None:
+            v["ITO"]["ref"] = ito_c
+        if ta_m is not None and ta_c is not None:
+            v["TA"]["ref"] = ta_c
         put("N", susc.get(s), "comercial")
         # Parámetros de la base del estudio: kct (con respaldo de la empresa) y CMI (del BCR/POIR).
         put("kct", None, None)

@@ -38,7 +38,7 @@
   Revisa la completitud en <a href="/empresa/{{ emp.id }}/validacion">Validación de información</a>.</p>
 </div>
 
-{% set pasos = [('comercial','Comercial'),('agua','Producción y Suministro de Agua y Fap'),('balance','Información Contable'),('costos','Costos Particulares')] %}
+{% set pasos = [('comercial','Comercial'),('agua','Producción y Suministro de Agua y Fap'),('balance','Información Contable'),('costos','Costos Particulares'),('cmict','Impuestos, contribuciones y tasas')] %}
 {% set idx = namespace(i=0) %}
 {% for pp in pasos %}{% if pp[0]==fuente %}{% set idx.i = loop.index0 %}{% endif %}{% endfor %}
 <div class="paso-nav">
@@ -604,6 +604,215 @@ para no doble contar (art. 2.1.2.1.3.4.4).</p>
 </table>
 <p class="hint">Este valor contable se descuenta del COC del servicio y año respectivos para que el costo no se
 reconozca dos veces (una vía el COC comparable y otra vía el costo particular).</p>
+{% endif %}
+{% endif %}
+
+{# ---------------- IMPUESTOS, CONTRIBUCIONES Y TASAS (CMICT) ---------------- #}
+{% if fuente=='cmict' %}
+<h2 class="serv-h">Impuestos, contribuciones y tasas (CMICT)</h2>
+<p class="muted2">CICT = ICTA + ICTO + TA (art. 2.1.2.1.3.6). Se reconocen solo los valores
+<b>efectivamente pagados</b> en {{ cmict_anio }} y únicamente los conceptos taxativos; la
+<b>tasa retributiva</b> se traslada a <b>Frec = {{ cmict_frec|round(0)|int }}</b> (el mayor valor por
+FR&gt;1 por incumplimiento de metas no es trasladable). El <b>valor contable</b> del balance se muestra
+como referencia para conciliar. Año base i−1 = <b>{{ cmict_anio }}</b>.</p>
+<p class="hint">No se reconocen, aunque se hayan pagado: {{ cmict_excluidos }}.</p>
+
+{% for comp in ['ICTA','ICTO'] %}
+{% set items = cmict_icta if comp=='ICTA' else cmict_icto %}
+<h3 class="serv-h">{{ comp }} · {{ 'administrativas (art. 2.1.2.1.3.6.3)' if comp=='ICTA' else 'operativas (art. 2.1.2.1.3.6.4)' }}</h3>
+<div class="carga-metodo">
+  <div class="metodo-tabs">
+    <button type="button" class="metodo-tab active" data-m="masivo">Cargue masivo</button>
+    <button type="button" class="metodo-tab" data-m="manual">Cargue manual</button>
+  </div>
+  <div class="metodo-panel active" data-m="masivo">
+    <form method="post" action="/empresa/{{ emp.id }}/cmict-tributo-masivo" enctype="multipart/form-data" class="up-form">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+      <input type="hidden" name="componente" value="{{ comp }}">
+      <label>Año<input type="number" name="anio" value="{{ cmict_anio }}" required></label>
+      <input type="file" name="archivo" accept=".csv" required>
+      <button class="btn primary" type="submit">Cargar {{ comp }}</button>
+    </form>
+    <p class="muted2" style="margin:4px 0 0"><a href="/empresa/{{ emp.id }}/plantilla-cmict/{{ comp|lower }}">Descargar plantilla {{ comp }}</a> · columnas: item, servicio, incluye (si/no), valor_pagado, observacion</p>
+  </div>
+  <div class="metodo-panel" data-m="manual">
+    <form method="post" action="/empresa/{{ emp.id }}/cmict-tributo-manual" class="up-form">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+      <input type="hidden" name="componente" value="{{ comp }}">
+      <div class="grid2">
+        <label>Año<input type="number" name="anio" value="{{ cmict_anio }}" required></label>
+        <label>Servicio<select name="servicio">{% if emp.presta_ac %}<option value="acueducto">Acueducto</option>{% endif %}{% if emp.presta_al %}<option value="alcantarillado">Alcantarillado</option>{% endif %}</select></label>
+        <label>Concepto<select name="item">{% for it in items %}<option value="{{ it.item }}">{{ it.letra }}) {{ it.nombre }}</option>{% endfor %}</select></label>
+        <label>¿Se incluye?<select name="incluye"><option value="si">Sí, se incluye</option><option value="no">No se incluye</option></select></label>
+        <label>Valor efectivamente pagado ($)<input name="valor_pagado" inputmode="decimal"></label>
+        <label>Observación<input name="observacion"></label>
+      </div>
+      <button class="btn primary" type="submit">Guardar concepto</button>
+    </form>
+  </div>
+</div>
+<div style="overflow-x:auto"><table class="tabla compact">
+  <thead><tr><th>Concepto</th><th class="r">Acueducto</th><th class="r">Alcantarillado</th><th>Art.</th>{% if puede_cargar %}<th></th>{% endif %}</tr></thead>
+  <tbody>
+    {% set tot = namespace(ac=0.0, al=0.0) %}
+    {% for it in items %}
+    {% if it.ac and it.ac.incluye and it.ac.valor_pagado %}{% set tot.ac = tot.ac + it.ac.valor_pagado %}{% endif %}
+    {% if it.al and it.al.incluye and it.al.valor_pagado %}{% set tot.al = tot.al + it.al.valor_pagado %}{% endif %}
+    <tr>
+      <td class="comp">{{ it.letra }}) {{ it.nombre }}</td>
+      <td class="num">{% if it.ac %}{% if it.ac.incluye %}{{ it.ac.valor_pagado|valor }}{% else %}<span class="muted2">no incluido</span>{% endif %}{% else %}—{% endif %}</td>
+      <td class="num">{% if it.al %}{% if it.al.incluye %}{{ it.al.valor_pagado|valor }}{% else %}<span class="muted2">no incluido</span>{% endif %}{% else %}—{% endif %}</td>
+      <td class="art">{{ it.articulo }}</td>
+      {% if puede_cargar %}<td class="c nowrap">
+        {% for cell in [it.ac, it.al] %}{% if cell %}<form method="post" action="/empresa/{{ emp.id }}/cmict-tributo/{{ cell.id }}/eliminar" style="display:inline" onsubmit="return confirm('¿Borrar este concepto?')"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}"><button class="btn-link" type="submit">borrar {{ 'ac' if cell==it.ac else 'al' }}</button></form> {% endif %}{% endfor %}
+      </td>{% endif %}
+    </tr>
+    {% endfor %}
+    <tr class="res-row"><td class="comp"><b>Subtotal {{ comp }} (incluido)</b></td>
+      <td class="num"><b>{{ tot.ac|valor }}</b></td><td class="num"><b>{{ tot.al|valor }}</b></td><td></td>{% if puede_cargar %}<td></td>{% endif %}</tr>
+    <tr><td class="muted2" style="font-size:12px">Valor contable (balance {{ cmict_anio }}, referencia)</td>
+      <td class="num muted2">{{ cmict_contable.acueducto.get(comp)|valor if cmict_contable.acueducto.get(comp) else '—' }}</td>
+      <td class="num muted2">{{ cmict_contable.alcantarillado.get(comp)|valor if cmict_contable.alcantarillado.get(comp) else '—' }}</td>
+      <td></td>{% if puede_cargar %}<td></td>{% endif %}</tr>
+  </tbody>
+</table></div>
+{% endfor %}
+
+{# ===== TA: TUA (acueducto) ===== #}
+{% if emp.presta_ac %}
+<h3 class="serv-h">TUA · Tasa por uso del agua — acueducto (art. 2.1.2.1.3.6.5)</h3>
+<p class="muted2">Una fila por factura/concesión de la autoridad ambiental. Se reconoce el <b>valor efectivamente pagado</b>; marque «pendiente» lo no pagado aún (no suma).</p>
+<div class="carga-metodo">
+  <div class="metodo-tabs">
+    <button type="button" class="metodo-tab active" data-m="masivo">Cargue masivo</button>
+    <button type="button" class="metodo-tab" data-m="manual">Cargue manual</button>
+  </div>
+  <div class="metodo-panel active" data-m="masivo">
+    <form method="post" action="/empresa/{{ emp.id }}/tua-masivo" enctype="multipart/form-data" class="up-form">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+      <label>Año<input type="number" name="anio" value="{{ cmict_anio }}" required></label>
+      <input type="file" name="archivo" accept=".csv" required>
+      <button class="btn primary" type="submit">Cargar facturas TUA</button>
+    </form>
+    <p class="muted2" style="margin:4px 0 0"><a href="/empresa/{{ emp.id }}/plantilla-cmict/tua">Descargar plantilla TUA</a></p>
+  </div>
+  <div class="metodo-panel" data-m="manual">
+    <form method="post" action="/empresa/{{ emp.id }}/tua-manual" class="up-form">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+      <div class="grid2">
+        <label>Año<input type="number" name="anio" value="{{ cmict_anio }}" required></label>
+        <label>Trimestre / período<input name="trimestre" placeholder="I-2025"></label>
+        <label>Predio / punto<input name="predio"></label>
+        <label>N° concesión<input name="concesion"></label>
+        <label>N° factura<input name="n_factura"></label>
+        <label>Valor pagado ($)<input name="valor" inputmode="decimal"></label>
+        <label>Resolución de pago<input name="resolucion_pago"></label>
+        <label>Fecha de pago<input name="fecha_pago" placeholder="dd/mm/aaaa"></label>
+        <label>Estado<select name="estado"><option value="pagado">Pagado</option><option value="pendiente">Pendiente</option></select></label>
+      </div>
+      <button class="btn primary" type="submit">Guardar factura TUA</button>
+    </form>
+  </div>
+</div>
+{% if cmict_tua %}
+{% set tua_tot = namespace(v=0.0) %}
+<div style="overflow-x:auto"><table class="tabla compact">
+  <thead><tr><th>Trim.</th><th>Predio</th><th>N° factura</th><th class="r">Valor pagado</th><th>Resolución</th><th>Pago</th><th>Estado</th>{% if puede_cargar %}<th></th>{% endif %}</tr></thead>
+  <tbody>
+    {% for f in cmict_tua %}{% if f.estado=='pagado' and f.valor %}{% set tua_tot.v = tua_tot.v + f.valor %}{% endif %}
+    <tr><td>{{ f.trimestre or '—' }}</td><td>{{ f.predio or '—' }}</td><td>{{ f.n_factura or '—' }}</td>
+      <td class="num">{{ f.valor|valor if f.valor else '—' }}</td><td>{{ f.resolucion_pago or '—' }}</td>
+      <td>{{ f.fecha_pago or '—' }}</td><td>{% if f.estado=='pendiente' %}<span class="warn">pendiente</span>{% else %}pagado{% endif %}</td>
+      {% if puede_cargar %}<td class="c"><form method="post" action="/empresa/{{ emp.id }}/tua/{{ f.id }}/eliminar" style="display:inline" onsubmit="return confirm('¿Eliminar?')"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}"><button class="btn-link" type="submit">eliminar</button></form></td>{% endif %}</tr>
+    {% endfor %}
+    <tr class="res-row"><td colspan="3"><b>TA — TUA reconocida (pagada)</b></td><td class="num"><b>{{ tua_tot.v|valor }}</b></td><td colspan="{{ 4 if puede_cargar else 3 }}"></td></tr>
+  </tbody>
+</table></div>
+{% endif %}
+{% endif %}
+
+{# ===== TA: tasa retributiva (alcantarillado) ===== #}
+{% if emp.presta_al %}
+<h3 class="serv-h">Tasa retributiva — alcantarillado (art. 2.1.2.1.3.6.6)</h3>
+<p class="muted2">Una fila por <b>punto de vertimiento</b>. Se reconoce a <b>Frec = {{ cmict_frec|round(0)|int }}</b>:
+el total a Frec=1 (= Tm<sub>DBO</sub>·DBO + Tm<sub>SST</sub>·SST) es lo trasladable; el <b>Fr liquidado</b>
+por la autoridad y el <b>total c/FR</b> (lo pagado) quedan como soporte, y la diferencia es
+<b>no recuperable</b>.</p>
+<div class="carga-metodo">
+  <div class="metodo-tabs">
+    <button type="button" class="metodo-tab active" data-m="masivo">Cargue masivo</button>
+    <button type="button" class="metodo-tab" data-m="manual">Cargue manual</button>
+  </div>
+  <div class="metodo-panel active" data-m="masivo">
+    <form method="post" action="/empresa/{{ emp.id }}/retributiva-masivo" enctype="multipart/form-data" class="up-form">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+      <label>Año<input type="number" name="anio" value="{{ cmict_anio }}" required></label>
+      <input type="file" name="archivo" accept=".csv" required>
+      <button class="btn primary" type="submit">Cargar puntos</button>
+    </form>
+    <p class="muted2" style="margin:4px 0 0"><a href="/empresa/{{ emp.id }}/plantilla-cmict/retributiva">Descargar plantilla retributiva</a> · columnas: punto, carga_dbo, carga_sst, tm_dbo, tm_sst, fr_liquidado, total_cfr</p>
+  </div>
+  <div class="metodo-panel" data-m="manual">
+    <form method="post" action="/empresa/{{ emp.id }}/retributiva-manual" class="up-form">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+      <div class="grid2">
+        <label>Año<input type="number" name="anio" value="{{ cmict_anio }}" required></label>
+        <label>Punto de vertimiento<input name="punto" required></label>
+        <label>Carga DBO (kg/año)<input name="carga_dbo" inputmode="decimal"></label>
+        <label>Carga SST (kg/año)<input name="carga_sst" inputmode="decimal"></label>
+        <label>Tm DBO ($/kg)<input name="tm_dbo" inputmode="decimal"></label>
+        <label>Tm SST ($/kg)<input name="tm_sst" inputmode="decimal"></label>
+        <label>Fr liquidado (autoridad)<input name="fr_liquidado" inputmode="decimal" placeholder="1.43"></label>
+        <label>Total c/FR pagado ($)<input name="total_cfr" inputmode="decimal"></label>
+      </div>
+      <button class="btn primary" type="submit">Guardar punto</button>
+    </form>
+  </div>
+</div>
+{% if cmict_retrib %}
+{% set rt = namespace(fr1=0.0, cfr=0.0, nr=0.0) %}
+<div style="overflow-x:auto"><table class="tabla compact">
+  <thead><tr><th>Punto</th><th class="r">Carga DBO</th><th class="r">Carga SST</th><th class="r">Fr liq.</th><th class="r">Total c/FR</th><th class="r">Total Frec=1</th><th class="r">No recuperable</th>{% if puede_cargar %}<th></th>{% endif %}</tr></thead>
+  <tbody>
+    {% for p in cmict_retrib %}
+    {% set rt.fr1 = rt.fr1 + p.calc.total_fr1 %}{% set rt.cfr = rt.cfr + p.calc.total_cfr %}{% set rt.nr = rt.nr + p.calc.no_recuperable %}
+    <tr><td class="comp">{{ p.punto }}</td><td class="num">{{ p.carga_dbo|valor if p.carga_dbo else '—' }}</td>
+      <td class="num">{{ p.carga_sst|valor if p.carga_sst else '—' }}</td><td class="num">{{ ('%.2f'|format(p.fr_liquidado))|replace('.',',') if p.fr_liquidado else '—' }}</td>
+      <td class="num">{{ p.calc.total_cfr|valor }}</td><td class="num"><b>{{ p.calc.total_fr1|valor }}</b></td>
+      <td class="num warn">{{ p.calc.no_recuperable|valor }}</td>
+      {% if puede_cargar %}<td class="c"><form method="post" action="/empresa/{{ emp.id }}/retributiva/{{ p.id }}/eliminar" style="display:inline" onsubmit="return confirm('¿Eliminar?')"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}"><button class="btn-link" type="submit">eliminar</button></form></td>{% endif %}</tr>
+    {% endfor %}
+    <tr class="res-row"><td class="comp"><b>TOTAL</b></td><td colspan="3"></td><td class="num">{{ rt.cfr|valor }}</td>
+      <td class="num"><b>{{ rt.fr1|valor }}</b></td><td class="num warn"><b>{{ rt.nr|valor }}</b></td>{% if puede_cargar %}<td></td>{% endif %}</tr>
+  </tbody>
+</table></div>
+<p class="hint"><b>TA — tasa retributiva reconocida (Frec=1) = {{ rt.fr1|valor('$') }}</b>. No trasladable (FR&gt;1): {{ rt.nr|valor('$') }}.</p>
+{% endif %}
+{% endif %}
+
+{# ===== Soportes de facturas de tasas ===== #}
+<h3 class="serv-h">Soportes de las facturas de tasas</h3>
+<p class="muted2">Adjunte las facturas y comprobantes de pago (PDF o imagen) que respaldan la TUA y la tasa retributiva.</p>
+<form method="post" action="/empresa/{{ emp.id }}/tasa-soporte" enctype="multipart/form-data" class="up-form">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+  <label>Tipo<select name="tipo"><option value="tua">TUA</option><option value="retributiva">Tasa retributiva</option><option value="general">General</option></select></label>
+  <label>Referencia (factura / punto)<input name="referencia"></label>
+  <label>Año<input type="number" name="anio" value="{{ cmict_anio }}"></label>
+  <input type="file" name="archivo" multiple required>
+  <button class="btn primary" type="submit">Subir soporte(s)</button>
+</form>
+{% if cmict_soportes %}
+<table class="tabla compact">
+  <thead><tr><th>Archivo</th><th>Tipo</th><th>Referencia</th><th class="r">Tamaño</th>{% if puede_cargar %}<th></th>{% endif %}</tr></thead>
+  <tbody>
+    {% for s in cmict_soportes %}
+    <tr><td><a href="/empresa/{{ emp.id }}/tasa-soporte/{{ s.id }}">{{ s.nombre }}</a></td>
+      <td>{{ s.tipo }}</td><td>{{ s.referencia or '—' }}</td>
+      <td class="num">{{ (s.tamano/1024)|round|int }} KB</td>
+      {% if puede_cargar %}<td class="c"><form method="post" action="/empresa/{{ emp.id }}/tasa-soporte/{{ s.id }}/eliminar" style="display:inline" onsubmit="return confirm('¿Eliminar soporte?')"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}"><button class="btn-link" type="submit">eliminar</button></form></td>{% endif %}</tr>
+    {% endfor %}
+  </tbody>
+</table>
 {% endif %}
 {% endif %}
 

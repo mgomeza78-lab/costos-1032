@@ -39,6 +39,7 @@ import aps_service as aps
 import costos_service as cpart
 import bcr_service as bcr
 import poir_cmi_service as poir
+import cmict_service as cmict
 import ccp_service as ccp
 import periodos as per
 import ingesta
@@ -2557,7 +2558,7 @@ def cargar_info(request: Request, eid: int):
     fuente = request.query_params.get("fuente") or "comercial"
     if fuente == "ccp":          # CCP/Fap se fusionó en "Producción y Suministro de Agua y Fap"
         fuente = "agua"
-    if fuente not in ("comercial", "agua", "balance", "costos"):
+    if fuente not in ("comercial", "agua", "balance", "costos", "cmict"):
         fuente = "comercial"
     # Vista comercial: "total" (conjunto, resumen) o "aps" (desglose por APS desde el detalle);
     # y filtro opcional por año. Orden cronológico en toda la vista "Cargado".
@@ -2620,6 +2621,23 @@ def cargar_info(request: Request, eid: int):
             "SELECT n_cuentas, nombre_archivo FROM catalogo_empresa WHERE empresa_id=:e"),
             {"e": eid}).mappings().first()
         bal_ajustes = ingesta.ajustes_listar(conn, eid)   # CAC-4/5/6 y exclusiones manuales
+        # CMICT (impuestos, contribuciones y tasas) del año base i-1
+        cmict_anio = per.PERIODOS[0]["anios_base"][-1]
+        cmict_icta = cmict.tributo_lista(conn, eid, cmict_anio, "ICTA")
+        cmict_icto = cmict.tributo_lista(conn, eid, cmict_anio, "ICTO")
+        cmict_tua = cmict.tua_lista(conn, eid, cmict_anio)
+        cmict_retrib = cmict.retributiva_lista(conn, eid, cmict_anio)
+        cmict_soportes = cmict.soporte_lista(conn, eid)
+        # Valor contable (del balance) por servicio, como referencia para conciliar
+        _pct = ingesta.get_pct_ac(conn, eid)
+        cmict_contable = {"acueducto": {}, "alcantarillado": {}}
+        for r in conn.execute(text(
+            "SELECT subcomponente, COALESCE(ac_dir,0) ac, COALESCE(al_dir,0) al, COALESCE(repartir,0) rp "
+            "FROM numerador_subcomp WHERE empresa_id=:e AND anio=:a AND cod_dane='' "
+            "AND subcomponente IN ('ICTA','ICTO','TA')"), {"e": eid, "a": cmict_anio}).mappings():
+            sc = r["subcomponente"]
+            cmict_contable["acueducto"][sc] = cmict_contable["acueducto"].get(sc, 0.0) + r["ac"] + r["rp"] * _pct
+            cmict_contable["alcantarillado"][sc] = cmict_contable["alcantarillado"].get(sc, 0.0) + r["al"] + r["rp"] * (1.0 - _pct)
     cat_estado = {"propio": bool(cat_row),
                   "n": cat_row["n_cuentas"] if cat_row else None,
                   "nombre": cat_row["nombre_archivo"] if cat_row else None,
@@ -2635,6 +2653,9 @@ def cargar_info(request: Request, eid: int):
         tipos_cac=bv.TIPOS_CAC, tipo_label=bv.TIPO_LABEL, art_manual=bv.ART_MANUAL,
         anios_base=per.PERIODOS[0]["anios_base"],
         energia=energia, quimicos=quimicos, eq_tot=eq_tot, meses_hdr=eq.MES_HDR,
+        cmict_anio=cmict_anio, cmict_icta=cmict_icta, cmict_icto=cmict_icto, cmict_tua=cmict_tua,
+        cmict_retrib=cmict_retrib, cmict_soportes=cmict_soportes, cmict_contable=cmict_contable,
+        cmict_frec=cmict.FREC, cmict_excluidos=cmict.EXCLUIDOS,
         puede_cargar=rbac.can(user, "cargar_mensual")))
 
 
@@ -2833,6 +2854,262 @@ def quimico_del(request: Request, eid: int, qid: int, next: str = Form(""), csrf
         eq.quimico_eliminar(conn, eid, qid)
         rc.recalcular(conn, eid)
     return RedirectResponse(_dest(next, dflt, "msg=Insumo+eliminado"), status_code=303)
+
+
+# ------------------------------------------------------------------ CMICT · impuestos, contribuciones y tasas
+def _cmict_dflt(eid):
+    return f"/empresa/{eid}/cargar?fuente=cmict"
+
+
+@app.post("/empresa/{eid}/cmict-tributo-masivo")
+def cmict_tributo_masivo(request: Request, eid: int, componente: str = Form(...), anio: int = Form(...),
+                         archivo: UploadFile = File(...), next: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request); dflt = _cmict_dflt(eid)
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
+    comp = componente if componente in ("ICTA", "ICTO") else "ICTA"
+    texto = _decodificar(archivo.file.read())
+    with db.scope_conn(scope_of(user)) as conn:
+        if not _emp_or_redirect(conn, eid):
+            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        n, err = cmict.tributo_masivo(conn, eid, anio, comp, texto, cargado_por=user.get("user_id"))
+        rc.recalcular(conn, eid)
+    db.audit(scope_of(user), "cmict_tributo_masivo", "empresa", eid, f"{comp} {anio}: {n} filas")
+    return RedirectResponse(_dest(next, dflt, f"msg={comp}+{anio}:+{n}+concepto(s)"), status_code=303)
+
+
+@app.post("/empresa/{eid}/cmict-tributo-manual")
+def cmict_tributo_manual(request: Request, eid: int, componente: str = Form(...), anio: int = Form(...),
+                         servicio: str = Form("acueducto"), item: str = Form(...), incluye: str = Form("si"),
+                         valor_pagado: str = Form(""), observacion: str = Form(""),
+                         next: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request); dflt = _cmict_dflt(eid)
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
+    comp = componente if componente in ("ICTA", "ICTO") else "ICTA"
+    with db.scope_conn(scope_of(user)) as conn:
+        if not _emp_or_redirect(conn, eid):
+            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        ok, err = cmict.tributo_guardar(conn, eid, anio, comp, servicio, item, cmict._si(incluye),
+                                        valor_pagado, (observacion or None), "empresa", user.get("user_id"))
+        rc.recalcular(conn, eid)
+    if err:
+        return RedirectResponse(_dest(next, dflt, "err=" + err.replace(" ", "+")), status_code=303)
+    return RedirectResponse(_dest(next, dflt, "msg=Concepto+guardado"), status_code=303)
+
+
+@app.post("/empresa/{eid}/cmict-tributo/{rid}/eliminar")
+def cmict_tributo_del(request: Request, eid: int, rid: int, next: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, _cmict_dflt(eid), "err=No+autorizado"), status_code=303)
+    with db.scope_conn(scope_of(user)) as conn:
+        cmict.eliminar(conn, eid, "cmict_tributo", rid); rc.recalcular(conn, eid)
+    return RedirectResponse(_dest(next, _cmict_dflt(eid), "msg=Concepto+eliminado"), status_code=303)
+
+
+@app.post("/empresa/{eid}/tua-masivo")
+def tua_masivo_subir(request: Request, eid: int, anio: int = Form(...), archivo: UploadFile = File(...),
+                     next: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request); dflt = _cmict_dflt(eid)
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
+    texto = _decodificar(archivo.file.read())
+    with db.scope_conn(scope_of(user)) as conn:
+        if not _emp_or_redirect(conn, eid):
+            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        n, err = cmict.tua_masivo(conn, eid, anio, texto, cargado_por=user.get("user_id"))
+        rc.recalcular(conn, eid)
+    return RedirectResponse(_dest(next, dflt, f"msg=TUA+{anio}:+{n}+factura(s)"), status_code=303)
+
+
+@app.post("/empresa/{eid}/tua-manual")
+def tua_manual(request: Request, eid: int, anio: int = Form(...), trimestre: str = Form(""),
+               periodo: str = Form(""), predio: str = Form(""), concesion: str = Form(""),
+               n_factura: str = Form(""), caudal_lts: str = Form(""), tarifa_unit: str = Form(""),
+               valor: str = Form(""), resolucion_pago: str = Form(""), fecha_pago: str = Form(""),
+               estado: str = Form("pagado"), observacion: str = Form(""), next: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request); dflt = _cmict_dflt(eid)
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
+    with db.scope_conn(scope_of(user)) as conn:
+        if not _emp_or_redirect(conn, eid):
+            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        ok, err = cmict.tua_guardar(conn, eid, anio, {"trimestre": trimestre, "periodo": periodo,
+            "predio": predio, "concesion": concesion, "n_factura": n_factura, "caudal_lts": caudal_lts,
+            "tarifa_unit": tarifa_unit, "valor": valor, "resolucion_pago": resolucion_pago,
+            "fecha_pago": fecha_pago, "estado": estado, "observacion": observacion},
+            cargado_por=user.get("user_id"))
+        rc.recalcular(conn, eid)
+    if err:
+        return RedirectResponse(_dest(next, dflt, "err=" + err.replace(" ", "+")), status_code=303)
+    return RedirectResponse(_dest(next, dflt, "msg=Factura+TUA+guardada"), status_code=303)
+
+
+@app.post("/empresa/{eid}/tua/{rid}/eliminar")
+def tua_del(request: Request, eid: int, rid: int, next: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, _cmict_dflt(eid), "err=No+autorizado"), status_code=303)
+    with db.scope_conn(scope_of(user)) as conn:
+        cmict.eliminar(conn, eid, "tasa_tua", rid); rc.recalcular(conn, eid)
+    return RedirectResponse(_dest(next, _cmict_dflt(eid), "msg=Factura+eliminada"), status_code=303)
+
+
+@app.post("/empresa/{eid}/retributiva-masivo")
+def retributiva_masivo_subir(request: Request, eid: int, anio: int = Form(...), archivo: UploadFile = File(...),
+                             next: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request); dflt = _cmict_dflt(eid)
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
+    texto = _decodificar(archivo.file.read())
+    with db.scope_conn(scope_of(user)) as conn:
+        if not _emp_or_redirect(conn, eid):
+            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        n, err = cmict.retributiva_masivo(conn, eid, anio, texto, cargado_por=user.get("user_id"))
+        rc.recalcular(conn, eid)
+    return RedirectResponse(_dest(next, dflt, f"msg=Tasa+retributiva+{anio}:+{n}+punto(s)"), status_code=303)
+
+
+@app.post("/empresa/{eid}/retributiva-manual")
+def retributiva_manual(request: Request, eid: int, anio: int = Form(...), punto: str = Form(...),
+                       carga_dbo: str = Form(""), carga_sst: str = Form(""), tm_dbo: str = Form(""),
+                       tm_sst: str = Form(""), fr_liquidado: str = Form(""), total_cfr: str = Form(""),
+                       observacion: str = Form(""), next: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request); dflt = _cmict_dflt(eid)
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
+    with db.scope_conn(scope_of(user)) as conn:
+        if not _emp_or_redirect(conn, eid):
+            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        ok, err = cmict.retributiva_guardar(conn, eid, anio, {"punto": punto, "carga_dbo": carga_dbo,
+            "carga_sst": carga_sst, "tm_dbo": tm_dbo, "tm_sst": tm_sst, "fr_liquidado": fr_liquidado,
+            "total_cfr": total_cfr, "observacion": observacion}, cargado_por=user.get("user_id"))
+        rc.recalcular(conn, eid)
+    if err:
+        return RedirectResponse(_dest(next, dflt, "err=" + err.replace(" ", "+")), status_code=303)
+    return RedirectResponse(_dest(next, dflt, "msg=Punto+de+vertimiento+guardado"), status_code=303)
+
+
+@app.post("/empresa/{eid}/retributiva/{rid}/eliminar")
+def retributiva_del(request: Request, eid: int, rid: int, next: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, _cmict_dflt(eid), "err=No+autorizado"), status_code=303)
+    with db.scope_conn(scope_of(user)) as conn:
+        cmict.eliminar(conn, eid, "tasa_retributiva", rid); rc.recalcular(conn, eid)
+    return RedirectResponse(_dest(next, _cmict_dflt(eid), "msg=Punto+eliminado"), status_code=303)
+
+
+@app.post("/empresa/{eid}/tasa-soporte")
+async def tasa_soporte_subir(request: Request, eid: int):
+    if (r := _need_login(request)):
+        return r
+    form = await request.form()
+    if (bad := _bad_csrf(request, form.get("csrf", ""))):
+        return bad
+    user = session_user(request); dflt = _cmict_dflt(eid)
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(form.get("next", ""), dflt, "err=No+autorizado"), status_code=303)
+    anio = form.get("anio") or None
+    tipo = form.get("tipo") or "general"
+    referencia = form.get("referencia") or None
+    n = 0
+    with db.scope_conn(scope_of(user)) as conn:
+        if not _emp_or_redirect(conn, eid):
+            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        for up in form.getlist("archivo"):
+            if not getattr(up, "filename", ""):
+                continue
+            data = await up.read()
+            if not data:
+                continue
+            ext = up.filename.rsplit(".", 1)[-1].lower() if "." in up.filename else ""
+            cmict.soporte_guardar(conn, eid, anio, tipo, referencia, up.filename, ext, data, user.get("user_id"))
+            n += 1
+    return RedirectResponse(_dest(form.get("next", ""), dflt, f"msg={n}+soporte(s)+cargado(s)"), status_code=303)
+
+
+@app.get("/empresa/{eid}/tasa-soporte/{sid}")
+def tasa_soporte_descargar(request: Request, eid: int, sid: int):
+    if (r := _need_login(request)):
+        return r
+    user = session_user(request)
+    with db.scope_conn(scope_of(user)) as conn:
+        row = conn.execute(text("SELECT nombre, contenido FROM tasa_soporte WHERE empresa_id=:e AND id=:i"),
+                           {"e": eid, "i": sid}).mappings().first()
+    if not row:
+        return RedirectResponse(_cmict_dflt(eid) + "?err=Soporte+no+encontrado", status_code=303)
+    seguro = re.sub(r'[^A-Za-z0-9._-]', '_', row["nombre"] or "soporte")
+    return Response(content=bytes(row["contenido"]), media_type="application/octet-stream",
+                    headers={"Content-Disposition": f'attachment; filename="{seguro}"'})
+
+
+@app.post("/empresa/{eid}/tasa-soporte/{sid}/eliminar")
+def tasa_soporte_del(request: Request, eid: int, sid: int, next: str = Form(""), csrf: str = Form("")):
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, _cmict_dflt(eid), "err=No+autorizado"), status_code=303)
+    with db.scope_conn(scope_of(user)) as conn:
+        cmict.eliminar(conn, eid, "tasa_soporte", sid)
+    return RedirectResponse(_dest(next, _cmict_dflt(eid), "msg=Soporte+eliminado"), status_code=303)
+
+
+@app.get("/empresa/{eid}/plantilla-cmict/{tipo}")
+def plantilla_cmict(request: Request, eid: int, tipo: str):
+    if (r := _need_login(request)):
+        return r
+    t = (tipo or "").lower()
+    if t in ("icta", "icto"):
+        nombre, txt = cmict.plantilla_tributo(t.upper())
+    elif t == "tua":
+        nombre, txt = cmict.plantilla_tua()
+    elif t in ("retributiva", "retrib"):
+        nombre, txt = cmict.plantilla_retributiva()
+    else:
+        return RedirectResponse(_cmict_dflt(eid) + "?err=Plantilla+no+disponible", status_code=303)
+    return Response(txt, media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f"attachment; filename={nombre}"})
 
 
 @app.get("/empresa/{eid}/plantilla-energia")
