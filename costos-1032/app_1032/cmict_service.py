@@ -117,19 +117,100 @@ def retributiva_lista(conn, empresa_id, anio=None):
 
 
 # -------------------------------------------------------------------- totales → numeradores
-def _tributo_total(conn, empresa_id, anio, componente, servicio):
-    """Σ valor_pagado de los conceptos INCLUIDOS (incluye=true) del componente y servicio.
-    None si no hay ninguna fila cargada (para que el motor use el balance como respaldo)."""
-    n = conn.execute(text(
-        "SELECT count(*) FROM cmict_tributo WHERE empresa_id=:e AND anio=:a AND componente=:c AND servicio=:s"),
-        {"e": empresa_id, "a": anio, "c": componente, "s": servicio}).scalar()
-    if not n:
+def _pct_ac(conn, empresa_id):
+    import ingesta
+    return ingesta.get_pct_ac(conn, empresa_id)
+
+
+def cuentas_componente(conn, empresa_id, anio, componente):
+    """Cuentas del balance clasificadas a ICTA/ICTO (numerador_cuenta) con su valor CONTABLE por
+    servicio y el AJUSTE (override) cargado. Es la base de la tabla por concepto: cada cuenta trae su
+    valor contable y, si se diligencia, un valor distinto (p. ej. impuesto parcialmente excluido)."""
+    pct = _pct_ac(conn, empresa_id)
+    ov = {}
+    for r in conn.execute(text(
+        "SELECT servicio, item, incluye, valor_pagado FROM cmict_tributo "
+        "WHERE empresa_id=:e AND anio=:a AND componente=:c"),
+            {"e": empresa_id, "a": anio, "c": componente}).mappings():
+        ov.setdefault(r["item"], {})[r["servicio"]] = dict(r)
+    out = []
+    for r in conn.execute(text(
+        "SELECT codigo, nombre, ac_dir, al_dir, repartir FROM numerador_cuenta "
+        "WHERE empresa_id=:e AND anio=:a AND cod_dane='' AND componente='CMICT' AND subcomponente=:c "
+        "ORDER BY codigo"), {"e": empresa_id, "a": anio, "c": componente}).mappings():
+        cod = r["codigo"]
+        out.append({"codigo": cod, "nombre": r["nombre"],
+                    "contable_ac": (r["ac_dir"] or 0.0) + (r["repartir"] or 0.0) * pct,
+                    "contable_al": (r["al_dir"] or 0.0) + (r["repartir"] or 0.0) * (1.0 - pct),
+                    "ac": ov.get(cod, {}).get("acueducto"), "al": ov.get(cod, {}).get("alcantarillado")})
+    return out
+
+
+def excluidos(conn, empresa_id, anio):
+    """Impuestos/contribuciones NO reconocidos (subcomponente 'ICT-X') con su valor contable por
+    servicio — la lista taxativa del parágrafo (renta, ganancia ocasional, patrimonio, impuesto al
+    carbono, plusvalía, intereses de mora, sanciones y multas; art. 2.1.2.1.3.6.3/.4, par. 1–3)."""
+    pct = _pct_ac(conn, empresa_id)
+    out = []
+    for r in conn.execute(text(
+        "SELECT codigo, nombre, ac_dir, al_dir, repartir FROM numerador_cuenta "
+        "WHERE empresa_id=:e AND anio=:a AND cod_dane='' AND subcomponente='ICT-X' "
+        "ORDER BY (ac_dir+al_dir+repartir) DESC, codigo"), {"e": empresa_id, "a": anio}).mappings():
+        out.append({"codigo": r["codigo"], "nombre": r["nombre"],
+                    "ac": (r["ac_dir"] or 0.0) + (r["repartir"] or 0.0) * pct,
+                    "al": (r["al_dir"] or 0.0) + (r["repartir"] or 0.0) * (1.0 - pct)})
+    return out
+
+
+def _recon(contable, ovr):
+    """Valor reconocido de una cuenta en un servicio: el override si existe y se incluye; si no, el contable."""
+    if ovr is None:
+        return contable
+    if not ovr.get("incluye"):
+        return 0.0
+    v = ovr.get("valor_pagado")
+    return float(v) if v is not None else contable
+
+
+def _comp_total(conn, empresa_id, anio, componente, servicio):
+    rows = cuentas_componente(conn, empresa_id, anio, componente)
+    if not rows:
         return None
-    v = conn.execute(text(
-        "SELECT COALESCE(SUM(valor_pagado),0) FROM cmict_tributo "
-        "WHERE empresa_id=:e AND anio=:a AND componente=:c AND servicio=:s AND incluye=true"),
-        {"e": empresa_id, "a": anio, "c": componente, "s": servicio}).scalar()
-    return float(v or 0.0)
+    k = "ac" if (servicio or "").lower().startswith("acu") else "al"
+    kc = "contable_ac" if k == "ac" else "contable_al"
+    return sum(_recon(r[kc], r[k]) for r in rows)
+
+
+def override_borrar(conn, empresa_id, anio, componente, servicio, codigo):
+    conn.execute(text("DELETE FROM cmict_tributo WHERE empresa_id=:e AND anio=:a AND componente=:c "
+                      "AND servicio=:s AND item=:i"),
+                 {"e": empresa_id, "a": anio, "c": componente, "s": servicio, "i": codigo})
+
+
+def ajuste_campo(componente, codigo, k):
+    """Nombre del campo del formulario para el ajuste de una cuenta (componente, código, ac/al)."""
+    return f"aj_{componente}_{codigo}_{k}"
+
+
+def ajustes_guardar(conn, empresa_id, anio, getval, cargado_por=None):
+    """Procesa la tabla de ajustes de ICTA/ICTO. Para cada cuenta y servicio: si el usuario
+    diligenció un valor distinto, se guarda como ajuste (sustituye al contable); si lo dejó en
+    blanco, se borra cualquier ajuste previo (vuelve al contable). Devuelve (n_guardados, n_borrados)."""
+    guard = borr = 0
+    for comp in ("ICTA", "ICTO"):
+        for r in cuentas_componente(conn, empresa_id, anio, comp):
+            cod = r["codigo"]
+            for serv, k in (("acueducto", "ac"), ("alcantarillado", "al")):
+                raw = getval(ajuste_campo(comp, cod, k))
+                val = _pnum(raw)
+                if raw is not None and str(raw).strip() != "" and val is not None:
+                    tributo_guardar(conn, empresa_id, anio, comp, serv, cod, True, val,
+                                    obs=r["nombre"], origen="ajuste", cargado_por=cargado_por)
+                    guard += 1
+                else:
+                    override_borrar(conn, empresa_id, anio, comp, serv, cod)
+                    borr += 1
+    return guard, borr
 
 
 def ta_de(conn, empresa_id, servicio, anio):
@@ -151,10 +232,11 @@ def ta_de(conn, empresa_id, servicio, anio):
 
 
 def cmict_de(conn, empresa_id, servicio, anio):
-    """(ICTA, ICTO, TA) del módulo para el servicio/año. Cada uno None si no se cargó
-    (para que el motor use el valor del balance como respaldo). TA siempre del módulo de tasas."""
-    return (_tributo_total(conn, empresa_id, anio, "ICTA", servicio),
-            _tributo_total(conn, empresa_id, anio, "ICTO", servicio),
+    """(ICTA, ICTO, TA) reconocidos del módulo para el servicio/año. ICTA/ICTO = Σ del valor
+    reconocido por cuenta (contable, salvo que haya un ajuste cargado por cuenta); None si el
+    balance no está clasificado (para que el motor use el respaldo). TA siempre del módulo de tasas."""
+    return (_comp_total(conn, empresa_id, anio, "ICTA", servicio),
+            _comp_total(conn, empresa_id, anio, "ICTO", servicio),
             ta_de(conn, empresa_id, servicio, anio))
 
 
@@ -193,7 +275,9 @@ def _si(s):
 
 def tributo_guardar(conn, empresa_id, anio, componente, servicio, item, incluye, valor, obs=None,
                     origen="empresa", cargado_por=None):
-    if item not in ITEM_NOMBRE or componente not in ITEMS:
+    # `item` es el CÓDIGO de la cuenta del balance clasificada a ICTA/ICTO (el ajuste se guarda
+    # por cuenta). Solo se valida el componente; el valor es el que sustituye al contable.
+    if componente not in ITEMS or not str(item or "").strip():
         return None, "concepto inválido"
     conn.execute(text(
         "INSERT INTO cmict_tributo(empresa_id,anio,servicio,componente,item,incluye,valor_pagado,"

@@ -610,69 +610,75 @@ reconozca dos veces (una vía el COC comparable y otra vía el costo particular)
 {# ---------------- IMPUESTOS, CONTRIBUCIONES Y TASAS (CMICT) ---------------- #}
 {% if fuente=='cmict' %}
 <h2 class="serv-h">Impuestos, contribuciones y tasas (CMICT)</h2>
-<p class="muted2">CICT = ICTA + ICTO + TA (art. 2.1.2.1.3.6). Se reconocen solo los valores
-<b>efectivamente pagados</b> en {{ cmict_anio }} y únicamente los conceptos taxativos; la
-<b>tasa retributiva</b> se traslada a <b>Frec = {{ cmict_frec|round(0)|int }}</b> (el mayor valor por
-FR&gt;1 por incumplimiento de metas no es trasladable). El <b>valor contable</b> del balance se muestra
-como referencia para conciliar. Año base i−1 = <b>{{ cmict_anio }}</b>.</p>
-<p class="hint">No se reconocen, aunque se hayan pagado: {{ cmict_excluidos }}.</p>
+<p class="muted2">CICT = ICTA + ICTO + TA (art. 2.1.2.1.3.6). Los impuestos y contribuciones (ICTA/ICTO)
+parten del <b>valor contable del balance de prueba</b> (año base i−1 = <b>{{ cmict_anio }}</b>); a la
+derecha de cada concepto hay una <b>casilla de ajuste</b> por si debe reconocerse un valor distinto
+(p. ej. un impuesto parcialmente excluido). Las <b>tasas</b> (TUA y retributiva) se detallan aparte: la
+<b>tasa retributiva</b> se traslada a <b>Frec = {{ cmict_frec|round(0)|int }}</b> (el mayor valor por FR&gt;1
+por incumplimiento de metas no es trasladable).</p>
 
+<div class="cmict-tabs" data-cmict>
+  <div class="cmict-tabbar">
+    <button type="button" class="cmict-tab active" data-t="ICTA">ICTA · administrativas</button>
+    <button type="button" class="cmict-tab" data-t="ICTO">ICTO · operativas</button>
+    <button type="button" class="cmict-tab" data-t="TA">Tasas · TUA / retributiva</button>
+    <button type="button" class="cmict-tab" data-t="EXCL">Excluidos</button>
+  </div>
+
+{# ===== ICTA / ICTO: tabla por concepto con valor contable + casilla de ajuste ===== #}
 {% for comp in ['ICTA','ICTO'] %}
 {% set items = cmict_icta if comp=='ICTA' else cmict_icto %}
-{% set hay = (items|selectattr('ac')|list|length) + (items|selectattr('al')|list|length) %}
-<h3 class="serv-h">{{ comp }} · {{ 'administrativas (art. 2.1.2.1.3.6.3)' if comp=='ICTA' else 'operativas (art. 2.1.2.1.3.6.4)' }}</h3>
-<p class="muted2">El valor base de {{ comp }} viene del <b>balance de prueba</b> (Información Contable). Aquí, por servicio,
-puedes <b>ajustar el valor efectivamente pagado</b> de un concepto o <b>excluirlo</b>. Elige el concepto y modifica su valor.</p>
-{% if puede_cargar %}
-<form method="post" action="/empresa/{{ emp.id }}/cmict-tributo-manual" class="up-form cmict-edit">
-  <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
-  <input type="hidden" name="componente" value="{{ comp }}"><input type="hidden" name="anio" value="{{ cmict_anio }}">
-  <div class="grid2">
-    <label style="grid-column:1/-1">Concepto
-      <select name="item" class="cmict-item">
-        {% for it in items %}<option value="{{ it.item }}" data-ac="{{ it.ac.valor_pagado if it.ac and it.ac.valor_pagado is not none else '' }}" data-acinc="{{ '0' if it.ac and not it.ac.incluye else '1' }}" data-al="{{ it.al.valor_pagado if it.al and it.al.valor_pagado is not none else '' }}" data-alinc="{{ '0' if it.al and not it.al.incluye else '1' }}">{{ '● ' if (it.ac or it.al) else '' }}{{ it.letra }}) {{ it.nombre }}</option>{% endfor %}
-      </select>
-    </label>
-    {% if emp.presta_ac %}
-    <label>Acueducto · valor pagado ($)<input name="valor_ac" class="cmv-ac" inputmode="decimal"></label>
-    <label>Acueducto<select name="incluye_ac" class="cmi-ac"><option value="si">Incluir</option><option value="no">Excluir</option></select></label>
-    {% endif %}
-    {% if emp.presta_al %}
-    <label>Alcantarillado · valor pagado ($)<input name="valor_al" class="cmv-al" inputmode="decimal"></label>
-    <label>Alcantarillado<select name="incluye_al" class="cmi-al"><option value="si">Incluir</option><option value="no">Excluir</option></select></label>
-    {% endif %}
-  </div>
-  <button class="btn primary" type="submit">Guardar concepto</button>
-</form>
-{% endif %}
-<div style="overflow-x:auto"><table class="tabla compact">
-  <thead><tr><th>Concepto ajustado</th>{% if emp.presta_ac %}<th class="r">Acueducto</th>{% endif %}{% if emp.presta_al %}<th class="r">Alcantarillado</th>{% endif %}<th>Art.</th>{% if puede_cargar %}<th></th>{% endif %}</tr></thead>
-  <tbody>
-    {% set tot = namespace(ac=0.0, al=0.0) %}
-    {% for it in items if it.ac or it.al %}
-    {% if it.ac and it.ac.incluye and it.ac.valor_pagado %}{% set tot.ac = tot.ac + it.ac.valor_pagado %}{% endif %}
-    {% if it.al and it.al.incluye and it.al.valor_pagado %}{% set tot.al = tot.al + it.al.valor_pagado %}{% endif %}
-    <tr>
-      <td class="comp">{{ it.letra }}) {{ it.nombre }}</td>
-      {% if emp.presta_ac %}<td class="num">{% if it.ac %}{% if it.ac.incluye %}{{ it.ac.valor_pagado|valor }}{% else %}<span class="muted2">excluido</span>{% endif %}{% else %}—{% endif %}</td>{% endif %}
-      {% if emp.presta_al %}<td class="num">{% if it.al %}{% if it.al.incluye %}{{ it.al.valor_pagado|valor }}{% else %}<span class="muted2">excluido</span>{% endif %}{% else %}—{% endif %}</td>{% endif %}
-      <td class="art">{{ it.articulo }}</td>
-      {% if puede_cargar %}<td class="c nowrap">{% for cell in [it.ac, it.al] %}{% if cell %}<form method="post" action="/empresa/{{ emp.id }}/cmict-tributo/{{ cell.id }}/eliminar" style="display:inline" onsubmit="return confirm('¿Quitar el ajuste?')"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}"><button class="btn-link" type="submit">quitar {{ 'ac' if cell==it.ac else 'al' }}</button></form> {% endif %}{% endfor %}</td>{% endif %}
-    </tr>
-    {% endfor %}
-    {% if hay %}<tr class="res-row"><td class="comp"><b>Subtotal {{ comp }} ajustado (incluido)</b></td>
-      {% if emp.presta_ac %}<td class="num"><b>{{ tot.ac|valor }}</b></td>{% endif %}{% if emp.presta_al %}<td class="num"><b>{{ tot.al|valor }}</b></td>{% endif %}<td></td>{% if puede_cargar %}<td></td>{% endif %}</tr>{% endif %}
-    <tr><td class="muted2" style="font-size:12px">Valor contable del balance {{ cmict_anio }} ({{ 'base para conciliar' if hay else 'es el que se usa' }})</td>
-      {% if emp.presta_ac %}<td class="num muted2">{{ cmict_contable.acueducto.get(comp)|valor if cmict_contable.acueducto.get(comp) else '—' }}</td>{% endif %}
-      {% if emp.presta_al %}<td class="num muted2">{{ cmict_contable.alcantarillado.get(comp)|valor if cmict_contable.alcantarillado.get(comp) else '—' }}</td>{% endif %}
-      <td></td>{% if puede_cargar %}<td></td>{% endif %}</tr>
-  </tbody>
-</table>
-{% if not hay %}<p class="muted2" style="margin:4px 0 0">Sin ajustes: se usa el valor del balance. Edita un concepto arriba para detallarlo o excluirlo.</p>{% endif %}
+{% set T = cmict_tot[comp] %}
+<div class="cmict-pane {{ 'active' if comp=='ICTA' }}" data-t="{{ comp }}">
+  <h3 class="serv-h">{{ comp }} · {{ 'impuestos y contribuciones administrativos (art. 2.1.2.1.3.6.3)' if comp=='ICTA' else 'impuestos operativos (art. 2.1.2.1.3.6.4)' }}</h3>
+  <p class="muted2">Valor base de cada cuenta tomado del <b>balance de prueba</b>. Deja la casilla de ajuste
+  <b>en blanco</b> para reconocer el valor contable; escribe un valor distinto para una exclusión parcial,
+  o <b>0</b> para no reconocer la cuenta.</p>
+  {% if items %}
+  <form method="post" action="/empresa/{{ emp.id }}/cmict-ajustes" class="up-form">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+    <input type="hidden" name="anio" value="{{ cmict_anio }}">
+    <div style="overflow-x:auto"><table class="tabla compact cmict-aj">
+      <thead><tr><th>Concepto (cuenta del balance)</th>
+        {% if emp.presta_ac %}<th class="r">Acueducto · contable</th><th class="r">Acueducto · ajuste</th>{% endif %}
+        {% if emp.presta_al %}<th class="r">Alcantarillado · contable</th><th class="r">Alcantarillado · ajuste</th>{% endif %}
+      </tr></thead>
+      <tbody>
+        {% for it in items %}
+        <tr>
+          <td class="comp">{{ it.nombre }} <span class="muted2 nowrap">({{ it.codigo }})</span></td>
+          {% if emp.presta_ac %}
+            <td class="num muted2">{{ it.contable_ac|valor }}</td>
+            <td class="num">{% if puede_cargar %}{% set ov = it.ac %}{% set pre = '' %}{% if ov is not none %}{% if not ov.incluye %}{% set pre = 0 %}{% elif ov.valor_pagado is not none %}{% set pre = ov.valor_pagado %}{% endif %}{% endif %}<input class="aj" name="{{ cmict_campo(comp, it.codigo, 'ac') }}" inputmode="decimal" placeholder="contable" value="{{ pre }}">{% elif it.ac is not none %}{{ (0 if not it.ac.incluye else (it.ac.valor_pagado if it.ac.valor_pagado is not none else it.contable_ac))|valor }}{% else %}<span class="muted2">—</span>{% endif %}</td>
+          {% endif %}
+          {% if emp.presta_al %}
+            <td class="num muted2">{{ it.contable_al|valor }}</td>
+            <td class="num">{% if puede_cargar %}{% set ov = it.al %}{% set pre = '' %}{% if ov is not none %}{% if not ov.incluye %}{% set pre = 0 %}{% elif ov.valor_pagado is not none %}{% set pre = ov.valor_pagado %}{% endif %}{% endif %}<input class="aj" name="{{ cmict_campo(comp, it.codigo, 'al') }}" inputmode="decimal" placeholder="contable" value="{{ pre }}">{% elif it.al is not none %}{{ (0 if not it.al.incluye else (it.al.valor_pagado if it.al.valor_pagado is not none else it.contable_al))|valor }}{% else %}<span class="muted2">—</span>{% endif %}</td>
+          {% endif %}
+        </tr>
+        {% endfor %}
+        <tr class="res-row"><td><b>{{ comp }} reconocido (contable → ajustado)</b></td>
+          {% if emp.presta_ac %}<td class="num muted2">{{ T.c_ac|valor }}</td><td class="num"><b>{{ T.ac|valor }}</b></td>{% endif %}
+          {% if emp.presta_al %}<td class="num muted2">{{ T.c_al|valor }}</td><td class="num"><b>{{ T.al|valor }}</b></td>{% endif %}
+        </tr>
+      </tbody>
+    </table></div>
+    {% if puede_cargar %}<button class="btn primary" type="submit">Guardar ajustes de {{ comp }}</button>
+    <p class="hint">Solo los conceptos <b>taxativos</b> del artículo se reconocen; lo que no está en la lista o está en el parágrafo (pestaña «Excluidos») no entra a tarifa aunque se haya pagado.</p>{% endif %}
+  </form>
+  {% else %}
+  <p class="muted2">Aún no hay cuentas clasificadas a {{ comp }} para {{ cmict_anio }}. Cargue el balance de prueba en «Información Contable» y verifique el catálogo de clasificación.</p>
+  {% endif %}
 </div>
 {% endfor %}
 
-{# ===== TA: TUA (acueducto) ===== #}
+{# ===== TA: TUA + retributiva + soportes ===== #}
+<div class="cmict-pane" data-t="TA">
+<p class="muted2">TA reconocida del período base {{ cmict_anio }}:
+  {% if emp.presta_ac %}<b>TUA (acueducto) = {{ (cmict_tot.TA.ac_n if cmict_tot.TA.ac_n is not none else 0)|valor('$') }}</b>{% if cmict_tot.TA.ac_n is none %} <span class="warn">(sin cargar)</span>{% endif %}{% endif %}
+  {% if emp.presta_ac and emp.presta_al %} · {% endif %}
+  {% if emp.presta_al %}<b>retributiva Frec=1 (alcantarillado) = {{ (cmict_tot.TA.al_n if cmict_tot.TA.al_n is not none else 0)|valor('$') }}</b>{% if cmict_tot.TA.al_n is none %} <span class="warn">(sin cargar)</span>{% endif %}{% endif %}.
+</p>
 {% if emp.presta_ac %}
 <h3 class="serv-h">TUA · Tasa por uso del agua — acueducto (art. 2.1.2.1.3.6.5)</h3>
 <p class="muted2">Una fila por factura/concesión de la autoridad ambiental. Se reconoce el <b>valor efectivamente pagado</b>; marque «pendiente» lo no pagado aún (no suma).</p>
@@ -808,6 +814,36 @@ por la autoridad y el <b>total c/FR</b> (lo pagado) quedan como soporte, y la di
   </tbody>
 </table>
 {% endif %}
+</div>{# /pane TA #}
+
+{# ===== Excluidos: impuestos NO reconocidos (parágrafo) ===== #}
+<div class="cmict-pane" data-t="EXCL">
+  <h3 class="serv-h">Impuestos y contribuciones NO reconocidos (parágrafo, art. 2.1.2.1.3.6.3/.4)</h3>
+  <p class="muted2">La resolución excluye expresamente: {{ cmict_excluidos }}. Estas cuentas existen en el
+  balance pero <b>no se trasladan a la tarifa</b>; se listan para dejar trazabilidad de la conciliación.</p>
+  {% if cmict_excl %}
+  <div style="overflow-x:auto"><table class="tabla compact">
+    <thead><tr><th>Concepto (cuenta del balance)</th>{% if emp.presta_ac %}<th class="r">Acueducto</th>{% endif %}{% if emp.presta_al %}<th class="r">Alcantarillado</th>{% endif %}<th class="r">Total</th></tr></thead>
+    <tbody>
+      {% for x in cmict_excl %}
+      <tr><td class="comp">{{ x.nombre }} <span class="muted2 nowrap">({{ x.codigo }})</span></td>
+        {% if emp.presta_ac %}<td class="num muted2">{{ x.ac|valor }}</td>{% endif %}
+        {% if emp.presta_al %}<td class="num muted2">{{ x.al|valor }}</td>{% endif %}
+        <td class="num">{{ (x.ac + x.al)|valor }}</td></tr>
+      {% endfor %}
+      <tr class="res-row"><td><b>Total excluido (no reconocido)</b></td>
+        {% if emp.presta_ac %}<td class="num"><b>{{ cmict_excl_tot.ac|valor }}</b></td>{% endif %}
+        {% if emp.presta_al %}<td class="num"><b>{{ cmict_excl_tot.al|valor }}</b></td>{% endif %}
+        <td class="num"><b>{{ (cmict_excl_tot.ac + cmict_excl_tot.al)|valor }}</b></td></tr>
+    </tbody>
+  </table></div>
+  {% else %}
+  <p class="muted2">No hay cuentas clasificadas como impuestos excluidos (ICT-X) para {{ cmict_anio }}.
+  Si la empresa pagó impuestos no reconocidos (renta, patrimonio, sanciones, etc.), clasifíquelos como
+  <b>Excluido / ICT-X</b> en el catálogo para que queden trazados aquí.</p>
+  {% endif %}
+</div>{# /pane EXCL #}
+</div>{# /cmict-tabs #}
 {% endif %}
 
 
@@ -875,19 +911,22 @@ function editarManual(d) {
   });
 })();
 
-// CMICT: al elegir un concepto, precarga su valor y estado por servicio (para modificarlo).
-document.querySelectorAll('form.cmict-edit').forEach(function (f) {
-  var sel = f.querySelector('.cmict-item'); if (!sel) return;
-  function fill() {
-    var o = sel.options[sel.selectedIndex]; if (!o) return;
-    var vac = f.querySelector('.cmv-ac'), iac = f.querySelector('.cmi-ac');
-    var val = f.querySelector('.cmv-al'), ial = f.querySelector('.cmi-al');
-    if (vac) vac.value = o.dataset.ac || '';
-    if (iac) iac.value = (o.dataset.acinc === '0') ? 'no' : 'si';
-    if (val) val.value = o.dataset.al || '';
-    if (ial) ial.value = (o.dataset.alinc === '0') ? 'no' : 'si';
+// CMICT: selector por concepto (ICTA / ICTO / Tasas / Excluidos) para no hacer scroll.
+// Recuerda la pestaña elegida entre recargas (p. ej. al guardar un ajuste).
+Array.prototype.forEach.call(document.querySelectorAll('[data-cmict]'), function (box) {
+  var tabs = box.querySelectorAll('.cmict-tab');
+  var panes = box.querySelectorAll('.cmict-pane');
+  function show(t) {
+    Array.prototype.forEach.call(tabs, function (x) { x.classList.toggle('active', x.dataset.t === t); });
+    Array.prototype.forEach.call(panes, function (p) { p.classList.toggle('active', p.dataset.t === t); });
+    try { sessionStorage.setItem('cmicttab', t); } catch (e) {}
   }
-  sel.addEventListener('change', fill); fill();
+  Array.prototype.forEach.call(tabs, function (x) {
+    x.addEventListener('click', function () { show(x.dataset.t); });
+  });
+  var saved = null; try { saved = sessionStorage.getItem('cmicttab'); } catch (e) {}
+  var ok = false; Array.prototype.forEach.call(tabs, function (x) { if (x.dataset.t === saved) ok = true; });
+  if (saved && ok) show(saved);
 });
 </script>
 <style>
@@ -901,6 +940,17 @@ document.querySelectorAll('form.cmict-edit').forEach(function (f) {
 .paso-tag{font-size:13px;color:var(--muted,#8a8578)}
 .paso-tag b{color:var(--teal-deep,#15604f)}
 .paso-nav .btn{white-space:nowrap}
-.tabla td.nowrap{white-space:nowrap}
+.tabla td.nowrap,.tabla .nowrap{white-space:nowrap}
+.cmict-tabbar{display:flex;flex-wrap:wrap;gap:2px;border-bottom:2px solid var(--line,#e5e0d2);margin:14px 0 16px}
+.cmict-tab{background:transparent;border:0;border-bottom:2px solid transparent;margin-bottom:-2px;
+  padding:8px 15px;font:inherit;font-size:13.5px;cursor:pointer;color:var(--muted,#8a8578);white-space:nowrap}
+.cmict-tab:hover{color:var(--teal-deep,#15604f)}
+.cmict-tab.active{color:var(--teal-deep,#15604f);border-bottom-color:var(--teal-deep,#15604f);font-weight:600}
+.cmict-pane{display:none}
+.cmict-pane.active{display:block}
+.tabla.cmict-aj input.aj{width:118px;max-width:40vw;text-align:right;padding:3px 6px;font-size:12.5px;
+  border:1px solid var(--line,#d8d2c4);border-radius:6px;background:var(--bg,#fff);color:inherit}
+.tabla.cmict-aj input.aj::placeholder{color:var(--muted,#b4ae9f);font-style:italic}
+.tabla.cmict-aj input.aj:focus{border-color:var(--teal,#1f7a6b);outline:0}
 </style>
 {% endblock %}

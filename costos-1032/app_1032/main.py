@@ -2621,23 +2621,29 @@ def cargar_info(request: Request, eid: int):
             "SELECT n_cuentas, nombre_archivo FROM catalogo_empresa WHERE empresa_id=:e"),
             {"e": eid}).mappings().first()
         bal_ajustes = ingesta.ajustes_listar(conn, eid)   # CAC-4/5/6 y exclusiones manuales
-        # CMICT (impuestos, contribuciones y tasas) del año base i-1
+        # CMICT (impuestos, contribuciones y tasas) del año base i-1.
+        #   ICTA/ICTO: cuentas del balance clasificadas, con su valor CONTABLE y un AJUSTE opcional
+        #   por cuenta (p. ej. impuesto parcialmente excluido). Excluidos: lista taxativa del par.
         cmict_anio = per.PERIODOS[0]["anios_base"][-1]
-        cmict_icta = cmict.tributo_lista(conn, eid, cmict_anio, "ICTA")
-        cmict_icto = cmict.tributo_lista(conn, eid, cmict_anio, "ICTO")
+        cmict_icta = cmict.cuentas_componente(conn, eid, cmict_anio, "ICTA")
+        cmict_icto = cmict.cuentas_componente(conn, eid, cmict_anio, "ICTO")
+        cmict_excl = cmict.excluidos(conn, eid, cmict_anio)
         cmict_tua = cmict.tua_lista(conn, eid, cmict_anio)
         cmict_retrib = cmict.retributiva_lista(conn, eid, cmict_anio)
         cmict_soportes = cmict.soporte_lista(conn, eid)
-        # Valor contable (del balance) por servicio, como referencia para conciliar
-        _pct = ingesta.get_pct_ac(conn, eid)
-        cmict_contable = {"acueducto": {}, "alcantarillado": {}}
-        for r in conn.execute(text(
-            "SELECT subcomponente, COALESCE(ac_dir,0) ac, COALESCE(al_dir,0) al, COALESCE(repartir,0) rp "
-            "FROM numerador_subcomp WHERE empresa_id=:e AND anio=:a AND cod_dane='' "
-            "AND subcomponente IN ('ICTA','ICTO','TA')"), {"e": eid, "a": cmict_anio}).mappings():
-            sc = r["subcomponente"]
-            cmict_contable["acueducto"][sc] = cmict_contable["acueducto"].get(sc, 0.0) + r["ac"] + r["rp"] * _pct
-            cmict_contable["alcantarillado"][sc] = cmict_contable["alcantarillado"].get(sc, 0.0) + r["al"] + r["rp"] * (1.0 - _pct)
+
+        def _rec_tot(rows):
+            return {"ac": sum(cmict._recon(r["contable_ac"], r["ac"]) for r in rows),
+                    "al": sum(cmict._recon(r["contable_al"], r["al"]) for r in rows),
+                    "c_ac": sum(r["contable_ac"] for r in rows),
+                    "c_al": sum(r["contable_al"] for r in rows)}
+        cmict_tot = {"ICTA": _rec_tot(cmict_icta), "ICTO": _rec_tot(cmict_icto)}
+        # TA reconocida (módulo de tasas): TUA (acueducto) y retributiva a Frec=1 (alcantarillado)
+        ta_ac = cmict.ta_de(conn, eid, "acueducto", cmict_anio)
+        ta_al = cmict.ta_de(conn, eid, "alcantarillado", cmict_anio)
+        cmict_tot["TA"] = {"ac": ta_ac or 0.0, "al": ta_al or 0.0, "ac_n": ta_ac, "al_n": ta_al}
+        cmict_excl_tot = {"ac": sum(r["ac"] for r in cmict_excl),
+                          "al": sum(r["al"] for r in cmict_excl)}
     cat_estado = {"propio": bool(cat_row),
                   "n": cat_row["n_cuentas"] if cat_row else None,
                   "nombre": cat_row["nombre_archivo"] if cat_row else None,
@@ -2654,8 +2660,9 @@ def cargar_info(request: Request, eid: int):
         anios_base=per.PERIODOS[0]["anios_base"],
         energia=energia, quimicos=quimicos, eq_tot=eq_tot, meses_hdr=eq.MES_HDR,
         cmict_anio=cmict_anio, cmict_icta=cmict_icta, cmict_icto=cmict_icto, cmict_tua=cmict_tua,
-        cmict_retrib=cmict_retrib, cmict_soportes=cmict_soportes, cmict_contable=cmict_contable,
-        cmict_frec=cmict.FREC, cmict_excluidos=cmict.EXCLUIDOS,
+        cmict_retrib=cmict_retrib, cmict_soportes=cmict_soportes, cmict_excl=cmict_excl,
+        cmict_tot=cmict_tot, cmict_excl_tot=cmict_excl_tot,
+        cmict_frec=cmict.FREC, cmict_excluidos=cmict.EXCLUIDOS, cmict_campo=cmict.ajuste_campo,
         puede_cargar=rbac.can(user, "cargar_mensual")))
 
 
@@ -2861,66 +2868,31 @@ def _cmict_dflt(eid):
     return f"/empresa/{eid}/cargar?fuente=cmict"
 
 
-@app.post("/empresa/{eid}/cmict-tributo-masivo")
-def cmict_tributo_masivo(request: Request, eid: int, componente: str = Form(...), anio: int = Form(...),
-                         archivo: UploadFile = File(...), next: str = Form(""), csrf: str = Form("")):
+@app.post("/empresa/{eid}/cmict-ajustes")
+async def cmict_ajustes(request: Request, eid: int):
+    """Guarda, de una sola vez, los AJUSTES por cuenta de ICTA e ICTO (toda la tabla). Para cada
+    cuenta y servicio: un valor diligenciado sustituye al contable; en blanco vuelve al contable.
+    El valor por defecto (sin ajuste) es el contable que viene del balance de prueba."""
     if (r := _need_login(request)):
         return r
-    if (bad := _bad_csrf(request, csrf)):
+    form = await request.form()
+    if (bad := _bad_csrf(request, form.get("csrf", ""))):
         return bad
     user = session_user(request); dflt = _cmict_dflt(eid)
+    nxt = form.get("next", "")
     if not rbac.can(user, "cargar_mensual"):
-        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
-    comp = componente if componente in ("ICTA", "ICTO") else "ICTA"
-    texto = _decodificar(archivo.file.read())
+        return RedirectResponse(_dest(nxt, dflt, "err=No+autorizado"), status_code=303)
+    try:
+        anio = int(form.get("anio"))
+    except (TypeError, ValueError):
+        anio = per.PERIODOS[0]["anios_base"][-1]
     with db.scope_conn(scope_of(user)) as conn:
         if not _emp_or_redirect(conn, eid):
             return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
-        n, err = cmict.tributo_masivo(conn, eid, anio, comp, texto, cargado_por=user.get("user_id"))
+        g, b = cmict.ajustes_guardar(conn, eid, anio, form.get, cargado_por=user.get("user_id"))
         rc.recalcular(conn, eid)
-    db.audit(scope_of(user), "cmict_tributo_masivo", "empresa", eid, f"{comp} {anio}: {n} filas")
-    return RedirectResponse(_dest(next, dflt, f"msg={comp}+{anio}:+{n}+concepto(s)"), status_code=303)
-
-
-@app.post("/empresa/{eid}/cmict-tributo-manual")
-def cmict_tributo_manual(request: Request, eid: int, componente: str = Form(...), anio: int = Form(...),
-                         item: str = Form(...), valor_ac: str = Form(""), incluye_ac: str = Form("si"),
-                         valor_al: str = Form(""), incluye_al: str = Form("si"),
-                         observacion: str = Form(""), next: str = Form(""), csrf: str = Form("")):
-    """Ajusta, por servicio, el valor efectivamente pagado de un concepto de ICTA/ICTO (o lo excluye).
-    Guarda cada servicio con valor dado o marcado como no incluido; el resto se deja como está."""
-    if (r := _need_login(request)):
-        return r
-    if (bad := _bad_csrf(request, csrf)):
-        return bad
-    user = session_user(request); dflt = _cmict_dflt(eid)
-    if not rbac.can(user, "cargar_mensual"):
-        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
-    comp = componente if componente in ("ICTA", "ICTO") else "ICTA"
-    with db.scope_conn(scope_of(user)) as conn:
-        if not _emp_or_redirect(conn, eid):
-            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
-        for serv, val, inc in (("acueducto", valor_ac, incluye_ac), ("alcantarillado", valor_al, incluye_al)):
-            if (val or "").strip() == "" and cmict._si(inc):
-                continue   # nada que ajustar para ese servicio (ni valor ni exclusión)
-            cmict.tributo_guardar(conn, eid, anio, comp, serv, item, cmict._si(inc),
-                                  val, (observacion or None), "empresa", user.get("user_id"))
-        rc.recalcular(conn, eid)
-    return RedirectResponse(_dest(next, dflt, "msg=Concepto+actualizado"), status_code=303)
-
-
-@app.post("/empresa/{eid}/cmict-tributo/{rid}/eliminar")
-def cmict_tributo_del(request: Request, eid: int, rid: int, next: str = Form(""), csrf: str = Form("")):
-    if (r := _need_login(request)):
-        return r
-    if (bad := _bad_csrf(request, csrf)):
-        return bad
-    user = session_user(request)
-    if not rbac.can(user, "cargar_mensual"):
-        return RedirectResponse(_dest(next, _cmict_dflt(eid), "err=No+autorizado"), status_code=303)
-    with db.scope_conn(scope_of(user)) as conn:
-        cmict.eliminar(conn, eid, "cmict_tributo", rid); rc.recalcular(conn, eid)
-    return RedirectResponse(_dest(next, _cmict_dflt(eid), "msg=Concepto+eliminado"), status_code=303)
+    db.audit(scope_of(user), "cmict_ajustes", "empresa", eid, f"{anio}: {g} ajuste(s)")
+    return RedirectResponse(_dest(nxt, dflt, f"msg=Ajustes+guardados+({g})"), status_code=303)
 
 
 @app.post("/empresa/{eid}/tua-masivo")
@@ -3103,9 +3075,7 @@ def plantilla_cmict(request: Request, eid: int, tipo: str):
     if (r := _need_login(request)):
         return r
     t = (tipo or "").lower()
-    if t in ("icta", "icto"):
-        nombre, txt = cmict.plantilla_tributo(t.upper())
-    elif t == "tua":
+    if t == "tua":
         nombre, txt = cmict.plantilla_tua()
     elif t in ("retributiva", "retrib"):
         nombre, txt = cmict.plantilla_retributiva()
