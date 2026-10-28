@@ -349,7 +349,7 @@ def param_set(conn, empresa_id, servicio, d):
 
 
 def serie_list(conn, empresa_id, servicio=None):
-    sql = ("SELECT servicio, cod_dane, anio_tarifario, mes, q_m3, "
+    sql = ("SELECT servicio, cod_dane, anio_tarifario, mes, q_m3, proyectado, "
            "cmi_poir, cmi_bcr, cmi_cobrado, cmi_corriente, segmento "
            "FROM bcr_serie WHERE empresa_id=:e")
     p = {"e": empresa_id}
@@ -360,14 +360,16 @@ def serie_list(conn, empresa_id, servicio=None):
 
 
 def serie_set(conn, empresa_id, servicio, anio_tarifario, q_m3, cmi_cobrado=None, segmento=None, mes=0,
-              cod_dane="", cmi_corriente=None, cmi_poir=None, cmi_bcr=None):
+              cod_dane="", cmi_corriente=None, cmi_poir=None, cmi_bcr=None, proyectado=0):
     """Una fila por servicio, APS (cod_dane), año-688 y mes.
 
     El CMI688 (precios dic-2014, obligatorio para el VP) se carga por COMPONENTE:
     `cmi_poir` (POIR 688) y `cmi_bcr` (BCR₀ 688). El total dic-2014 que entra al
     VP(CMI×Q) es su suma. `cmi_cobrado` se conserva como total dic-2014 (si se
     entregan componentes, se recalcula como su suma); `cmi_corriente` es opcional
-    (precios corrientes, trazabilidad). El `segmento` por fila está obsoleto."""
+    (precios corrientes, trazabilidad). `proyectado` marca el origen del Q
+    (0 = real reportado por la empresa; 1 = proyección para cerrar la serie).
+    El `segmento` por fila está obsoleto."""
     if servicio not in SERVICIOS:
         return False, "servicio inválido"
     # Si llegan componentes, el total dic-2014 es su suma (coherencia POIR+BCR).
@@ -375,14 +377,15 @@ def serie_set(conn, empresa_id, servicio, anio_tarifario, q_m3, cmi_cobrado=None
         cmi_cobrado = (cmi_poir or 0.0) + (cmi_bcr or 0.0)
     conn.execute(text(
         "INSERT INTO bcr_serie(empresa_id,servicio,cod_dane,anio_tarifario,mes,q_m3,"
-        "cmi_poir,cmi_bcr,cmi_cobrado,cmi_corriente,segmento) "
-        "VALUES (:e,:s,:cd,:a,:m,:q,:cp,:cb,:c,:cc,:g) "
+        "cmi_poir,cmi_bcr,cmi_cobrado,cmi_corriente,proyectado,segmento) "
+        "VALUES (:e,:s,:cd,:a,:m,:q,:cp,:cb,:c,:cc,:pr,:g) "
         "ON CONFLICT (empresa_id,servicio,cod_dane,anio_tarifario,mes) DO UPDATE SET "
         " q_m3=excluded.q_m3, cmi_poir=excluded.cmi_poir, cmi_bcr=excluded.cmi_bcr, "
         " cmi_cobrado=excluded.cmi_cobrado, cmi_corriente=excluded.cmi_corriente, "
-        " segmento=excluded.segmento"),
+        " proyectado=excluded.proyectado, segmento=excluded.segmento"),
         {"e": empresa_id, "s": servicio, "cd": (cod_dane or ""), "a": anio_tarifario, "m": int(mes or 0),
-         "q": q_m3, "cp": cmi_poir, "cb": cmi_bcr, "c": cmi_cobrado, "cc": cmi_corriente, "g": segmento})
+         "q": q_m3, "cp": cmi_poir, "cb": cmi_bcr, "c": cmi_cobrado, "cc": cmi_corriente,
+         "pr": (1 if proyectado else 0), "g": segmento})
     return True, None
 
 
@@ -415,6 +418,7 @@ def cargar_serie_csv(conn, empresa_id, contenido):
     A_CMIB = ("cmi_bcr", "cmi_bcr0", "cmibcr", "cmi_bcr_dic2014", "bcr", "bcr0")
     A_CMI = ("cmi_cobrado", "cmi_dic2014", "cmi_dic_2014", "cmi_2014", "cmi", "cmi688", "cmi_688", "cmi_total")
     A_CMIC = ("cmi_corriente", "cmi_corr", "cmi_cte", "corriente")
+    A_PROY = ("proyectado", "proyeccion", "proyección", "es_proyectado", "proy")
     faltan = []
     if "servicio" not in cols:
         faltan.append("servicio")
@@ -467,11 +471,13 @@ def cargar_serie_csv(conn, empresa_id, contenido):
         cbcr = _ing._num(_col(r, *A_CMIB))        # CMI688 componente BCR₀ (dic-2014)
         cmi = _ing._num(_col(r, *A_CMI))          # CMI688 total (dic-2014); se usa si no hay componentes
         cmic = _ing._num(_col(r, *A_CMIC))        # CMI688 en precios corrientes (opcional)
+        praw = _col(r, *A_PROY)                    # 0 real · 1 proyectado
+        proy = 1 if str(praw).strip().lower() in ("1", "si", "sí", "true", "proyectado", "proy", "x") else 0
         cd = _aps(r)
         try:
             with conn.begin_nested():
                 serie_set(conn, empresa_id, serv, anio, q, cmi, None, mes=mes,
-                          cod_dane=cd, cmi_corriente=cmic, cmi_poir=cpoir, cmi_bcr=cbcr)
+                          cod_dane=cd, cmi_corriente=cmic, cmi_poir=cpoir, cmi_bcr=cbcr, proyectado=proy)
             ok += 1
         except Exception as ex:
             err.append(f"fila {i}: {type(ex).__name__}")
@@ -504,11 +510,14 @@ def ingresos_vp(conn, empresa_id, servicio):
         else:
             cmi = float(s["cmi_cobrado"]) if s["cmi_cobrado"] is not None else None
         ingreso = (cmi * q) if (q is not None and cmi is not None) else None
-        d = por_anio.setdefault(i, {"ingreso": 0.0, "n": 0})
+        proy = int(s["proyectado"] or 0)
+        d = por_anio.setdefault(i, {"ingreso": 0.0, "n": 0, "proy": 0})
         if ingreso is not None:
             d["ingreso"] += ingreso; d["n"] += 1
+            if proy:
+                d["proy"] += 1
         meses.append({"anio": i, "mes": mes, "cod_dane": s["cod_dane"], "q": q, "cmi": cmi,
-                      "cmi_poir": cpoir, "cmi_bcr": cbcr,
+                      "cmi_poir": cpoir, "cmi_bcr": cbcr, "proyectado": proy,
                       "cmi_corriente": (float(s["cmi_corriente"]) if s["cmi_corriente"] is not None else None),
                       "ingreso": ingreso})
     filas, total = [], 0.0
@@ -518,7 +527,8 @@ def ingresos_vp(conn, empresa_id, servicio):
         vp = (ingreso_i * factor) if (ingreso_i is not None and factor is not None) else None
         if vp is not None:
             total += vp
-        filas.append({"anio": i, "ingreso": ingreso_i, "factor": factor, "vp": vp})
+        filas.append({"anio": i, "ingreso": ingreso_i, "factor": factor, "vp": vp,
+                      "proy": por_anio[i].get("proy", 0)})
     return {"total": (total if r is not None else None), "r688": r, "filas": filas, "meses": meses}
 
 

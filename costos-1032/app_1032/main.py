@@ -1288,9 +1288,9 @@ PLANTILLAS = {
         "anio,mes,ipc,ipcs",
         ["2026,7,112.34,110.20"]),
     "bcr_serie": ("plantilla_agua_facturada_688.csv",
-        "servicio,cod_dane,anio,mes,agua_facturada_m3,cmi_poir,cmi_bcr",
-        ["acueducto,41001,1,1,1417768,136.6823,179.7078", "acueducto,41524,1,1,3500,136.6823,179.7078",
-         "alcantarillado,41001,1,1,1840000,159.1791,248.4565"]),
+        "servicio,cod_dane,anio,mes,agua_facturada_m3,cmi_poir,cmi_bcr,proyectado",
+        ["acueducto,41001,1,1,1417768,136.6823,179.7078,0", "acueducto,41524,1,1,3500,136.6823,179.7078,0",
+         "alcantarillado,41001,1,1,1840000,159.1791,248.4565,0"]),
     "balance": ("plantilla_balance_prueba.csv",
         "cuenta,nombre,saldo",
         ["511095,Gastos de personal administrativo,125000000",
@@ -1973,6 +1973,9 @@ def validacion(request: Request, eid: int):
             "SELECT servicio, count(DISTINCT (anio_tarifario, mes)) FROM bcr_serie "
             "WHERE empresa_id=:e AND (cmi_poir IS NOT NULL OR cmi_bcr IS NOT NULL OR cmi_cobrado IS NOT NULL) "
             "GROUP BY servicio"), {"e": eid}).all())
+        bserie_proy = dict(conn.execute(text(
+            "SELECT servicio, count(DISTINCT (anio_tarifario, mes)) FROM bcr_serie "
+            "WHERE empresa_id=:e AND proyectado=1 GROUP BY servicio"), {"e": eid}).all())
         bact = dict(conn.execute(text(
             "SELECT servicio, count(*) FROM bcr_activo WHERE empresa_id=:e GROUP BY servicio"), {"e": eid}).all())
         bproy = dict(conn.execute(text(
@@ -2051,7 +2054,7 @@ def validacion(request: Request, eid: int):
         r688_res = p["r688"] if p.get("r688") not in (None, "") else r688_auto
         fecha_res = p["fecha_inicio_688"] if p.get("fecha_inicio_688") else emp["fecha_inicio_688"]
         ipc_ok = ipc_sis_ok or bool(p.get("ipc_dic_2014") and p.get("ipc_dic_2025"))
-        nq = bserie_q.get(s, 0); ncmi = bserie_cmi.get(s, 0)
+        nq = bserie_q.get(s, 0); ncmi = bserie_cmi.get(s, 0); nproy = bserie_proy.get(s, 0)
         na, np_, nav = bact.get(s, 0), bproy.get(s, 0), bav.get(s, 0)
         bcr_val.append({"servicio": s, "checks": [
             {"nombre": "Segmento 688 y tasa r688",
@@ -2071,7 +2074,9 @@ def validacion(request: Request, eid: int):
              "detalle": (f"{fecha_res}" if fecha_res else "falta: regístrala (abajo en «Punto de partida 688» o en «Editar empresa»)")},
             {"nombre": "Agua facturada 688 por servicio (del inicio 688 al mes previo a la 1032)",
              "ok": meses_688 > 0 and nq >= meses_688, "articulo": "art. 2.1.2.1.5.2.1",
-             "detalle": (f"{nq}/{meses_688} meses con m³ facturados · CMI dic-2014: {ncmi}/{meses_688}" if meses_688
+             "detalle": (f"{nq}/{meses_688} meses con m³ facturados"
+                         + (f" ({nproy} proyectado(s))" if nproy else "")
+                         + f" · CMI dic-2014: {ncmi}/{meses_688}" if meses_688
                          else "define la fecha de inicio 688 para validar la cobertura mensual")},
             {"nombre": "Activos de la BCR₀ (VPR₀ / VA₀)",
              "ok": na > 0, "articulo": "art. 2.1.2.1.5.2.1.1",
@@ -3693,6 +3698,7 @@ def bcr_serie_guardar(request: Request, eid: int, servicio: str = Form(...), cod
                       anio_tarifario: int = Form(...), mes: str = Form(""), q_m3: str = Form(""),
                       cmi_poir: str = Form(""), cmi_bcr: str = Form(""),
                       cmi_cobrado: str = Form(""), cmi_corriente: str = Form(""),
+                      proyectado: str = Form(""),
                       next: str = Form(""), csrf: str = Form("")):
     if (r := _need_login(request)):
         return r
@@ -3711,7 +3717,8 @@ def bcr_serie_guardar(request: Request, eid: int, servicio: str = Form(...), cod
             return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
         bcr.serie_set(conn, eid, servicio, anio_tarifario, _fnum(q_m3),
                       _fnum(cmi_cobrado), mes=mnum, cod_dane=(cod_dane or "").strip(),
-                      cmi_poir=_fnum(cmi_poir), cmi_bcr=_fnum(cmi_bcr), cmi_corriente=_fnum(cmi_corriente))
+                      cmi_poir=_fnum(cmi_poir), cmi_bcr=_fnum(cmi_bcr), cmi_corriente=_fnum(cmi_corriente),
+                      proyectado=(1 if str(proyectado).strip() in ("1", "on", "true", "si", "sí") else 0))
     db.audit(scope_of(user), "bcr_serie", "empresa", eid, f"{servicio} año {anio_tarifario} mes {mnum}")
     return RedirectResponse(_dest(next, dflt, "msg=Serie+688+guardada"), status_code=303)
 
