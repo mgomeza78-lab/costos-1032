@@ -2676,7 +2676,7 @@ def cargar_info(request: Request, eid: int):
     fuente = request.query_params.get("fuente") or "comercial"
     if fuente == "ccp":          # CCP/Fap se fusionó en "Producción y Suministro de Agua y Fap"
         fuente = "agua"
-    if fuente not in ("comercial", "agua", "balance", "costos", "cmict", "subsidios"):
+    if fuente not in ("comercial", "agua", "balance", "costos", "cmict", "subsidios", "ref688"):
         fuente = "comercial"
     # Vista comercial: "total" (conjunto, resumen) o "aps" (desglose por APS desde el detalle);
     # y filtro opcional por año. Orden cronológico en toda la vista "Cargado".
@@ -2858,7 +2858,7 @@ def guardar_costo_ref688(request: Request, eid: int, servicio: str = Form(...),
     if (bad := _bad_csrf(request, csrf)):
         return bad
     user = session_user(request)
-    dflt = f"/empresa/{eid}/cargar?fuente=costos"
+    dflt = f"/empresa/{eid}/cargar?fuente=ref688"
     if not rbac.can(user, "cargar_mensual"):
         return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
     try:
@@ -2890,7 +2890,7 @@ def eliminar_costo_ref688(request: Request, eid: int, servicio: str,
     if (bad := _bad_csrf(request, csrf)):
         return bad
     user = session_user(request)
-    dflt = f"/empresa/{eid}/cargar?fuente=costos"
+    dflt = f"/empresa/{eid}/cargar?fuente=ref688"
     if not rbac.can(user, "cargar_mensual"):
         return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
     with db.scope_conn(scope_of(user)) as conn:

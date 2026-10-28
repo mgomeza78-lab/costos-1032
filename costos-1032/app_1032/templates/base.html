@@ -33,6 +33,7 @@
         <summary>Gestión de información</summary>
         <ol class="rail-nav">
           <li><a class="link {{ 'active' if '/aps' in p }}" href="/empresa/{{ emp.id }}/aps">Configuración del APS</a></li>
+          {% if req.es_inicio(emp.periodo_activo) %}<li><a class="link {{ 'active' if en_car and fz=='ref688' }}" href="/empresa/{{ emp.id }}/cargar?fuente=ref688">Punto de partida (688)</a></li>{% endif %}
           <li><a class="link {{ 'active' if en_car and (fz=='comercial' or '/mensual' in p) }}" href="/empresa/{{ emp.id }}/cargar?fuente=comercial">Comercial</a></li>
           <li><a class="link {{ 'active' if en_car and fz=='agua' }}" href="/empresa/{{ emp.id }}/cargar?fuente=agua">Producción y Suministro de Agua y Fap</a></li>
           <li><a class="link {{ 'active' if en_car and fz=='balance' }}" href="/empresa/{{ emp.id }}/cargar?fuente=balance">Información Contable</a></li>

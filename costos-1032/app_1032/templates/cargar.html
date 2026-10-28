@@ -66,6 +66,62 @@
 </div>
 
 {# ---------------- COMERCIAL ---------------- #}
+{# ===== PUNTO DE PARTIDA 688 (gestión de la información · solo período de inicio) ===== #}
+{% if fuente=='ref688' %}
+<h2 class="serv-h">Punto de partida · último costo de referencia (marco 688)</h2>
+<p class="muted2">Registra, <b>por servicio</b>, la última tarifa o costo de referencia que la empresa venía
+aplicando bajo la metodología anterior (Res. CRA 688 de 2014) y la <b>fecha a la que estaban indexados</b>.
+Es el <b>punto de partida</b> de la transición del período de inicio (art. 2.1.2.1.1.8): no reemplaza el
+cálculo de los costos de la nueva metodología, sino que sirve de comparación y control. Captura la tarifa
+(cargo fijo = CMA; cargo por consumo = CMO+CMI+tasas) y, si la tienes, su desagregación por componente.</p>
+{% if periodo_activo.es_inicio %}
+{% if puede_cargar %}
+<form method="post" action="/empresa/{{ emp.id }}/costo-ref688" class="form-grid">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+  <label>Servicio <select name="servicio" required>{{ servopts() }}</select></label>
+  <label>Cargo fijo 688 ($/suscriptor·mes) <input name="cargo_fijo" inputmode="decimal"></label>
+  <label>Cargo por consumo 688 ($/m³) <input name="cargo_consumo" inputmode="decimal"></label>
+  <label>Fecha de indexación <input type="month" name="fecha_indexacion"></label>
+  <label>Índice base (IPC) <input name="indice_base" inputmode="decimal"></label>
+  <label>CMA ($/susc·mes) <span class="muted2">opcional</span><input name="cma" inputmode="decimal"></label>
+  <label>CMO ($/m³) <span class="muted2">opcional</span><input name="cmo" inputmode="decimal"></label>
+  <label>CMI ($/m³) <span class="muted2">opcional</span><input name="cmi" inputmode="decimal"></label>
+  <label>CMICT/tasas ($/m³) <span class="muted2">opcional</span><input name="cmict" inputmode="decimal"></label>
+  <label class="wide">Acto administrativo <input name="acto_admin" placeholder="Resolución/acuerdo con que se aplicó el marco 688"></label>
+  <label>Origen <select name="origen"><option value="empresa">Empresa</option><option value="SUI">SUI</option><option value="supuesto">Supuesto</option></select></label>
+  <label class="wide">Observación <input name="observacion"></label>
+  <button class="btn" type="submit">Guardar punto de partida 688</button>
+</form>
+{% endif %}
+{% set hay688 = ref688 and (ref688.values()|list) %}
+{% if hay688 %}
+<div style="overflow-x:auto"><table class="tabla compact" style="margin-top:6px">
+  <thead><tr><th>Servicio</th><th class="r">CF 688 ($/susc·mes)</th><th class="r">CC 688 ($/m³)</th>
+    <th class="r">CMA</th><th class="r">CMO</th><th class="r">CMI</th><th class="r">CMICT</th>
+    <th>Indexado a</th><th class="r">Índice</th><th>Acto admin.</th>{% if puede_cargar %}<th></th>{% endif %}</tr></thead>
+  <tbody>
+    {% for s, r in ref688.items() %}<tr>
+      <td class="comp">{{ ref688_serv.get(s, s) }}</td>
+      <td class="num">{{ r.cargo_fijo|valor('$') if r.cargo_fijo is not none else '—' }}</td>
+      <td class="num">{{ r.cargo_consumo|valor('$') if r.cargo_consumo is not none else '—' }}</td>
+      <td class="num">{{ r.cma|valor('$') if r.cma is not none else '—' }}</td>
+      <td class="num">{{ r.cmo|valor('$') if r.cmo is not none else '—' }}</td>
+      <td class="num">{{ r.cmi|valor('$') if r.cmi is not none else '—' }}</td>
+      <td class="num">{{ r.cmict|valor('$') if r.cmict is not none else '—' }}</td>
+      <td>{{ r.fecha_indexacion or '—' }}</td>
+      <td class="num">{{ r.indice_base|valor if r.indice_base is not none else '—' }}</td>
+      <td class="muted2" style="font-size:12px">{{ r.acto_admin or '—' }}</td>
+      {% if puede_cargar %}<td class="c"><form method="post" action="/empresa/{{ emp.id }}/costo-ref688/{{ s }}/eliminar" style="display:inline"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}"><button class="btn-link" type="submit" title="eliminar">×</button></form></td>{% endif %}
+    </tr>{% endfor %}
+  </tbody>
+</table></div>
+{% else %}<p class="empty">Aún no se ha registrado el punto de partida 688.</p>{% endif %}
+{% else %}
+<p class="hint">Este insumo <b>solo se captura en el período de inicio</b>. En el año tarifario activo
+({{ periodo_activo.etiqueta }}) no aplica.</p>
+{% endif %}
+{% endif %}
+
 {% if fuente=='comercial' %}
 <h2 class="serv-h">Comercial · reporte de facturación del SUI</h2>
 <p class="muted2">Suscriptores, consumos y facturación por clase/estrato. Es el <b>reporte comercial
@@ -438,57 +494,6 @@ generando continuidad con las señales regulatorias de la Res. 688.</p>
 <p class="muted2">Por punto de toma/bombeo: <b>Ceb = Σ Kebⱼ·Pceⱼ</b>, con <b>Kebⱼ = mín[(Υ/(3600·η))·Vⱼ·Hⱼ, Krⱼ]</b>.
 Para <b>otros procesos</b> (no bombeo), el costo es <b>Ko·Pce</b>. Υ = 9,8 (acueducto) / 10,5 (alcantarillado);
 η = 0,60 (alcant.) o por volumen bombeado en acueducto (0,63 / 0,69 / 0,77).</p>
-
-{# ============ PUNTO DE PARTIDA 688 (solo período de inicio) ============ #}
-{% if periodo_activo.es_inicio %}
-<h3 class="serv-h">Punto de partida · último costo de referencia marco 688 (art. 2.1.2.1.1.8)</h3>
-<p class="muted2">Registra, <b>por servicio</b>, la última tarifa o costo de referencia que la empresa venía
-aplicando bajo la metodología anterior (Res. CRA 688 de 2014) y la <b>fecha a la que estaban indexados</b>.
-Es el punto de partida de la transición del período de inicio: no reemplaza el cálculo de los costos de la
-nueva metodología, sino que sirve de comparación y control. Captura la tarifa (cargo fijo = CMA; cargo por
-consumo = CMO+CMI+tasas) y, si la tienes, su desagregación por componente.</p>
-{% if puede_cargar %}
-<form method="post" action="/empresa/{{ emp.id }}/costo-ref688" class="form-grid">
-  <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
-  <label>Servicio <select name="servicio" required>{{ servopts() }}</select></label>
-  <label>Cargo fijo 688 ($/suscriptor·mes) <input name="cargo_fijo" inputmode="decimal"></label>
-  <label>Cargo por consumo 688 ($/m³) <input name="cargo_consumo" inputmode="decimal"></label>
-  <label>Fecha de indexación <input type="month" name="fecha_indexacion"></label>
-  <label>Índice base (IPC) <input name="indice_base" inputmode="decimal"></label>
-  <label>CMA ($/susc·mes) <span class="muted2">opcional</span><input name="cma" inputmode="decimal"></label>
-  <label>CMO ($/m³) <span class="muted2">opcional</span><input name="cmo" inputmode="decimal"></label>
-  <label>CMI ($/m³) <span class="muted2">opcional</span><input name="cmi" inputmode="decimal"></label>
-  <label>CMICT/tasas ($/m³) <span class="muted2">opcional</span><input name="cmict" inputmode="decimal"></label>
-  <label class="wide">Acto administrativo <input name="acto_admin" placeholder="Resolución/acuerdo con que se aplicó el marco 688"></label>
-  <label>Origen <select name="origen"><option value="empresa">Empresa</option><option value="SUI">SUI</option><option value="supuesto">Supuesto</option></select></label>
-  <label class="wide">Observación <input name="observacion"></label>
-  <button class="btn" type="submit">Guardar punto de partida 688</button>
-</form>
-{% endif %}
-{% set hay688 = ref688 and (ref688.values()|list) %}
-{% if hay688 %}
-<div style="overflow-x:auto"><table class="tabla compact" style="margin-top:6px">
-  <thead><tr><th>Servicio</th><th class="r">CF 688 ($/susc·mes)</th><th class="r">CC 688 ($/m³)</th>
-    <th class="r">CMA</th><th class="r">CMO</th><th class="r">CMI</th><th class="r">CMICT</th>
-    <th>Indexado a</th><th class="r">Índice</th><th>Acto admin.</th>{% if puede_cargar %}<th></th>{% endif %}</tr></thead>
-  <tbody>
-    {% for s, r in ref688.items() %}<tr>
-      <td class="comp">{{ ref688_serv.get(s, s) }}</td>
-      <td class="num">{{ r.cargo_fijo|valor('$') if r.cargo_fijo is not none else '—' }}</td>
-      <td class="num">{{ r.cargo_consumo|valor('$') if r.cargo_consumo is not none else '—' }}</td>
-      <td class="num">{{ r.cma|valor('$') if r.cma is not none else '—' }}</td>
-      <td class="num">{{ r.cmo|valor('$') if r.cmo is not none else '—' }}</td>
-      <td class="num">{{ r.cmi|valor('$') if r.cmi is not none else '—' }}</td>
-      <td class="num">{{ r.cmict|valor('$') if r.cmict is not none else '—' }}</td>
-      <td>{{ r.fecha_indexacion or '—' }}</td>
-      <td class="num">{{ r.indice_base|valor if r.indice_base is not none else '—' }}</td>
-      <td class="muted2" style="font-size:12px">{{ r.acto_admin or '—' }}</td>
-      {% if puede_cargar %}<td class="c"><form method="post" action="/empresa/{{ emp.id }}/costo-ref688/{{ s }}/eliminar" style="display:inline"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}"><button class="btn-link" type="submit" title="eliminar">×</button></form></td>{% endif %}
-    </tr>{% endfor %}
-  </tbody>
-</table></div>
-{% else %}<p class="empty">Aún no se ha registrado el punto de partida 688.</p>{% endif %}
-{% endif %}
 
 {% if puede_cargar %}
 <div class="carga-metodo">
