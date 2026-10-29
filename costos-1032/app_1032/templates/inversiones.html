@@ -50,15 +50,15 @@ año i se obtiene el <b>VP(CMI×Q)</b>, que se resta al VIA688 para el VPR₀ (a
     {% for x in ing.filas %}<th class="r">Año {{ x.anio }}{% if x.proy %}*{% endif %}</th>{% endfor %}
     <th class="r">Total</th></tr></thead>
   <tbody>
-    <tr><td>Agua facturada (m³)</td>
-      {% for x in ing.filas %}<td class="num">{{ x.q|valor if x.q is not none else '—' }}</td>{% endfor %}
-      <td class="num"><b>{{ ing.total_q|valor if ing.total_q is not none else '—' }}</b></td></tr>
+    <tr><td>Agua facturada <span class="muted2">(millones m³)</span></td>
+      {% for x in ing.filas %}<td class="num">{{ x.q|millones(2) if x.q is not none else '—' }}</td>{% endfor %}
+      <td class="num"><b>{{ ing.total_q|millones(2) if ing.total_q is not none else '—' }}</b></td></tr>
     <tr><td>Ingreso anual Σ(CMI·Q) <span class="muted2">(millones $)</span></td>
-      {% for x in ing.filas %}<td class="num">{{ x.ingreso|millones if x.ingreso is not none else '—' }}</td>{% endfor %}
-      <td class="num"><b>{{ ing.total_ingreso|millones if ing.total_ingreso is not none else '—' }}</b></td></tr>
+      {% for x in ing.filas %}<td class="num">{{ x.ingreso|millones(2) if x.ingreso is not none else '—' }}</td>{% endfor %}
+      <td class="num"><b>{{ ing.total_ingreso|millones(2) if ing.total_ingreso is not none else '—' }}</b></td></tr>
     <tr><td><b>VP del año — VP(CMI×Q)</b> <span class="muted2">(millones $)</span></td>
-      {% for x in ing.filas %}<td class="num">{{ x.vp|millones if x.vp is not none else '—' }}</td>{% endfor %}
-      <td class="num"><b>{{ ing.total|millones if ing.total is not none else 'falta r688' }}</b></td></tr>
+      {% for x in ing.filas %}<td class="num">{{ x.vp|millones(2) if x.vp is not none else '—' }}</td>{% endfor %}
+      <td class="num"><b>{{ ing.total|millones(2) if ing.total is not none else 'falta r688' }}</b></td></tr>
   </tbody>
 </table>
 </div>
