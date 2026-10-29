@@ -67,17 +67,52 @@ Totales de control por clase: cuenta 5 (administración) y cuenta 7 (operación)
 <h2 class="serv-h">Costos particulares (COP · energía, químicos y otros)</h2>
 <p class="muted2" style="margin:-4px 0 6px">Costos operativos que la metodología reconoce <b>aparte</b> del COC
 (art. 2.1.2.1.3.4.5 y .6): <b>energía</b> (CE), <b>insumos químicos</b> (CIQ) y <b>otros</b> conceptos. Se cargan
-por año base en <a href="/empresa/{{ emp.id }}/cargar?fuente=costos">Cargar información › Costos Particulares</a>.</p>
+por año base en <a href="/empresa/{{ emp.id }}/cargar?fuente=costos">Cargar información › Costos Particulares</a>.
+La energía y los químicos se validan por <b>mes cargado</b> y por separado, igual que el agua producida.</p>
+
+{% set cop_subh = 'font-family:var(--head);font-size:13px;color:var(--teal-deep);margin:10px 0 4px' %}
+<h3 style="{{ cop_subh }}">Energía (CE)</h3>
 <table class="tabla compact">
-  <thead><tr><th>Año base</th><th class="c">Estado</th><th class="r">Energía (puntos)</th>
-    <th class="r">Químicos (insumos)</th><th class="r">Otros (conceptos)</th></tr></thead>
+  <thead><tr><th>Año · servicio</th>
+    {% for m in meses_num %}<th class="c">{{ MM[m-1] }}</th>{% endfor %}
+    <th class="c">Cargado</th></tr></thead>
   <tbody>
-    {% for c in cop_anual %}
+    {% for an in anios %}{% for s in servicios %}
+    {% set cg = energia_m.get(an, {}).get(s, []) %}
+    {% set anu = energia_anual.get(an, {}).get(s, false) %}
+    {% set n = en_n.get(an, {}).get(s, 0) %}
+    <tr><td class="comp">{{ an }} · {{ s }}</td>
+      {% for m in meses_num %}<td class="c">{% if m in cg %}<b style="color:#1f8a70" title="{{ meses.get(m,m) }} cargado">✓</b>{% else %}<span style="color:#cfc9ba">·</span>{% endif %}</td>{% endfor %}
+      <td class="c">{% if cg %}<b>{{ cg|length }}/12</b>{% elif anu %}<b>anual</b>{% else %}<b style="color:#b5651d">0/12</b>{% endif %}{% if n %} <span class="muted2">· {{ n }} pto(s)</span>{% endif %}</td></tr>
+    {% endfor %}{% endfor %}
+  </tbody>
+</table>
+
+<h3 style="{{ cop_subh }}">Químicos (CIQ)</h3>
+<table class="tabla compact">
+  <thead><tr><th>Año · servicio</th>
+    {% for m in meses_num %}<th class="c">{{ MM[m-1] }}</th>{% endfor %}
+    <th class="c">Cargado</th></tr></thead>
+  <tbody>
+    {% for an in anios %}{% for s in servicios %}
+    {% set cg = quimico_m.get(an, {}).get(s, []) %}
+    {% set n = qu_n.get(an, {}).get(s, 0) %}
+    <tr><td class="comp">{{ an }} · {{ s }}</td>
+      {% for m in meses_num %}<td class="c">{% if m in cg %}<b style="color:#1f8a70" title="{{ meses.get(m,m) }} con kg">✓</b>{% else %}<span style="color:#cfc9ba">·</span>{% endif %}</td>{% endfor %}
+      <td class="c">{% if cg %}<b>{{ cg|length }}/12</b>{% else %}<b style="color:#b5651d">0/12</b>{% endif %}{% if n %} <span class="muted2">· {{ n }} insumo(s)</span>{% endif %}</td></tr>
+    {% endfor %}{% endfor %}
+  </tbody>
+</table>
+
+<h3 style="{{ cop_subh }}">Otros conceptos</h3>
+<table class="tabla compact">
+  <thead><tr><th>Año base</th><th class="c">Estado</th><th class="r">Conceptos</th><th class="r">Total $</th></tr></thead>
+  <tbody>
+    {% for c in cop_otros %}
     <tr><td class="comp">{{ c.anio }}</td>
       <td class="c">{% if c.cargado %}<span class="tag ac">✓ cargado</span>{% else %}<span class="tag neg">falta</span>{% endif %}</td>
-      <td class="num">{{ c.energia or '—' }}</td>
-      <td class="num">{{ c.quimicos or '—' }}</td>
-      <td class="num">{{ c.otros or '—' }}</td></tr>
+      <td class="num">{{ c.n or '—' }}</td>
+      <td class="num">{% if c.cargado %}{{ c.total|valor('$') }}{% else %}—{% endif %}</td></tr>
     {% endfor %}
   </tbody>
 </table>

@@ -1964,12 +1964,33 @@ def validacion(request: Request, eid: int):
                 "SELECT anio, count(*), coalesce(sum(valor),0) FROM costo_particular "
                 "WHERE empresa_id=:e GROUP BY anio"), {"e": eid}).all():
             cpart_cnt[a] = n; cpart_tot[a] = tt
-        # Energía (CE) y químicos (CIQ) también son costos particulares (COP, art. 2.1.2.1.3.4.5/.6).
-        en_cnt = dict(conn.execute(text(
-            "SELECT anio, count(DISTINCT servicio||'|'||no_sui||'|'||punto) FROM energia_punto "
-            "WHERE empresa_id=:e GROUP BY anio"), {"e": eid}).all())
-        qu_cnt = dict(conn.execute(text(
-            "SELECT anio, count(*) FROM quimico_item WHERE empresa_id=:e GROUP BY anio"), {"e": eid}).all())
+        # Energía (CE) y químicos (CIQ) son costos particulares (COP, art. 2.1.2.1.3.4.5/.6). Se validan
+        # por MES cargado y POR SEPARADO, igual que el agua producida.
+        def _cel_am(sql):
+            d = {}
+            for a, m, s in conn.execute(text(sql), {"e": eid}).all():
+                d.setdefault(int(a), {}).setdefault(s, set()).add(int(m))
+            return d
+        energia_m = _cel_am("SELECT DISTINCT anio, mes, servicio FROM energia_punto "
+                            "WHERE empresa_id=:e AND mes BETWEEN 1 AND 12")
+        energia_anual = {}                                   # entradas anuales (mes=0, sin detalle mensual)
+        for a, s in conn.execute(text("SELECT DISTINCT anio, servicio FROM energia_punto "
+                                      "WHERE empresa_id=:e AND mes=0"), {"e": eid}).all():
+            energia_anual.setdefault(int(a), {})[s] = True
+        en_n = {}                                            # nº de puntos de energía por año·servicio
+        for a, s, n in conn.execute(text(
+                "SELECT anio, servicio, count(DISTINCT no_sui||'|'||punto) FROM energia_punto "
+                "WHERE empresa_id=:e GROUP BY anio, servicio"), {"e": eid}).all():
+            en_n.setdefault(int(a), {})[s] = int(n)
+        # Químicos: los kg van en columnas m1..m12; un mes está "cargado" si algún insumo tiene kg>0.
+        quimico_m, qu_n = {}, {}
+        _qcols = ", ".join(f"coalesce(sum(m{i}),0)" for i in range(1, 13))
+        for row in conn.execute(text(
+                f"SELECT anio, servicio, {_qcols}, count(*) FROM quimico_item "
+                "WHERE empresa_id=:e GROUP BY anio, servicio"), {"e": eid}).all():
+            a = int(row[0]); s = row[1]; sums = row[2:14]; n = int(row[14])
+            quimico_m.setdefault(a, {})[s] = {i + 1 for i, v in enumerate(sums) if (v or 0) > 0}
+            qu_n.setdefault(a, {})[s] = n
         ref688_rows = ref688.por_servicio(conn, eid)   # punto de partida 688 (solo inicio)
         # --- insumos de la base de capital regulado (BCR₀) y del POIR 688, por servicio ---
         bparams = bcr.params(conn, eid)
@@ -2008,12 +2029,11 @@ def validacion(request: Request, eid: int):
         _sub_estado = subc.estado_anio(_c, eid, _pa["anio"])   # subsidios por año de aplicación
     anios = _pa["anios_base"]
     _es_inicio_p = req.es_inicio(_pa["clave"])
-    # Costos particulares (COP) por año base: energía (CE), químicos (CIQ) y otros conceptos.
-    cop_anual = []
+    # Otros conceptos COP (tabla costo_particular) por año base; energía y químicos se muestran aparte, por mes.
+    cop_otros = []
     for an in anios:
-        en = int(en_cnt.get(an, 0)); qu = int(qu_cnt.get(an, 0)); ot = int(cpart_cnt.get(an, 0))
-        cop_anual.append({"anio": an, "energia": en, "quimicos": qu, "otros": ot,
-                          "cargado": (en + qu + ot) > 0})
+        ot = int(cpart_cnt.get(an, 0))
+        cop_otros.append({"anio": an, "n": ot, "total": cpart_tot.get(an, 0), "cargado": ot > 0})
     matriz = [
         {"clave": "comercial", "nombre": "Comercial (suscriptores y consumos)", "cel": com_m, "serv": servicios},
         {"clave": "agua", "nombre": "Agua producida / macromedición (solo acueducto)", "cel": agua_m, "serv": serv_agua},
@@ -2106,7 +2126,8 @@ def validacion(request: Request, eid: int):
     return tpl.TemplateResponse(request, "validacion.html", _ctx(
         request, emp=emp, matriz=matriz, bal_anual=bal_anual, resumen=resumen, servicios=servicios,
         bcr_val=bcr_val, anios=anios, meses_num=list(range(1, 13)), meses=ops.MESES,
-        cop_anual=cop_anual, periodos_todos=per.periodos_cargables(),
+        cop_otros=cop_otros, energia_m=energia_m, energia_anual=energia_anual, en_n=en_n,
+        quimico_m=quimico_m, qu_n=qu_n, periodos_todos=per.periodos_cargables(),
         puede_cargar=rbac.can(user, "cargar_mensual"),
         periodo_activo=_pa, es_inicio=_es_inicio_p))
 
