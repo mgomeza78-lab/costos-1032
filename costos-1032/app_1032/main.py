@@ -837,6 +837,42 @@ def usuarios_asignar_empresas(request: Request, uid: int,
         f"/usuarios?msg=Empresas+asignadas+({cuantas})+a+{fila['email']}", status_code=303)
 
 
+@app.post("/usuarios/{uid}/activo")
+def usuarios_toggle_activo(request: Request, uid: int, csrf: str = Form("")):
+    """Baja/alta lógica de un usuario: alterna el campo `activo`. No borra el usuario (se
+    conserva la trazabilidad de quién cargó cada dato, art. de verificabilidad del estudio).
+    Protege contra autodesactivarse y contra dejar el sistema sin administradores activos."""
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    if not rbac.can(user, "administrar_usuarios"):
+        return RedirectResponse("/panel?err=No+autorizado", status_code=303)
+    if uid == user["user_id"]:
+        return RedirectResponse("/usuarios?err=No+puedes+desactivar+tu+propia+cuenta", status_code=303)
+    with db.scope_conn(scope_of(user)) as conn:
+        fila = conn.execute(text(
+            "SELECT u.email, u.activo, r.codigo AS rol FROM usuario u JOIN rol r ON r.id=u.rol_id "
+            "WHERE u.id=:u"), {"u": uid}).mappings().first()
+        if not fila:
+            return RedirectResponse("/usuarios?err=Usuario+no+encontrado", status_code=303)
+        # No dejar el sistema sin administradores: si se va a DESACTIVAR al último admin activo, bloquear.
+        if fila["activo"] and fila["rol"] == "admin":
+            n_admin = conn.execute(text(
+                "SELECT count(*) FROM usuario u JOIN rol r ON r.id=u.rol_id "
+                "WHERE r.codigo='admin' AND u.activo=true")).scalar_one()
+            if n_admin <= 1:
+                return RedirectResponse(
+                    "/usuarios?err=No+puedes+desactivar+al+último+administrador+activo", status_code=303)
+        nuevo = conn.execute(text(
+            "UPDATE usuario SET activo = NOT activo WHERE id=:u RETURNING activo"), {"u": uid}).scalar()
+    db.audit(scope_of(user), ("reactivar_usuario" if nuevo else "desactivar_usuario"),
+             "usuario", None, fila["email"])
+    estado = "reactivado" if nuevo else "desactivado"
+    return RedirectResponse(f"/usuarios?msg=Usuario+{estado}:+{fila['email']}", status_code=303)
+
+
 # ------------------------------------------------------------------ operación mensual
 @app.get("/empresa/{eid}/mensual", response_class=HTMLResponse)
 def mensual(request: Request, eid: int):

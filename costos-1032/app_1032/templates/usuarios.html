@@ -25,7 +25,7 @@
         {% else %}{{ u.empresa or '—' }}{% endif %}
       </td>
       <td class="c">{{ '✓' if u.mfa_activo else '—' }}</td>
-      <td>{{ 'activo' if u.activo else 'inactivo' }}</td>
+      <td class="c">{% if u.activo %}<span class="tag ac">activo</span>{% else %}<span class="tag neg">inactivo</span>{% endif %}</td>
     </tr>
     {% endfor %}
   </tbody>
@@ -67,6 +67,21 @@ empresas que atiende. Los cambios de empresas de un analista toman efecto en su 
       <button class="btn primary" type="submit">Guardar empresas</button>
     </form>
     {% endif %}
+
+    <form method="post" action="/usuarios/{{ u.id }}/activo" class="u-mini">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <h4>Estado de la cuenta</h4>
+      {% if u.id == user.user_id %}
+        <p class="hint">Es tu propia cuenta: no puedes desactivarte a ti mismo.</p>
+        <button class="btn" type="submit" disabled>Desactivar</button>
+      {% elif u.activo %}
+        <p class="hint">Baja lógica: el usuario no podrá iniciar sesión, pero se conserva el historial de lo que cargó. Reversible.</p>
+        <button class="btn" type="submit" onclick="return confirm('¿Desactivar a {{ u.email }}? No podrá iniciar sesión.')">Desactivar usuario</button>
+      {% else %}
+        <p class="hint">La cuenta está <b>inactiva</b>. Al reactivarla, el usuario podrá volver a iniciar sesión.</p>
+        <button class="btn primary" type="submit">Reactivar usuario</button>
+      {% endif %}
+    </form>
   </div>
 </details>
 {% endfor %}
