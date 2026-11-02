@@ -1340,6 +1340,11 @@ PLANTILLAS = {
         "servicio,cod_dane,anio,mes,agua_facturada_m3,cmi_poir,cmi_bcr,proyectado",
         ["acueducto,41001,1,1,1417768,136.6823,179.7078,0", "acueducto,41524,1,1,3500,136.6823,179.7078,0",
          "alcantarillado,41001,1,1,1840000,159.1791,248.4565,0"]),
+    "cmi_proyecto": ("plantilla_cmi_por_proyecto.csv",
+        "id_activo,servicio,nombre,vida_util_anios,prr_anios,anio_operacion,valor_via688_dic2014,vp_cmi_q_dic2014,cmi_dic2014",
+        ["1,acueducto,Aducción N° 2,11.99,1.99,,236876073,177863005,1.070503",
+         "2,acueducto,Desarenador El Guayabo,21.99,11.99,,212058791,138710366,0.820302",
+         "57,alcantarillado,Tubería CS 8\",28.99,18.99,,,,20.702821"]),
     "balance": ("plantilla_balance_prueba.csv",
         "cuenta,nombre,saldo",
         ["511095,Gastos de personal administrativo,125000000",
@@ -1657,6 +1662,7 @@ def inversiones(request: Request, eid: int):
         bcr_tramos = {s: bcr.cmi_tramos(conn, eid, s) for s in servicios}
         bcr_mods = {s: poir.mods_list(conn, eid, s) for s in servicios}
         bcr_cmi = {s: poir.resumen_cmi(conn, eid, s) for s in servicios}
+        cmi_proy = bcr.cmi_proyecto_resumen(conn, eid)      # detalle CMI por proyecto (Paso 02)
         cumpl = bcr.cumplimiento(conn, eid, marco=marco_sec)
         proy = {s: bcr.proyeccion(conn, eid, s, r_emp) for s in servicios}
     return tpl.TemplateResponse(request, "inversiones.html", _ctx(
@@ -1668,7 +1674,7 @@ def inversiones(request: Request, eid: int):
         bcr_serv=bcr.SERVICIOS, bcr_params=bcr_params, bcr_series=bcr_series, bcr_ingresos=bcr_ingresos,
         bcr_tramos=bcr_tramos,
         aps_list=aps_list, aps_nom={a["cod_dane"]: a["municipio"] for a in aps_list},
-        bcr_mods=bcr_mods, bcr_cmi=bcr_cmi, cumpl=cumpl, proy=proy, r_emp=r_emp,
+        bcr_mods=bcr_mods, bcr_cmi=bcr_cmi, cmi_proy=cmi_proy, cumpl=cumpl, proy=proy, r_emp=r_emp,
         puede_cargar=rbac.can(user, "cargar_mensual")))
 
 
@@ -3818,6 +3824,35 @@ def bcr_serie_csv(request: Request, eid: int,
             tot_ok += ok; errs += (err or []); n_arch += 1
     db.audit(scope_of(user), "bcr_serie_csv", "empresa", eid, f"{n_arch} archivos, {tot_ok} filas, {len(errs)} errores")
     aviso = f"msg=Serie+688:+{n_arch}+archivo(s),+{tot_ok}+filas+cargadas"
+    if errs:
+        aviso += ";+" + ",+".join(errs[:3]).replace(" ", "+") + ("+…" if len(errs) > 3 else "")
+    return RedirectResponse(_dest(next, dflt, aviso), status_code=303)
+
+
+@app.post("/empresa/{eid}/cmi-proyecto-csv")
+def cmi_proyecto_csv(request: Request, eid: int, tipo: str = Form(...), tramo: int = Form(...),
+                     archivos: list[UploadFile] = File(..., alias="archivos"),
+                     next: str = Form(""), csrf: str = Form("")):
+    """Cargue del CMI por proyecto para un tramo/componente (Paso 02). Un archivo por tramo."""
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    dflt = f"/empresa/{eid}/inversiones?sec=bcr"
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
+    tot_ok, errs, n_arch = 0, [], 0
+    with db.scope_conn(scope_of(user)) as conn:
+        if not _emp_or_redirect(conn, eid):
+            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        for arch in archivos:
+            if not getattr(arch, "filename", ""):
+                continue
+            ok, err = bcr.cmi_proyecto_cargar(conn, eid, tipo, tramo, _leer_csv(arch), user.get("user_id"))
+            tot_ok += ok; errs += (err or []); n_arch += 1
+    db.audit(scope_of(user), "cmi_proyecto_csv", "empresa", eid, f"{tipo} tramo {tramo}: {n_arch} arch, {tot_ok} proyectos")
+    aviso = f"msg=CMI+por+proyecto+({tipo}+tramo+{tramo}):+{tot_ok}+proyecto(s)+cargado(s)"
     if errs:
         aviso += ";+" + ",+".join(errs[:3]).replace(" ", "+") + ("+…" if len(errs) > 3 else "")
     return RedirectResponse(_dest(next, dflt, aviso), status_code=303)

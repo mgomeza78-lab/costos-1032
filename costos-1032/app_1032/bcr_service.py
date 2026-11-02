@@ -587,19 +587,169 @@ def cmi_tramos(conn, empresa_id, servicio):
             if v is None:
                 continue
             idx = (i - 1) * 12 + (m - 1)
-            cal = _mes_cal(fecha, i, m)
+            cal = _mes_cal(fecha, i, m) or (i, m)          # (año, mes) CALENDARIO
             cont = prev_idx is not None and idx == prev_idx + 1
             if out and cont and abs(out[-1]["valor"] - v) < 1e-6:
                 out[-1]["hasta"] = _fmt_mes(cal); out[-1]["meses"] += 1
                 out[-1]["anio_hasta"] = i; out[-1]["mes_hasta"] = m
+                out[-1]["cal_hasta"] = cal
             else:
                 out.append({"valor": v, "desde": _fmt_mes(cal), "hasta": _fmt_mes(cal),
                             "meses": 1, "anio_desde": i, "mes_desde": m,
-                            "anio_hasta": i, "mes_hasta": m})
+                            "anio_hasta": i, "mes_hasta": m,
+                            "cal_desde": cal, "cal_hasta": cal})
             prev_idx = idx
         return out
 
     return {"poir": tramos("poir"), "bcr": tramos("bcr"), "total": tramos("total")}
+
+
+# ============== Detalle de proyectos del CMI (Paso 02): cargue por tramo y validación ==============
+def _servicios_empresa(conn, empresa_id):
+    row = conn.execute(text("SELECT presta_ac, presta_al FROM empresa WHERE id=:e"),
+                       {"e": empresa_id}).mappings().first()
+    servs = []
+    if not row or row["presta_ac"]:
+        servs.append("acueducto")
+    if row and row["presta_al"]:
+        servs.append("alcantarillado")
+    return servs or ["acueducto"]
+
+
+def _valor_en(tramos, y, m):
+    """Valor del tramo (por servicio) cuyo rango CALENDARIO contiene el mes (y,m)."""
+    idx = y * 12 + (m - 1)
+    for t in tramos:
+        cd, ch = t["cal_desde"], t["cal_hasta"]
+        a = cd[0] * 12 + (cd[1] - 1)
+        b = ch[0] * 12 + (ch[1] - 1)
+        if a <= idx <= b:
+            return t["valor"]
+    return None
+
+
+def cmi_tramos_componente(conn, empresa_id):
+    """Tramos a nivel de COMPONENTE (bcr/poir), fusionando los servicios, con el CMI total
+    esperado por servicio en cada tramo. Determina cuántos archivos cargar en el Paso 02 y
+    contra qué validar la suma de los CMI individuales."""
+    servs = _servicios_empresa(conn, empresa_id)
+    por_serv = {s: cmi_tramos(conn, empresa_id, s) for s in servs}
+    out = {}
+    for tipo in ("bcr", "poir"):
+        all_tr = [t for s in servs for t in por_serv[s][tipo]]
+        if not all_tr:
+            out[tipo] = []
+            continue
+        starts = sorted({t["cal_desde"] for t in all_tr})     # inicios CALENDARIO (unión de servicios)
+        end = max(t["cal_hasta"] for t in all_tr)             # fin CALENDARIO global
+        tramos = []
+        for i, b in enumerate(starts):
+            if i + 1 < len(starts):
+                ii = starts[i + 1][0] * 12 + (starts[i + 1][1] - 1) - 1
+                hasta = (ii // 12, ii % 12 + 1)
+            else:
+                hasta = end
+            totales = {s: _valor_en(por_serv[s][tipo], b[0], b[1]) for s in servs}
+            tramos.append({"idx": i + 1, "desde": _fmt_mes(b), "hasta": _fmt_mes(hasta),
+                           "anio_desde": b[0], "mes_desde": b[1],
+                           "anio_hasta": hasta[0], "mes_hasta": hasta[1], "totales": totales})
+        out[tipo] = tramos
+    return out
+
+
+def cmi_proyecto_cargar(conn, empresa_id, tipo, tramo, contenido, usuario_id=None):
+    """Carga el CSV de un tramo/componente: columnas id_activo, servicio, cmi_dic2014 (obligatorias)
+    y de soporte (nombre, vida_util_anios, anio_operacion, valor_via688_dic2014, vp_cmi_q_dic2014,
+    vpr0_dic2014). Reemplaza lo cargado para (tipo, tramo). Devuelve (ok, errores)."""
+    import ingesta as _ing
+    tipo = (tipo or "").strip().lower()
+    if tipo not in ("bcr", "poir"):
+        return 0, ["tipo inválido (debe ser bcr o poir)"]
+    rows = _ing._rows(contenido)
+    if not rows:
+        return 0, ["el archivo está vacío o sin encabezado"]
+    cols = set(h for h in rows[0].keys() if h)
+    A_ID = ("id_activo", "id", "codigo", "idactivo", "activo", "id_proyecto")
+    A_SERV = ("servicio", "serv")
+    A_CMI = ("cmi_dic2014", "cmi", "cmi_individual", "cmi688", "cmi_proyecto")
+    A_NOM = ("nombre", "descripcion", "proyecto")
+    A_VU = ("vida_util_anios", "vida_util", "vu", "vida_util_años")
+    A_PRR = ("prr_anios", "prr", "vur", "vida_util_remanente")
+    A_OP = ("anio_operacion", "año_operacion", "ano_operacion", "anio_entrada", "fecha_operacion")
+    A_VIA = ("valor_via688_dic2014", "valor_via688", "via688", "via", "valor_bcr0", "valor_activo")
+    A_VPQ = ("vp_cmi_q_dic2014", "vp_cmi_q", "vpcmiq", "vp")
+    A_VPR = ("vpr0_dic2014", "vpr0", "vpr")
+    faltan = [c for c, al in (("id_activo", A_ID), ("servicio", A_SERV), ("cmi", A_CMI))
+              if not (cols & set(al))]
+    if faltan:
+        return 0, ["faltan columnas obligatorias: " + ", ".join(faltan)]
+
+    def _col(r, *names):
+        for n in names:
+            if n in r and (r.get(n) or "").strip() != "":
+                return r.get(n)
+        return None
+
+    conn.execute(text("DELETE FROM cmi_proyecto WHERE empresa_id=:e AND tipo=:t AND tramo=:tr"),
+                 {"e": empresa_id, "t": tipo, "tr": int(tramo)})
+    ok, err = 0, []
+    for i, r in enumerate(rows, 2):
+        idv = _col(r, *A_ID)
+        if not idv:
+            err.append(f"fila {i}: falta id_activo"); continue
+        serv = _ing._norm_serv(_col(r, *A_SERV))
+        if not serv:
+            err.append(f"fila {i}: servicio inválido '{_col(r, *A_SERV)}'"); continue
+        cmi = _ing._num(_col(r, *A_CMI))
+        if cmi is None:
+            err.append(f"fila {i}: CMI vacío o inválido"); continue
+        try:
+            with conn.begin_nested():
+                conn.execute(text(
+                    "INSERT INTO cmi_proyecto(empresa_id,tipo,servicio,tramo,id_activo,nombre,cmi,"
+                    "vida_util,prr,anio_operacion,valor_via688,vp_cmi_q,vpr0,cargado_por) "
+                    "VALUES (:e,:t,:s,:tr,:id,:n,:c,:vu,:prr,:op,:via,:vpq,:vpr,:u) "
+                    "ON CONFLICT (empresa_id,tipo,servicio,tramo,id_activo) DO UPDATE SET "
+                    " nombre=excluded.nombre, cmi=excluded.cmi, vida_util=excluded.vida_util, "
+                    " prr=excluded.prr, anio_operacion=excluded.anio_operacion, "
+                    " valor_via688=excluded.valor_via688, vp_cmi_q=excluded.vp_cmi_q, vpr0=excluded.vpr0, "
+                    " cargado_por=excluded.cargado_por, cargado_en=now()"),
+                    {"e": empresa_id, "t": tipo, "s": serv, "tr": int(tramo),
+                     "id": str(idv).strip(), "n": (str(_col(r, *A_NOM)).strip() if _col(r, *A_NOM) else None),
+                     "c": cmi, "vu": _ing._num(_col(r, *A_VU)), "prr": _ing._num(_col(r, *A_PRR)),
+                     "op": _ing._int(_col(r, *A_OP)),
+                     "via": _ing._num(_col(r, *A_VIA)), "vpq": _ing._num(_col(r, *A_VPQ)),
+                     "vpr": _ing._num(_col(r, *A_VPR)), "u": usuario_id})
+            ok += 1
+        except Exception as ex:
+            err.append(f"fila {i}: {type(ex).__name__}")
+    return ok, err
+
+
+def cmi_proyecto_resumen(conn, empresa_id):
+    """Por componente y tramo: lo esperado (tramos del Paso 01 con total por servicio) y lo cargado
+    (nº proyectos y Σ cmi por servicio), con bandera de validación Σ=total (tolerancia por redondeo)."""
+    tramos = cmi_tramos_componente(conn, empresa_id)
+    cargado = {}
+    for t, tr, s, n, su in conn.execute(text(
+            "SELECT tipo, tramo, servicio, count(*), coalesce(sum(cmi),0) FROM cmi_proyecto "
+            "WHERE empresa_id=:e GROUP BY tipo, tramo, servicio"), {"e": empresa_id}).all():
+        cargado[(t, int(tr), s)] = (int(n), float(su))
+    out = {}
+    for tipo in ("bcr", "poir"):
+        filas = []
+        for tr in tramos.get(tipo, []):
+            servicios = []
+            for s, total in tr["totales"].items():
+                n, su = cargado.get((tipo, tr["idx"], s), (0, None))
+                tol = max(0.01, 0.0005 * abs(total)) if total else 0.01
+                ok = (su is not None and total is not None and abs(su - total) <= tol)
+                servicios.append({"servicio": s, "total": total, "n": n, "suma": su,
+                                  "ok": ok, "cargado": n > 0,
+                                  "dif": (su - total) if (su is not None and total is not None) else None})
+            filas.append({**tr, "servicios": servicios})
+        out[tipo] = filas
+    return out
 
 
 def _year_start(fecha_inicio, i):
