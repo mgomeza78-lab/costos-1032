@@ -3873,7 +3873,9 @@ def cmi_proyecto_csv(request: Request, eid: int, tipo: str = Form(...), tramo: i
         for arch in archivos:
             if not getattr(arch, "filename", ""):
                 continue
-            ok, err = bcr.cmi_proyecto_cargar(conn, eid, tipo, tramo, _leer_csv(arch), user.get("user_id"))
+            # El POIR ejecutado es uno solo (la ejecución real): reemplaza todo lo cargado.
+            ok, err = bcr.cmi_proyecto_cargar(conn, eid, tipo, tramo, _leer_csv(arch),
+                                              user.get("user_id"), reemplazar_todo=(tipo == "poir"))
             tot_ok += ok; errs += (err or []); n_arch += 1
     db.audit(scope_of(user), "cmi_proyecto_csv", "empresa", eid, f"{tipo} tramo {tramo}: {n_arch} arch, {tot_ok} proyectos")
     aviso = f"msg=CMI+por+proyecto+({tipo}+tramo+{tramo}):+{tot_ok}+proyecto(s)+cargado(s)"

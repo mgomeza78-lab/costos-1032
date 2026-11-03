@@ -657,10 +657,11 @@ def cmi_tramos_componente(conn, empresa_id):
     return out
 
 
-def cmi_proyecto_cargar(conn, empresa_id, tipo, tramo, contenido, usuario_id=None):
+def cmi_proyecto_cargar(conn, empresa_id, tipo, tramo, contenido, usuario_id=None, reemplazar_todo=False):
     """Carga el CSV de un tramo/componente: columnas id_activo, servicio, cmi_dic2014 (obligatorias)
     y de soporte (nombre, vida_util_anios, anio_operacion, valor_via688_dic2014, vp_cmi_q_dic2014,
-    vpr0_dic2014). Reemplaza lo cargado para (tipo, tramo). Devuelve (ok, errores)."""
+    vpr0_dic2014). Reemplaza lo cargado para (tipo, tramo), o para todo el tipo si reemplazar_todo
+    (el POIR ejecutado es uno solo: la ejecución real). Devuelve (ok, errores)."""
     import ingesta as _ing
     tipo = (tipo or "").strip().lower()
     if tipo not in ("bcr", "poir"):
@@ -690,8 +691,12 @@ def cmi_proyecto_cargar(conn, empresa_id, tipo, tramo, contenido, usuario_id=Non
                 return r.get(n)
         return None
 
-    conn.execute(text("DELETE FROM cmi_proyecto WHERE empresa_id=:e AND tipo=:t AND tramo=:tr"),
-                 {"e": empresa_id, "t": tipo, "tr": int(tramo)})
+    if reemplazar_todo:
+        conn.execute(text("DELETE FROM cmi_proyecto WHERE empresa_id=:e AND tipo=:t"),
+                     {"e": empresa_id, "t": tipo})
+    else:
+        conn.execute(text("DELETE FROM cmi_proyecto WHERE empresa_id=:e AND tipo=:t AND tramo=:tr"),
+                     {"e": empresa_id, "t": tipo, "tr": int(tramo)})
     ok, err = 0, []
     for i, r in enumerate(rows, 2):
         idv = _col(r, *A_ID)
@@ -1296,7 +1301,7 @@ def poir_desviacion(conn, empresa_id):
             e, p = ej.get((tr["idx"], s)), pl.get((tr["idx"], s))
             servs.append({"servicio": s, "ejec": e, "plan": p,
                           "desv": (e - p) if (e is not None and p is not None) else None,
-                          "hay": (e is not None or p is not None)})
+                          "hay": (e is not None)})   # el ejecutado es uno solo: solo donde hay ejecución
         if any(sv["hay"] for sv in servs):
             out.append({"idx": tr["idx"], "desde": tr["desde"], "hasta": tr["hasta"], "etiqueta": tr.get("etiqueta", ""),
                         "servicios": servs})

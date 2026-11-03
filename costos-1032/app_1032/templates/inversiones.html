@@ -240,7 +240,7 @@ El detalle del <b>CMI_POIR</b> va en el <a href="/empresa/{{ emp.id }}/inversion
 {# ---- Detalle de los valores cargados (desplegable, como el detalle mensual del Paso 1) ---- #}
 {% set det = cmi_det.get('bcr') if cmi_det else none %}
 {% if det %}
-<details style="margin:10px 0 2px" open>
+<details style="margin:10px 0 2px">
   <summary class="muted2" style="cursor:pointer">Ver detalle de los valores cargados ({{ det|length }} activo(s))</summary>
   <div style="overflow-x:auto">
   <table class="tabla" style="margin-top:6px">
@@ -435,19 +435,21 @@ comparación plan vs. ejecución se hace contra el <b>POIR actualizado</b> (<a h
 <p class="muted2" style="margin:4px 0 0">La <b>compensación</b> de los VA₀ y el cálculo de VI_POIR₀/CI/CMI de referencia se hacen en el paso
 <a href="/empresa/{{ emp.id }}/inversiones?sec=base">Base de capital y CMI</a>.</p>
 
-{# Detalle del CMI_POIR ejecutado por proyecto (carga por tramo) #}
-<h3 class="serv-h" style="margin-top:14px">Detalle del CMI_POIR ejecutado por proyecto</h3>
-<p class="muted2">Carga el CMI_POIR individual de los activos <b>ejecutados</b>, por <b>tramo</b> (el Paso 1 fija
-cuántos). Σ CMI de los proyectos = CMI_POIR total del tramo. Columnas: <code>id_activo, servicio, cmi_dic2014</code>
+{# CMI_POIR ejecutado por proyecto: UN SOLO cargue (la ejecución real; el período de inicio usa el último tramo) #}
+<h3 class="serv-h" style="margin-top:14px">CMI_POIR ejecutado por proyecto <span class="muted2">· la ejecución real</span></h3>
+<p class="muted2">Carga <b>una sola vez</b> el CMI_POIR individual de los activos <b>realmente ejecutados</b> del POIR
+(la ejecución al cierre de la 688, que es la que se cobra en el período de inicio). Σ CMI de los proyectos =
+<b>CMI_POIR del período de inicio</b> (Paso 1). Columnas: <code>id_activo, servicio, cmi_dic2014</code>
 (soporte: <code>anio_operacion, valor_via688_dic2014, vp_cmi_q_dic2014, vida_util_anios</code>).
 <a href="/empresa/{{ emp.id }}/plantilla/cmi_proyecto">Descargar plantilla</a>.</p>
 
 {% set trs = cmi_proy.get('poir') %}
-{% if not trs %}<p class="hint">Carga la serie del Paso 1 para que aparezcan los tramos del CMI_POIR.</p>{% endif %}
-{% for tr in trs %}
+{% set tr = trs[-1] if trs else none %}
+{% if not tr %}<p class="hint">Carga la serie del Paso 1 para fijar el CMI_POIR del período de inicio.</p>{% endif %}
+{% if tr %}
 <div style="border:1px solid #e7e2d4;border-radius:8px;padding:8px 10px;margin:6px 0">
   <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;align-items:center">
-    <span><b>Tramo {{ tr.idx }}</b> <span class="muted2">· {{ tr.desde }} → {{ tr.hasta }}</span></span>
+    <span><b>POIR ejecutado</b> <span class="muted2">· período de inicio</span></span>
     <span>
     {% for sv in tr.servicios %}
       {% set bg = '#d7efe3' if sv.ok else ('#fde2e0' if sv.cargado else '#f0ead7') %}
@@ -463,15 +465,15 @@ cuántos). Σ CMI de los proyectos = CMI_POIR total del tramo. Columnas: <code>i
     <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
     <input type="hidden" name="tipo" value="poir"><input type="hidden" name="tramo" value="{{ tr.idx }}">
     <input type="file" name="archivos" accept=".csv" required>
-    <button class="btn" type="submit">Cargar tramo {{ tr.idx }}</button>
+    <button class="btn" type="submit">Cargar POIR ejecutado</button>
   </form>
   {% endif %}
 </div>
-{% endfor %}
+{% endif %}
 
 {% set det = cmi_det.get('poir') if cmi_det else none %}
 {% if det %}
-<details style="margin:10px 0 2px" open>
+<details style="margin:10px 0 2px">
   <summary class="muted2" style="cursor:pointer">Ver detalle de los valores cargados ({{ det|length }} activo(s))</summary>
   <div style="overflow-x:auto">
   <table class="tabla" style="margin-top:6px">
