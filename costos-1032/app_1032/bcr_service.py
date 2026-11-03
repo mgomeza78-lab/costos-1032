@@ -1171,6 +1171,34 @@ def poir_plan_resumen(conn, empresa_id):
     return out
 
 
+def poir_desviacion(conn, empresa_id):
+    """Desviación del POIR EJECUTADO frente al PLANEADO, por tramo y servicio (Paso 4):
+    ejecutado (Σ CMI de cmi_proyecto tipo='poir') vs planeado (Σ CMI de poir_plan),
+    desviación = ejecutado − planeado. Los tramos los fija el Paso 1."""
+    ej, pl = {}, {}
+    for t, s, su in conn.execute(text(
+            "SELECT tramo, servicio, coalesce(sum(cmi),0) FROM cmi_proyecto "
+            "WHERE empresa_id=:e AND tipo='poir' GROUP BY tramo, servicio"), {"e": empresa_id}).all():
+        ej[(int(t), s)] = float(su)
+    for t, s, su in conn.execute(text(
+            "SELECT tramo, servicio, coalesce(sum(cmi),0) FROM poir_plan "
+            "WHERE empresa_id=:e GROUP BY tramo, servicio"), {"e": empresa_id}).all():
+        pl[(int(t), s)] = float(su)
+    tramos = cmi_tramos_componente(conn, empresa_id).get("poir", [])
+    out = []
+    for tr in tramos:
+        servs = []
+        for s in tr["totales"]:
+            e, p = ej.get((tr["idx"], s)), pl.get((tr["idx"], s))
+            servs.append({"servicio": s, "ejec": e, "plan": p,
+                          "desv": (e - p) if (e is not None and p is not None) else None,
+                          "hay": (e is not None or p is not None)})
+        if any(sv["hay"] for sv in servs):
+            out.append({"idx": tr["idx"], "desde": tr["desde"], "hasta": tr["hasta"], "etiqueta": tr.get("etiqueta", ""),
+                        "servicios": servs})
+    return out
+
+
 def eliminar(conn, empresa_id, aid):
     conn.execute(text("DELETE FROM bcr_activo WHERE empresa_id=:e AND id=:i"),
                  {"e": empresa_id, "i": aid})

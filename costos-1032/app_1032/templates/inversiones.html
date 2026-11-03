@@ -272,11 +272,10 @@ El detalle del <b>CMI_POIR</b> va en el <a href="/empresa/{{ emp.id }}/inversion
 <p class="muted2">El <b>POIR planeado</b> es el plan de obras e inversiones aprobado. Tiene <b>una versión por cada
 tramo del CMI_POIR</b> definido en <a href="/empresa/{{ emp.id }}/inversiones?sec=agua">Agua facturada</a> (Paso 1):
 el <b>tramo 1</b> es el POIR <b>inicial</b> y cada tramo siguiente es una <b>actualización</b> (art. 52 Res. 688).
-El número de archivos a cargar es el <b>número de tramos</b> del Paso 1. El sistema <b>compara</b>, por servicio,
-Σ CMI de los proyectos del plan contra el <b>CMI_POIR cobrado</b> del tramo (Paso 1): <b>pueden diferir</b>, y esa
-diferencia es la <b>desviación plan vs. ejecución</b> (proyectos planeados que no se ejecutaron). Es
-<b>informativo</b>: los resultados (VPR₀, VA₀, CMI de referencia) se calculan sobre lo <b>ejecutado</b>
-(<a href="/empresa/{{ emp.id }}/inversiones?sec=poir_ejec">Paso 4</a>).</p>
+El sistema <b>valida</b>, por servicio, que <b>Σ CMI de los proyectos = CMI_POIR total del tramo</b> (Paso 1) — el
+número de archivos a cargar es el <b>número de tramos</b> del Paso 1. Es <b>informativo</b>: los resultados (VPR₀,
+VA₀, CMI de referencia) se calculan sobre lo <b>ejecutado</b>, y la <b>desviación del ejecutado frente a lo
+planeado</b> se muestra en el <a href="/empresa/{{ emp.id }}/inversiones?sec=poir_ejec">Paso 4</a>.</p>
 
 {% if not poir_plan %}<p class="hint">Carga la serie del Paso 1 para que aparezcan los tramos del POIR planeado.</p>{% endif %}
 {% for tr in poir_plan %}
@@ -285,11 +284,11 @@ diferencia es la <b>desviación plan vs. ejecución</b> (proyectos planeados que
     <span><b>Tramo {{ tr.idx }}</b> <span class="muted2">· POIR {{ tr.etiqueta }} · {{ tr.desde }} → {{ tr.hasta }}</span></span>
     <span>
     {% for sv in tr.servicios %}
-      {% set bg = '#d7efe3' if sv.ok else ('#e8eef4' if sv.cargado else '#f0ead7') %}
-      {% set fg = '#1f8a70' if sv.ok else ('#3a6ea5' if sv.cargado else '#8a6d1f') %}
+      {% set bg = '#d7efe3' if sv.ok else ('#fde2e0' if sv.cargado else '#f0ead7') %}
+      {% set fg = '#1f8a70' if sv.ok else ('#b5342b' if sv.cargado else '#8a6d1f') %}
       <span style="background:{{ bg }};color:{{ fg }};padding:2px 7px;border-radius:8px;font-size:11.5px;margin-left:4px">
-        {{ sv.servicio }}: {% if sv.cargado %}{{ sv.n }} proy · Σ {{ sv.suma|round(2) }} vs cobrado {{ sv.total|round(2) if sv.total is not none else '—' }}
-        {% if sv.ok %}· cuadra{% elif sv.total is not none %}· desv {{ '%+.2f'|format(sv.dif) }}{% endif %}{% else %}cobrado {{ sv.total|round(2) if sv.total is not none else '—' }} · falta{% endif %}</span>
+        {{ sv.servicio }}: {% if sv.cargado %}{{ sv.n }} proy · Σ {{ sv.suma|round(2) }} / total {{ sv.total|round(2) if sv.total is not none else '—' }}
+        {{ '✓' if sv.ok else '✗ difiere' }}{% else %}total {{ sv.total|round(2) if sv.total is not none else '—' }} · falta{% endif %}</span>
     {% endfor %}
     </span>
   </div>
@@ -501,6 +500,29 @@ cuántos). Σ CMI de los proyectos = CMI_POIR total del tramo. Columnas: <code>i
   </div>
   <p class="muted2" style="margin:4px 0 0">Valores monetarios en <b>millones</b> de pesos dic-2014 (M$); el CMI es $/m³ dic-2014.</p>
 </details>
+{% endif %}
+
+{# ---- Desviación del ejecutado frente al planeado (por tramo) ---- #}
+{% if poir_desv %}
+<h3 class="serv-h" style="margin-top:18px">Desviación del ejecutado frente al planeado <span class="muted2">· CMI_POIR ($/m³ dic-2014)</span></h3>
+<p class="muted2">Compara, por tramo y servicio, el CMI_POIR <b>ejecutado</b> (lo cobrado, Paso 1) contra el
+<b>planeado</b> (Paso 3). La diferencia es lo planeado que no se ejecutó (o viceversa). El plan de referencia es
+el POIR <b>actualizado</b> (art. 52).</p>
+<div style="overflow-x:auto">
+<table class="tabla">
+  <thead><tr><th>Tramo</th><th>Servicio</th><th class="r">Ejecutado</th><th class="r">Planeado</th><th class="r">Desviación (ejec − plan)</th></tr></thead>
+  <tbody>
+    {% for tr in poir_desv %}{% for sv in tr.servicios %}
+    <tr><td class="comp">{% if loop.first %}{{ tr.idx }} <span class="muted2">({{ tr.desde }}→{{ tr.hasta }})</span>{% endif %}</td>
+      <td>{{ sv.servicio }}</td>
+      <td class="num">{{ sv.ejec|round(2) if sv.ejec is not none else '—' }}</td>
+      <td class="num">{{ sv.plan|round(2) if sv.plan is not none else '—' }}</td>
+      <td class="num">{% if sv.desv is not none %}<b style="color:{{ '#1f8a70' if (sv.desv|abs) < 0.005 else '#b5342b' }}">{{ '%+.2f'|format(sv.desv) }}</b>{% else %}—{% endif %}</td></tr>
+    {% endfor %}{% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="muted2" style="margin:2px 0 0">Ejecutado = Σ CMI de los activos cargados aquí (= CMI_POIR cobrado del Paso 1). Planeado = Σ CMI del POIR del Paso 3.</p>
 {% endif %}
 
 <h3 class="serv-h" style="margin-top:22px">Seguimiento de ejecución (para el recálculo)</h3>

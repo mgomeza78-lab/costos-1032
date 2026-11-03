@@ -1674,7 +1674,8 @@ def inversiones(request: Request, eid: int):
         bcr_mods = {s: poir.mods_list(conn, eid, s) for s in servicios}
         bcr_cmi = {s: poir.resumen_cmi(conn, eid, s) for s in servicios}
         cmi_proy = bcr.cmi_proyecto_resumen(conn, eid)      # detalle CMI por proyecto (Paso 02)
-        poir_plan = bcr.poir_plan_resumen(conn, eid)        # POIR planeado ini/act (Paso 3, informativo)
+        poir_plan = bcr.poir_plan_resumen(conn, eid)        # POIR planeado por tramo (Paso 3, informativo)
+        poir_desv = bcr.poir_desviacion(conn, eid)          # ejecutado vs planeado (Paso 4)
         cumpl = bcr.cumplimiento(conn, eid, marco=marco_sec)
         proy = {s: bcr.proyeccion(conn, eid, s, r_emp) for s in servicios}
     return tpl.TemplateResponse(request, "inversiones.html", _ctx(
@@ -1688,7 +1689,7 @@ def inversiones(request: Request, eid: int):
         bcr_tramos=bcr_tramos,
         aps_list=aps_list, aps_nom={a["cod_dane"]: a["municipio"] for a in aps_list},
         bcr_mods=bcr_mods, bcr_cmi=bcr_cmi, cmi_proy=cmi_proy, poir_plan=poir_plan,
-        cumpl=cumpl, proy=proy, r_emp=r_emp,
+        poir_desv=poir_desv, cumpl=cumpl, proy=proy, r_emp=r_emp,
         puede_cargar=rbac.can(user, "cargar_mensual")))
 
 
