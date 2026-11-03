@@ -172,17 +172,32 @@ negativos y el cálculo de la BCR₀, el CCP y el CMI de referencia se hacen en 
   {% endfor %}
 </div>
 
-{# VPR₀ separado por signo (crudo, sin compensar) — la compensación va en el paso de base #}
-{% for s in servicios %}{% set b = bcr_ini.get(s) %}
+{# Resumen del soporte por servicio: VIA − VP(ingresos) = VPR₀ (dic-2014) → dic-2025 → capitalizado #}
+{% for s in servicios %}{% set b = bcr_ini.get(s) %}{% set cp = b.cad_pos %}{% set cn = b.cad_neg %}
 <h3 style="font-family:var(--head);font-size:14.5px;color:var(--teal-deep);margin:16px 0 6px">{{ bcr_serv[s] }}
-  <span class="muted2">· VPR₀ del soporte (dic-2014, sin compensar)</span></h3>
-<div class="cards">
-  <div class="card"><div class="k">VPR₀ positivos</div><div class="v" style="font-size:20px">{{ b.vpr0_pos|valor('$') if b.n_pos else '—' }}</div>
-    <div class="muted2">{{ b.n_pos }} activo(s) con VPR₀ ≥ 0</div></div>
-  <div class="card"><div class="k">VPR₀ negativos</div><div class="v" style="font-size:20px">{{ b.vpr0_neg|valor('$') if b.n_neg else '—' }}</div>
-    <div class="muted2">{{ b.n_neg }} activo(s) con VPR₀ &lt; 0 · se compensan en el paso de base</div></div>
+  <span class="muted2">· resumen del soporte (sin compensar)</span></h3>
+<div style="overflow-x:auto">
+<table class="tabla">
+  <thead><tr><th>Concepto</th><th class="r">Positivos ({{ cp.n }})</th><th class="r">Negativos ({{ cn.n }})</th><th class="r">Total</th></tr></thead>
+  <tbody>
+    <tr><td>Valor del activo · VIA688 <span class="muted2">(dic-2014)</span></td>
+      <td class="num">{{ cp.via|valor('$') }}</td><td class="num">{{ cn.via|valor('$') }}</td><td class="num"><b>{{ (cp.via + cn.via)|valor('$') }}</b></td></tr>
+    <tr><td>(−) VP de ingresos · CMI·Q <span class="muted2">(dic-2014)</span></td>
+      <td class="num">{{ cp.vp|valor('$') }}</td><td class="num">{{ cn.vp|valor('$') }}</td><td class="num"><b>{{ (cp.vp + cn.vp)|valor('$') }}</b></td></tr>
+    <tr style="background:var(--teal-bg,#f0f6f6)"><td><b>(=) VPR₀ = VIA − VP</b> <span class="muted2">(dic-2014)</span></td>
+      <td class="num">{{ cp.vpr0|valor('$') }}</td><td class="num">{{ cn.vpr0|valor('$') }}</td><td class="num"><b>{{ (cp.vpr0 + cn.vpr0)|valor('$') }}</b></td></tr>
+    <tr><td>VPR₀ a dic-2025 <span class="muted2">(× fa0 {{ b.fa0|round(4) if b.fa0 is not none else '—' }})</span></td>
+      {% if b.cad_ok25 %}<td class="num">{{ cp.vpr0_25|valor('$') }}</td><td class="num">{{ cn.vpr0_25|valor('$') }}</td><td class="num"><b>{{ (cp.vpr0_25 + cn.vpr0_25)|valor('$') }}</b></td>
+      {% else %}<td class="num" colspan="3">falta fa0 (IPC dic-2014/2025)</td>{% endif %}</tr>
+    <tr style="background:var(--teal-bg,#f0f6f6)"><td><b>VA₀ capitalizado</b> <span class="muted2">(× (1+r688)^t, t={{ b.t|round(2) if b.t is not none else '—' }})</span></td>
+      {% if b.cad_okva0 %}<td class="num">{{ cp.va0|valor('$') }}</td><td class="num">{{ cn.va0|valor('$') }}</td><td class="num"><b>{{ (cp.va0 + cn.va0)|valor('$') }}</b></td>
+      {% else %}<td class="num" colspan="3">falta r688 / t / fa0</td>{% endif %}</tr>
+  </tbody>
+</table>
 </div>
 {% endfor %}
+<p class="muted2" style="margin:4px 0 0">La <b>compensación</b> de los VA₀ negativos contra los positivos y el cálculo de la
+BCR₀, el CI y el CMI de referencia se hacen en el paso <a href="/empresa/{{ emp.id }}/inversiones?sec=base">Base de capital y CMI</a>.</p>
 
 {# ---- Detalle del CMI por proyecto (sustento del cobro 688) ---- #}
 <h2 class="serv-h" style="margin-top:22px">Detalle del CMI_BCR por proyecto (sustento del cobro 688)</h2>
@@ -274,17 +289,32 @@ se hacen en el paso <a href="/empresa/{{ emp.id }}/inversiones?sec=base">Base de
   {% endfor %}
 </div>
 
-{# VPR₀ separado por signo (crudo, sin compensar) #}
-{% for s in servicios %}{% set b = poir_ini.get(s) %}
+{# Resumen del soporte por servicio: VIA − VP(ingresos) = VPR₀ (dic-2014) → dic-2025 → capitalizado #}
+{% for s in servicios %}{% set b = poir_ini.get(s) %}{% set cp = b.cad_pos %}{% set cn = b.cad_neg %}
 <h3 style="font-family:var(--head);font-size:14.5px;color:var(--teal-deep);margin:14px 0 4px">{{ bcr_serv[s] }}
-  <span class="muted2">· VPR₀ del soporte (dic-2014, sin compensar)</span></h3>
-<div class="cards">
-  <div class="card"><div class="k">VPR₀ positivos</div><div class="v" style="font-size:20px">{{ b.vpr0_pos|valor('$') if b.n_pos else '—' }}</div>
-    <div class="muted2">{{ b.n_pos }} activo(s) con VPR₀ ≥ 0</div></div>
-  <div class="card"><div class="k">VPR₀ negativos</div><div class="v" style="font-size:20px">{{ b.vpr0_neg|valor('$') if b.n_neg else '—' }}</div>
-    <div class="muted2">{{ b.n_neg }} activo(s) con VPR₀ &lt; 0 · se compensan en el paso de base</div></div>
+  <span class="muted2">· resumen del soporte (sin compensar)</span></h3>
+<div style="overflow-x:auto">
+<table class="tabla">
+  <thead><tr><th>Concepto</th><th class="r">Positivos ({{ cp.n }})</th><th class="r">Negativos ({{ cn.n }})</th><th class="r">Total</th></tr></thead>
+  <tbody>
+    <tr><td>Valor del activo · VIA688 <span class="muted2">(dic-2014)</span></td>
+      <td class="num">{{ cp.via|valor('$') }}</td><td class="num">{{ cn.via|valor('$') }}</td><td class="num"><b>{{ (cp.via + cn.via)|valor('$') }}</b></td></tr>
+    <tr><td>(−) VP de ingresos · CMI·Q <span class="muted2">(dic-2014)</span></td>
+      <td class="num">{{ cp.vp|valor('$') }}</td><td class="num">{{ cn.vp|valor('$') }}</td><td class="num"><b>{{ (cp.vp + cn.vp)|valor('$') }}</b></td></tr>
+    <tr style="background:var(--teal-bg,#f0f6f6)"><td><b>(=) VPR₀ = VIA − VP</b> <span class="muted2">(dic-2014)</span></td>
+      <td class="num">{{ cp.vpr0|valor('$') }}</td><td class="num">{{ cn.vpr0|valor('$') }}</td><td class="num"><b>{{ (cp.vpr0 + cn.vpr0)|valor('$') }}</b></td></tr>
+    <tr><td>VPR₀ a dic-2025 <span class="muted2">(× fa0 {{ b.fa0|round(4) if b.fa0 is not none else '—' }})</span></td>
+      {% if b.cad_ok25 %}<td class="num">{{ cp.vpr0_25|valor('$') }}</td><td class="num">{{ cn.vpr0_25|valor('$') }}</td><td class="num"><b>{{ (cp.vpr0_25 + cn.vpr0_25)|valor('$') }}</b></td>
+      {% else %}<td class="num" colspan="3">falta fa0 (IPC dic-2014/2025)</td>{% endif %}</tr>
+    <tr style="background:var(--teal-bg,#f0f6f6)"><td><b>VA₀ capitalizado</b> <span class="muted2">(× (1+r688)^t, t={{ b.t|round(2) if b.t is not none else '—' }})</span></td>
+      {% if b.cad_okva0 %}<td class="num">{{ cp.va0|valor('$') }}</td><td class="num">{{ cn.va0|valor('$') }}</td><td class="num"><b>{{ (cp.va0 + cn.va0)|valor('$') }}</b></td>
+      {% else %}<td class="num" colspan="3">falta r688 / t / fa0</td>{% endif %}</tr>
+  </tbody>
+</table>
 </div>
 {% endfor %}
+<p class="muted2" style="margin:4px 0 0">La <b>compensación</b> de los VA₀ negativos contra los positivos y el cálculo de la
+VI_POIR₀, el CI y el CMI de referencia se hacen en el paso <a href="/empresa/{{ emp.id }}/inversiones?sec=base">Base de capital y CMI</a>.</p>
 
 {# ---- Detalle del CMI_POIR por proyecto (sustento del cobro 688) ---- #}
 <h3 class="serv-h" style="margin-top:4px">Detalle del CMI_POIR por proyecto (sustento del cobro 688)</h3>

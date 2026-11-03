@@ -955,30 +955,44 @@ def cmi_inicio(conn, empresa_id, tipo="bcr", r_emp=None):
         sin_serie = total01 is None               # cargado sin serie del Paso 01 para validar
         tol = max(0.01, 0.0005 * abs(total01)) if total01 else 0.01
         ok = (suma_cmi is not None and total01 is not None and abs(suma_cmi - total01) <= tol)
-        # VPR₀ crudo (sin compensar), separado por signo — es lo que se muestra en los Pasos 2/3.
-        vpr0_pos, vpr0_neg, n_pos, n_neg = 0.0, 0.0, 0, 0
-        # Base de capital derivada del soporte (VA₀ = VPR₀·(1+r688)^t·fa0) — insumo del paso de base.
+        # Cadena de valores del soporte (dic-2014 → dic-2025 → capitalizado), separada por el signo
+        # del VPR₀ — es el resumen que se muestra en los Pasos 2/3 (sin compensar todavía):
+        #   VIA688 (activo) − VP(CMI·Q) (ingresos) = VPR₀ [dic-2014];
+        #   VPR₀·fa0 [dic-2025]; VA₀ = VPR₀·fa0·(1+r688)^t [capitalizado].
+        cad = {"pos": {"n": 0, "via": 0.0, "vp": 0.0, "vpr0": 0.0, "vpr0_25": 0.0, "va0": 0.0},
+               "neg": {"n": 0, "via": 0.0, "vp": 0.0, "vpr0": 0.0, "vpr0_25": 0.0, "va0": 0.0}}
+        ok25 = fa0 is not None                                   # se puede llevar a dic-2025
+        okva0 = (fa0 is not None and r688 is not None and t is not None)  # se puede capitalizar
         pos, neg, con_soporte = [], 0.0, False
         for r in rs:
-            vpr0 = r["vpr0"]
-            if vpr0 is None and r["valor_via688"] is not None and r["vp_cmi_q"] is not None:
+            # VPR₀ = valor del activo − VP de los ingresos (art. 2.1.2.1.3.5.6). Se calcula como la
+            # diferencia cuando se tienen ambos; el VPR₀ cargado explícito solo se usa como respaldo.
+            if r["valor_via688"] is not None and r["vp_cmi_q"] is not None:
                 vpr0 = float(r["valor_via688"]) - float(r["vp_cmi_q"])
-            if vpr0 is None:
-                continue
-            vpr0 = float(vpr0)
-            if vpr0 >= 0:
-                vpr0_pos += vpr0; n_pos += 1
+            elif r["vpr0"] is not None:
+                vpr0 = float(r["vpr0"])
             else:
-                vpr0_neg += vpr0; n_neg += 1
-            if r688 is None or t is None or fa0 is None:
                 continue
-            con_soporte = True
-            va0 = vpr0 * ((1 + r688) ** t) * fa0
-            prr = float(r["prr"]) if r["prr"] is not None else None
-            if va0 >= 0:
-                pos.append({"va0": va0, "prr": prr})
-            else:
-                neg += -va0
+            g = cad["pos"] if vpr0 >= 0 else cad["neg"]
+            g["n"] += 1
+            if r["valor_via688"] is not None:
+                g["via"] += float(r["valor_via688"])
+            if r["vp_cmi_q"] is not None:
+                g["vp"] += float(r["vp_cmi_q"])
+            g["vpr0"] += vpr0
+            if ok25:
+                g["vpr0_25"] += vpr0 * fa0
+            if okva0:
+                va0 = vpr0 * fa0 * ((1 + r688) ** t)
+                g["va0"] += va0
+                con_soporte = True
+                prr = float(r["prr"]) if r["prr"] is not None else None
+                if va0 >= 0:
+                    pos.append({"va0": va0, "prr": prr})
+                else:
+                    neg += -va0
+        vpr0_pos, vpr0_neg = cad["pos"]["vpr0"], cad["neg"]["vpr0"]
+        n_pos, n_neg = cad["pos"]["n"], cad["neg"]["n"]
         base = cak = ci = None
         descuento = neg
         if con_soporte:
@@ -1000,6 +1014,7 @@ def cmi_inicio(conn, empresa_id, tipo="bcr", r_emp=None):
         out[s] = {"cmi_bcr": cmi_c, "total01": total01, "suma_cmi": suma_cmi, "n": n, "ok": ok,
                   "sin_serie": sin_serie,
                   "vpr0_pos": vpr0_pos, "vpr0_neg": vpr0_neg, "n_pos": n_pos, "n_neg": n_neg,
+                  "cad_pos": cad["pos"], "cad_neg": cad["neg"], "cad_ok25": ok25, "cad_okva0": okva0,
                   "bcr": base, "cak": cak, "ci": ci, "ccp": ccp, "r688": r688, "t": t, "fa0": fa0,
                   "con_soporte": con_soporte, "descuento": descuento, "seg688": seg688,
                   "cmi_bcr_ci": (ci / ccp if (ci is not None and ccp) else None),
@@ -1032,7 +1047,9 @@ def cmi_proyecto_detalle(conn, empresa_id, tipo):
     out = []
     for r in rows:
         d = dict(r)
-        if d["vpr0"] is None and d["valor_via688"] is not None and d["vp_cmi_q"] is not None:
+        # VPR₀ = VIA − VP(CMI·Q) cuando se tienen ambos (regulatorio y consistente con el resumen);
+        # si no, el VPR₀ cargado.
+        if d["valor_via688"] is not None and d["vp_cmi_q"] is not None:
             d["vpr0"] = float(d["valor_via688"]) - float(d["vp_cmi_q"])
         out.append(d)
     return out
