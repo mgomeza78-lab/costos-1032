@@ -893,17 +893,20 @@ def bcr0_calculo(conn, empresa_id, r_emp=None):
     return out
 
 
-def bcr0_inicio(conn, empresa_id, r_emp=None):
-    """Costos del componente BCR (marco 688) para el PERÍODO DE INICIO, a partir del detalle de
-    CMI por proyecto cargado en el Paso 02 (tipo='bcr') y de la validación del Paso 01.
+def cmi_inicio(conn, empresa_id, tipo="bcr", r_emp=None):
+    """Costos de un componente del CMI688 (tipo='bcr' | 'poir') para el PERÍODO DE INICIO, a partir
+    del detalle de CMI por proyecto cargado en el Paso 02 y de la validación del Paso 01.
 
-    El CMI_BCR del período de inicio es el que se venía cobrando al cierre de la 688: por eso se
-    toma = Σ CMI individual del ÚLTIMO tramo = CMI_BCR total del último tramo (Paso 01). La base de
-    capital regulada BCR₀ (insumo para el primer recálculo) se deriva del soporte de esos activos:
-    VA₀ⱼ = VPR₀ⱼ·(1+r688)^t·fa0 (VPR₀ = VIA − VP(CMI×Q) si no viene explícito), compensando los VA₀
-    negativos contra los positivos (art. 2.1.2.1.5.2.1.1); cak = Σ VA₀d/PRR; CI = Σcak + BCR₀·r.
-    Si no hay soporte cargado, la BCR₀ cae a la de activos (bcr0_calculo). Una sola fuente de verdad
-    para los cuadros del Paso 2 y para la proyección."""
+    El CMI del período de inicio es el que se venía cobrando al cierre de la 688: por eso se toma
+    = Σ CMI individual del ÚLTIMO tramo = CMI total del último tramo del componente (Paso 01). La
+    base de capital (BCR₀ para 'bcr'; VI_POIR₀ para 'poir'), insumo del primer recálculo, se deriva
+    del soporte de esos activos: VA₀ⱼ = VPR₀ⱼ·(1+r688)^t·fa0 (VPR₀ = VIA − VP(CMI×Q) si no viene
+    explícito), compensando los VA₀ negativos contra los positivos (art. 2.1.2.1.5.2.1.1);
+    cak = Σ VA₀d/PRR; CI = Σcak + base·r. Para 'bcr', si no hay soporte cargado la base cae a la de
+    activos (bcr0_calculo). Una sola fuente de verdad para los cuadros de los Pasos 2 y 3 y para la
+    proyección. Las claves de salida ('cmi_bcr', 'bcr', 'cak', 'ci', 'cmi_bcr_ci') son genéricas del
+    componente: en 'poir' representan el CMI_POIR y su base."""
+    tipo = (tipo or "bcr").strip().lower()
     emp_row = conn.execute(text(
         "SELECT r, suscriptores_seg, fecha_inicio_688, fecha_inicio_1032 FROM empresa WHERE id=:e"),
         {"e": empresa_id}).mappings().first()
@@ -917,20 +920,20 @@ def bcr0_inicio(conn, empresa_id, r_emp=None):
     fecha_1032 = emp_row["fecha_inicio_1032"] if emp_row else None
     ps = params(conn, empresa_id)
     servs = _servicios_empresa(conn, empresa_id)
-    tramos_bcr = cmi_tramos_componente(conn, empresa_id).get("bcr", [])
-    ultimo = tramos_bcr[-1] if tramos_bcr else None
+    tramos_c = cmi_tramos_componente(conn, empresa_id).get(tipo, [])
+    ultimo = tramos_c[-1] if tramos_c else None
     ult_idx = ultimo["idx"] if ultimo else None
     # Robustez: si aún no hay serie del Paso 01 pero sí se cargó el detalle, usa el tramo máximo
     # presente en cmi_proyecto (sin total contra el cual validar).
     if ult_idx is None:
         mx = conn.execute(text(
-            "SELECT max(tramo) FROM cmi_proyecto WHERE empresa_id=:e AND tipo='bcr'"),
-            {"e": empresa_id}).scalar()
+            "SELECT max(tramo) FROM cmi_proyecto WHERE empresa_id=:e AND tipo=:t"),
+            {"e": empresa_id, "t": tipo}).scalar()
         ult_idx = int(mx) if mx is not None else None
     rows = conn.execute(text(
         "SELECT servicio, cmi, vpr0, valor_via688, vp_cmi_q, prr, vida_util "
-        "FROM cmi_proyecto WHERE empresa_id=:e AND tipo='bcr' AND tramo=:tr"),
-        {"e": empresa_id, "tr": ult_idx}).mappings().all() if ult_idx else []
+        "FROM cmi_proyecto WHERE empresa_id=:e AND tipo=:t AND tramo=:tr"),
+        {"e": empresa_id, "t": tipo, "tr": ult_idx}).mappings().all() if ult_idx else []
     by_serv = {}
     for r in rows:
         by_serv.setdefault(r["servicio"], []).append(r)
@@ -947,12 +950,12 @@ def bcr0_inicio(conn, empresa_id, r_emp=None):
         rs = by_serv.get(s, [])
         n = len(rs)
         suma_cmi = sum(float(r["cmi"]) for r in rs if r["cmi"] is not None) if rs else None
-        # CMI_BCR del período de inicio: lo cargado (Σ) si existe; si no, el total del Paso 01.
-        cmi_bcr = suma_cmi if (suma_cmi is not None and n > 0) else total01
+        # CMI del período de inicio: lo cargado (Σ) si existe; si no, el total del Paso 01.
+        cmi_c = suma_cmi if (suma_cmi is not None and n > 0) else total01
         sin_serie = total01 is None               # cargado sin serie del Paso 01 para validar
         tol = max(0.01, 0.0005 * abs(total01)) if total01 else 0.01
         ok = (suma_cmi is not None and total01 is not None and abs(suma_cmi - total01) <= tol)
-        # BCR₀ derivada del soporte de los activos del último tramo.
+        # Base de capital derivada del soporte de los activos del último tramo.
         pos, neg, con_soporte = [], 0.0, False
         for r in rs:
             vpr0 = r["vpr0"]
@@ -967,7 +970,7 @@ def bcr0_inicio(conn, empresa_id, r_emp=None):
                 pos.append({"va0": va0, "prr": prr})
             else:
                 neg += -va0
-        bcr0 = cak = ci = None
+        base = cak = ci = None
         descuento = neg
         if con_soporte:
             negtot = neg
@@ -975,27 +978,53 @@ def bcr0_inicio(conn, empresa_id, r_emp=None):
                 if negtot <= 0:
                     a["va0d"] = a["va0"]; continue
                 take = min(a["va0"], negtot); a["va0d"] = a["va0"] - take; negtot -= take
-            bcr0 = sum(a["va0d"] for a in pos)
+            base = sum(a["va0d"] for a in pos)
             cak = sum((a["va0d"] / a["prr"]) for a in pos if a["prr"] and a["prr"] > 0)
-            ci = cak + bcr0 * r_emp
-        else:
+            ci = cak + base * r_emp
+        elif tipo == "bcr":
+            # Solo el BCR tiene inventario de activos como respaldo alterno.
             if calc_fallback is None:
                 calc_fallback = bcr0_calculo(conn, empresa_id, r_emp)
             cf = calc_fallback.get(s, {})
-            bcr0, cak, ci = cf.get("bcr"), cf.get("cak"), cf.get("ci")
+            base, cak, ci = cf.get("bcr"), cf.get("cak"), cf.get("ci")
             descuento = cf.get("descuento") or 0.0
-        out[s] = {"cmi_bcr": cmi_bcr, "total01": total01, "suma_cmi": suma_cmi, "n": n, "ok": ok,
+        out[s] = {"cmi_bcr": cmi_c, "total01": total01, "suma_cmi": suma_cmi, "n": n, "ok": ok,
                   "sin_serie": sin_serie,
-                  "bcr": bcr0, "cak": cak, "ci": ci, "ccp": ccp, "r688": r688, "t": t, "fa0": fa0,
+                  "bcr": base, "cak": cak, "ci": ci, "ccp": ccp, "r688": r688, "t": t, "fa0": fa0,
                   "con_soporte": con_soporte, "descuento": descuento, "seg688": seg688,
                   "cmi_bcr_ci": (ci / ccp if (ci is not None and ccp) else None),
                   "sin_param": r688 is None}
+    out["_tipo"] = tipo
     out["_r"] = r_emp
     out["_seg688"] = seg688
     out["_ipc_14"] = float(i14) if i14 else None
     out["_ipc_25"] = float(i25) if i25 else None
     out["_fecha_688"] = str(fecha_auto) if fecha_auto else None
     out["_ultimo"] = (ultimo["desde"] + " → " + ultimo["hasta"]) if ultimo else None
+    return out
+
+
+def bcr0_inicio(conn, empresa_id, r_emp=None):
+    """Compat: componente BCR del período de inicio (= cmi_inicio con tipo='bcr')."""
+    return cmi_inicio(conn, empresa_id, "bcr", r_emp)
+
+
+def cmi_proyecto_detalle(conn, empresa_id, tipo):
+    """Detalle por activo de lo cargado en el Paso 02 para un componente (para la tabla desplegable):
+    filas {tramo, servicio, id_activo, nombre, cmi, vida_util, prr, anio_operacion, valor_via688,
+    vp_cmi_q, vpr0}. El VPR₀ se deriva (VIA − VP(CMI×Q)) si no viene explícito. Orden: tramo,
+    servicio, id_activo."""
+    rows = conn.execute(text(
+        "SELECT tramo, servicio, id_activo, nombre, cmi, vida_util, prr, anio_operacion, "
+        "valor_via688, vp_cmi_q, vpr0 FROM cmi_proyecto WHERE empresa_id=:e AND tipo=:t "
+        "ORDER BY tramo, servicio, id_activo"),
+        {"e": empresa_id, "t": (tipo or "").strip().lower()}).mappings().all()
+    out = []
+    for r in rows:
+        d = dict(r)
+        if d["vpr0"] is None and d["valor_via688"] is not None and d["vp_cmi_q"] is not None:
+            d["vpr0"] = float(d["valor_via688"]) - float(d["vp_cmi_q"])
+        out.append(d)
     return out
 
 

@@ -21,6 +21,7 @@
   <a class="paso {{ 'on' if sec=='bcr' }}" href="/empresa/{{ emp.id }}/inversiones?sec=bcr">BCR de inicio</a>
   <a class="paso {{ 'on' if sec=='poir' }}" href="/empresa/{{ emp.id }}/inversiones?sec=poir">POIR 688 planeado</a>
   <a class="paso {{ 'on' if sec=='poir_ejec' }}" href="/empresa/{{ emp.id }}/inversiones?sec=poir_ejec">POIR 688 ejecutado</a>
+  <a class="paso {{ 'on' if sec=='proyeccion' }}" href="/empresa/{{ emp.id }}/inversiones?sec=proyeccion">Proyección del CMI</a>
   {% endif %}
   {% if s1032 %}
   <a class="paso {{ 'on' if sec=='poir1032' }}" href="/empresa/{{ emp.id }}/inversiones?sec=poir1032">POIR 1032 · plan</a>
@@ -65,23 +66,21 @@ año i se obtiene el <b>VP(CMI×Q)</b>, que se resta al VIA688 para el VPR₀ (a
 {% if ing.filas|selectattr('proy')|list %}<p class="muted2" style="margin:2px 0 0">* el año incluye meses con m³ proyectados.</p>{% endif %}
 {% set tr = bcr_tramos.get(s) if bcr_tramos else none %}
 {% if tr and (tr.poir or tr.bcr or tr.total) %}
-<details style="margin:6px 0 2px">
-  <summary class="muted2" style="cursor:pointer">Periodos en que el CMI688 se mantuvo estable (precios dic-2014)</summary>
-  <table class="tabla" style="margin-top:6px">
-    <thead><tr><th>Componente</th><th class="r">CMI ($/m³)</th><th>Desde</th><th>Hasta</th><th class="c">Meses</th></tr></thead>
-    <tbody>
-      {% for camp, lbl in [('poir','CMI_POIR'), ('bcr','CMI_BCR'), ('total','CMI total')] %}
-        {% for x in tr[camp] %}
-        <tr{% if camp=='total' %} style="background:var(--teal-bg,#f0f6f6)"{% endif %}>
-          <td>{% if loop.first %}<b>{{ lbl }}</b>{% endif %}</td>
-          <td class="num">{{ x.valor|valor('$') }}</td>
-          <td>{{ x.desde }}</td><td>{{ x.hasta }}</td><td class="c">{{ x.meses }}</td></tr>
-        {% endfor %}
+<h4 style="font-family:var(--head);font-size:13px;color:var(--teal-deep);margin:12px 0 4px">Periodos en que el CMI688 se mantuvo estable <span class="muted2">(precios dic-2014)</span></h4>
+<table class="tabla">
+  <thead><tr><th>Componente</th><th class="r">CMI ($/m³)</th><th>Desde</th><th>Hasta</th><th class="c">Meses</th></tr></thead>
+  <tbody>
+    {% for camp, lbl in [('poir','CMI_POIR'), ('bcr','CMI_BCR'), ('total','CMI total')] %}
+      {% for x in tr[camp] %}
+      <tr{% if camp=='total' %} style="background:var(--teal-bg,#f0f6f6)"{% endif %}>
+        <td>{% if loop.first %}<b>{{ lbl }}</b>{% endif %}</td>
+        <td class="num">{{ x.valor|valor('$') }}</td>
+        <td>{{ x.desde }}</td><td>{{ x.hasta }}</td><td class="c">{{ x.meses }}</td></tr>
       {% endfor %}
-    </tbody>
-  </table>
-  <p class="muted2" style="margin:4px 0 0">El CMI total cambia cuando cambia cualquiera de sus componentes; por eso tiene más tramos que POIR o BCR por separado.</p>
-</details>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="muted2" style="margin:4px 0 0">El CMI total cambia cuando cambia cualquiera de sus componentes; por eso tiene más tramos que POIR o BCR por separado.</p>
 {% endif %}
 {% if ing.meses %}
 <details style="margin:4px 0 2px">
@@ -231,31 +230,67 @@ El detalle del <b>CMI_POIR</b> va en el <a href="/empresa/{{ emp.id }}/inversion
 </div>
 {% endfor %}
 
-<h2 class="serv-h" style="margin-top:22px">Proyección del CMI · próximos 5 años tarifarios</h2>
-<p class="muted2">Proyección <b>indicativa</b>: la BCR₀ se remunera a r y recupera su cak; los proyectos del POIR
-entran a la BCR en su año planeado (ejecución ≥ 80 %) y aportan CMI_POIR como anualidad. La demanda se toma
-de lo facturado o del CCP cargado.</p>
-{% for s in servicios %}{% set pr = proy.get(s) %}
-<h3 style="font-family:var(--head);font-size:14px;color:var(--teal-deep);margin:14px 0 4px">{{ bcr_serv[s] }}
-  <span class="muted2">· demanda {{ pr.demanda|valor('m³') if pr.demanda else 'sin dato' }} · vida útil {{ pr.vida_util|round(0)|int }} años</span></h3>
-<table class="tabla">
-  <thead><tr><th>Año tarifario</th><th class="r">BCR al cierre</th><th class="r">POIR acum.</th>
-    <th class="r">CMI_BCR ($/m³)</th><th class="r">CMI_POIR ($/m³)</th><th class="r">CMI total ($/m³)</th></tr></thead>
-  <tbody>
-    {% for f in pr.filas %}<tr><td class="comp">{{ f.anio }}</td>
-      <td class="num">{{ f.bcr|valor('$') }}</td><td class="num">{{ f.poir_acum|valor('$') }}</td>
-      <td class="num">{{ f.cmi_bcr|valor('$') if f.cmi_bcr is not none else '—' }}</td>
-      <td class="num">{{ f.cmi_poir|valor('$') if f.cmi_poir is not none else '—' }}</td>
-      <td class="num"><b>{{ f.cmi_total|valor('$') if f.cmi_total is not none else '—' }}</b></td></tr>{% endfor %}
-  </tbody>
-</table>
-{% if not pr.demanda %}<p class="hint">Carga el CCP 2025 o la información comercial de {{ bcr_serv[s] }} para estimar el CMI por m³.</p>{% endif %}
-{% endfor %}
+{# ---- Detalle de los valores cargados (desplegable, como el detalle mensual del Paso 1) ---- #}
+{% set det = cmi_det.get('bcr') if cmi_det else none %}
+{% if det %}
+<details style="margin:10px 0 2px" open>
+  <summary class="muted2" style="cursor:pointer">Ver detalle de los valores cargados ({{ det|length }} activo(s))</summary>
+  <div style="overflow-x:auto">
+  <table class="tabla" style="margin-top:6px">
+    <thead><tr><th class="c">Tramo</th><th>Servicio</th><th>ID</th><th>Activo</th>
+      <th class="r">CMI ($/m³)</th><th class="r">VU</th><th class="r">PRR</th><th class="c">Año op.</th>
+      <th class="r">VIA688 (M$)</th><th class="r">VP(CMI·Q) (M$)</th><th class="r">VPR₀ (M$)</th></tr></thead>
+    <tbody>
+      {% for d in det %}
+      <tr><td class="c">{{ d.tramo }}</td><td>{{ d.servicio }}</td><td class="comp">{{ d.id_activo }}</td>
+        <td>{{ d.nombre or '—' }}</td>
+        <td class="num">{{ d.cmi|valor('$') if d.cmi is not none else '—' }}</td>
+        <td class="num">{{ d.vida_util|round(2) if d.vida_util is not none else '—' }}</td>
+        <td class="num">{{ d.prr|round(2) if d.prr is not none else '—' }}</td>
+        <td class="c">{{ d.anio_operacion or '—' }}</td>
+        <td class="num">{{ d.valor_via688|millones(2) if d.valor_via688 is not none else '—' }}</td>
+        <td class="num">{{ d.vp_cmi_q|millones(2) if d.vp_cmi_q is not none else '—' }}</td>
+        <td class="num">{{ d.vpr0|millones(2) if d.vpr0 is not none else '—' }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="muted2" style="margin:4px 0 0">Valores monetarios en <b>millones</b> de pesos dic-2014 (M$); el CMI es $/m³ dic-2014. El VPR₀ se deriva de VIA688 − VP(CMI·Q) cuando no viene explícito.</p>
+</details>
+{% endif %}
 {% endif %}
 
 {# ============================ PASO 3 · POIR 688 ============================ #}
 {% if sec=='poir' %}
-<h2 class="serv-h">Paso 3 · POIR planeado · CMI por proyecto y plan de inversiones</h2>
+<h2 class="serv-h">Paso 3 · POIR de inicio (marco 688)</h2>
+<p class="muted2">Misma lógica del Paso 2, para el componente POIR. En el <b>período de inicio</b> el CMI_POIR
+es el que se venía cobrando al cierre de la 688: = <b>Σ CMI individual del último tramo = CMI_POIR total del
+último tramo</b> (Paso 1). La base <b>VI_POIR₀</b> (insumo del primer recálculo) se deriva del soporte de esos
+activos: VA₀ⱼ = VPR₀ⱼ·(1+r688)^t·fa0; CI = Σcak + VI_POIR₀·r.</p>
+
+{# Resumen: CMI_POIR del período de inicio por servicio (espejo del Paso 2) #}
+<div class="cards">
+  {% for s in servicios %}{% set b = poir_ini.get(s) %}
+  <div class="card"><div class="k">CMI_POIR · {{ bcr_serv[s] }} <span class="muted2">· período de inicio</span></div>
+    <div class="v">{{ b.cmi_bcr|valor('$') ~ ' /m³' if b.cmi_bcr is not none else '—' }}</div>
+    <div class="muted2">{% if b.n and b.sin_serie %}{{ b.n }} proy · Σ {{ b.suma_cmi|valor('$') }} <b style="color:#8a6d1f">· sin total Paso 1 para validar</b>
+      {% elif b.n %}{{ b.n }} proy · Σ {{ b.suma_cmi|valor('$') }} / total {{ b.total01|valor('$') if b.total01 is not none else '—' }}
+      <b style="color:{{ '#1f8a70' if b.ok else '#b5342b' }}">{{ '✓ cuadra' if b.ok else '✗ difiere' }}</b>
+      {% elif b.total01 is not none %}total Paso 1 {{ b.total01|valor('$') }} · falta cargar el detalle por proyecto (abajo)
+      {% else %}carga la serie del Paso 1{% endif %}</div></div>
+  {% endfor %}
+</div>
+
+{# Base VI_POIR₀ por servicio (secundario, insumo del recálculo) #}
+{% for s in servicios %}{% set b = poir_ini.get(s) %}
+<h3 style="font-family:var(--head);font-size:14.5px;color:var(--teal-deep);margin:14px 0 4px">{{ bcr_serv[s] }}</h3>
+<div class="cards">
+  <div class="card"><div class="k">VI_POIR₀ (Σ VA₀ compensado)</div><div class="v" style="font-size:22px">{{ b.bcr|valor('$') if b.bcr is not none else '—' }}</div>
+    <div class="muted2">{% if b.con_soporte %}de VPR₀·(1+r688)^t·fa0{% if b.descuento %} · descuento {{ b.descuento|valor('$') }}{% endif %}{% else %}soporte opcional · carga VIA/VP(CMI·Q){% endif %}</div></div>
+  <div class="card"><div class="k">Σ cak · CI</div><div class="v" style="font-size:20px">{{ b.ci|valor('$') if b.ci is not none else '—' }}</div>
+    <div class="muted2">Σcak {{ b.cak|valor('$') if b.cak is not none else '—' }} · CI/CCP = {{ b.cmi_bcr_ci|valor('$') ~ ' /m³' if b.cmi_bcr_ci is not none else '—' }} (comprobación)</div></div>
+</div>
+{% endfor %}
 
 {# ---- Detalle del CMI_POIR por proyecto (sustento del cobro 688) ---- #}
 <h3 class="serv-h" style="margin-top:4px">Detalle del CMI_POIR por proyecto (sustento del cobro 688)</h3>
@@ -292,6 +327,35 @@ valor_via688_dic2014, vp_cmi_q_dic2014, vida_util_anios</code>.
   {% endif %}
 </div>
 {% endfor %}
+
+{# ---- Detalle de los valores cargados del CMI_POIR (desplegable) ---- #}
+{% set det = cmi_det.get('poir') if cmi_det else none %}
+{% if det %}
+<details style="margin:10px 0 2px" open>
+  <summary class="muted2" style="cursor:pointer">Ver detalle de los valores cargados ({{ det|length }} activo(s))</summary>
+  <div style="overflow-x:auto">
+  <table class="tabla" style="margin-top:6px">
+    <thead><tr><th class="c">Tramo</th><th>Servicio</th><th>ID</th><th>Activo</th>
+      <th class="r">CMI ($/m³)</th><th class="r">VU</th><th class="r">PRR</th><th class="c">Año op.</th>
+      <th class="r">VIA688 (M$)</th><th class="r">VP(CMI·Q) (M$)</th><th class="r">VPR₀ (M$)</th></tr></thead>
+    <tbody>
+      {% for d in det %}
+      <tr><td class="c">{{ d.tramo }}</td><td>{{ d.servicio }}</td><td class="comp">{{ d.id_activo }}</td>
+        <td>{{ d.nombre or '—' }}</td>
+        <td class="num">{{ d.cmi|valor('$') if d.cmi is not none else '—' }}</td>
+        <td class="num">{{ d.vida_util|round(2) if d.vida_util is not none else '—' }}</td>
+        <td class="num">{{ d.prr|round(2) if d.prr is not none else '—' }}</td>
+        <td class="c">{{ d.anio_operacion or '—' }}</td>
+        <td class="num">{{ d.valor_via688|millones(2) if d.valor_via688 is not none else '—' }}</td>
+        <td class="num">{{ d.vp_cmi_q|millones(2) if d.vp_cmi_q is not none else '—' }}</td>
+        <td class="num">{{ d.vpr0|millones(2) if d.vpr0 is not none else '—' }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="muted2" style="margin:4px 0 0">Valores monetarios en <b>millones</b> de pesos dic-2014 (M$); el CMI es $/m³ dic-2014.</p>
+</details>
+{% endif %}
 
 <h3 class="serv-h" style="margin-top:18px">POIR planeado por modificaciones · VIA y VP(CMI×Q) por activo</h3>
 <p class="muted2">Alternativa detallada: el CMI es <b>por activo</b> y pudo cambiar con cada <b>modificación del POIR</b>. Indica las
@@ -633,5 +697,30 @@ detallado (cálculo de la provisión por no ejecución y seguimiento de su desti
   {% endfor %}
 </div>
 {% endif %}
+{% endif %}
+
+{# ============================ PASO 7 · PROYECCIÓN DEL CMI ============================ #}
+{% if sec=='proyeccion' %}
+<h2 class="serv-h">Paso 7 · Proyección del CMI · próximos 5 años tarifarios</h2>
+<p class="muted2">Proyección <b>indicativa</b>: la BCR₀ se remunera a r y recupera su cak; los proyectos del POIR
+entran a la BCR en su año planeado (ejecución ≥ 80 %) y aportan CMI_POIR como anualidad. La demanda se toma
+de lo facturado o del CCP cargado. No altera los costos del <b>período de inicio</b> (jul–dic 2026); solo
+muestra hacia dónde evoluciona el CMI en los años tarifarios siguientes, a partir de la BCR₀ y el POIR.</p>
+{% for s in servicios %}{% set pr = proy.get(s) %}
+<h3 style="font-family:var(--head);font-size:14px;color:var(--teal-deep);margin:14px 0 4px">{{ bcr_serv[s] }}
+  <span class="muted2">· demanda {{ pr.demanda|valor('m³') if pr.demanda else 'sin dato' }} · vida útil {{ pr.vida_util|round(0)|int }} años</span></h3>
+<table class="tabla">
+  <thead><tr><th>Año tarifario</th><th class="r">BCR al cierre</th><th class="r">POIR acum.</th>
+    <th class="r">CMI_BCR ($/m³)</th><th class="r">CMI_POIR ($/m³)</th><th class="r">CMI total ($/m³)</th></tr></thead>
+  <tbody>
+    {% for f in pr.filas %}<tr><td class="comp">{{ f.anio }}</td>
+      <td class="num">{{ f.bcr|valor('$') }}</td><td class="num">{{ f.poir_acum|valor('$') }}</td>
+      <td class="num">{{ f.cmi_bcr|valor('$') if f.cmi_bcr is not none else '—' }}</td>
+      <td class="num">{{ f.cmi_poir|valor('$') if f.cmi_poir is not none else '—' }}</td>
+      <td class="num"><b>{{ f.cmi_total|valor('$') if f.cmi_total is not none else '—' }}</b></td></tr>{% endfor %}
+  </tbody>
+</table>
+{% if not pr.demanda %}<p class="hint">Carga el CCP 2025 o la información comercial de {{ bcr_serv[s] }} para estimar el CMI por m³.</p>{% endif %}
+{% endfor %}
 {% endif %}
 {% endblock %}

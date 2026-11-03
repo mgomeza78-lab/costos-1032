@@ -1638,7 +1638,7 @@ def inversiones(request: Request, eid: int):
         return r
     user = session_user(request)
     sec = request.query_params.get("sec") or "agua"
-    if sec not in ("agua", "bcr", "poir", "poir_ejec", "poir1032", "poir1032_ejec", "activos", "provision"):
+    if sec not in ("agua", "bcr", "poir", "poir_ejec", "poir1032", "poir1032_ejec", "activos", "provision", "proyeccion"):
         sec = "agua"
     # El POIR del marco 1032 (prospectivo, desde el año 1) se separa del POIR 688 (histórico, inicio).
     marco_sec = "1032" if sec in ("poir1032", "poir1032_ejec") else "688"
@@ -1653,7 +1653,10 @@ def inversiones(request: Request, eid: int):
         bcr_activos = bcr.lista(conn, eid)
         r_emp = float(emp["r"]) if emp["r"] is not None else 0.0903
         bcr0 = bcr.bcr0_calculo(conn, eid, r_emp)
-        bcr_ini = bcr.bcr0_inicio(conn, eid, r_emp)        # BCR₀/CMI_BCR del período de inicio (Paso 02)
+        bcr_ini = bcr.cmi_inicio(conn, eid, "bcr", r_emp)   # BCR₀/CMI_BCR del período de inicio (Paso 2)
+        poir_ini = bcr.cmi_inicio(conn, eid, "poir", r_emp)  # VI_POIR₀/CMI_POIR del período de inicio (Paso 3)
+        cmi_det = {"bcr": bcr.cmi_proyecto_detalle(conn, eid, "bcr"),
+                   "poir": bcr.cmi_proyecto_detalle(conn, eid, "poir")}  # detalle por activo (desplegable)
         bcr_params = bcr.params(conn, eid)
         aps_list = conn.execute(text(
             "SELECT a.cod_dane, m.nombre AS municipio FROM aps a LEFT JOIN municipio m ON m.cod_dane=a.cod_dane "
@@ -1671,7 +1674,8 @@ def inversiones(request: Request, eid: int):
         periodo_activo=pa, es_inicio=req.es_inicio(pa["clave"]),
         clasificaciones=inv.CLASIFICACIONES, estados=inv.ESTADOS,
         comp_ac=inv.COMPONENTES_AC, comp_al=inv.COMPONENTES_AL,
-        servicios=servicios, bcr_activos=bcr_activos, bcr0=bcr0, bcr_ini=bcr_ini, bcr_comp=bcr.COMPONENTES,
+        servicios=servicios, bcr_activos=bcr_activos, bcr0=bcr0, bcr_ini=bcr_ini,
+        poir_ini=poir_ini, cmi_det=cmi_det, bcr_comp=bcr.COMPONENTES,
         bcr_serv=bcr.SERVICIOS, bcr_params=bcr_params, bcr_series=bcr_series, bcr_ingresos=bcr_ingresos,
         bcr_tramos=bcr_tramos,
         aps_list=aps_list, aps_nom={a["cod_dane"]: a["municipio"] for a in aps_list},
