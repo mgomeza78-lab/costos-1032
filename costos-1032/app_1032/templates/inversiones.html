@@ -527,6 +527,15 @@ el POIR <b>actualizado</b> (art. 52).</p>
 por <b>año tarifario</b> de la 688. El <b>% de ejecución</b> = VNA(ejecutado)/VNA(planeado), donde el <b>VNA</b> (valor neto
 actual, precios dic-2014) descuenta la serie anual a la tasa de la 688 (r688); el <b>rezago</b> es lo planeado que no se
 ejecutó. Replica la lógica de la hoja de seguimiento del POIR del modelo.</p>
+{% if puede_cargar %}
+<form method="post" action="/empresa/{{ emp.id }}/poir-ejec-anual-csv" enctype="multipart/form-data" class="up-form" style="margin:4px 0 10px">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+  <input type="file" name="archivos" accept=".csv" required>
+  <button class="btn" type="submit">Cargar POIR ejecutado por año</button>
+  <a href="/empresa/{{ emp.id }}/plantilla/poir_ejecutado_anual" class="muted2" style="margin-left:8px">Plantilla</a>
+  <span class="muted2" style="margin-left:8px">columnas: <code>servicio, anio_tarifario, valor_ejecutado</code> ($dic-2014)</span>
+</form>
+{% endif %}
 
 <div class="cards">
   {% for d in poir_cumpl.servicios %}{% if d.hay %}

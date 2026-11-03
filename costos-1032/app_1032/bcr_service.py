@@ -1170,6 +1170,52 @@ def poir_plan_cargar(conn, empresa_id, tramo, contenido, usuario_id=None):
     return ok, err
 
 
+def poir_ejec_anual_cargar(conn, empresa_id, contenido, usuario_id=None):
+    """Carga el valor EJECUTADO del POIR por AÑO TARIFARIO (Paso 4, evaluación de cumplimiento).
+    Reemplaza lo cargado para la empresa. Columnas: servicio, anio_tarifario, valor_ejecutado
+    (a precios dic-2014). Usa el id de la empresa en contexto (no depende de un seed por id fijo)."""
+    import ingesta as _ing
+    rows = _ing._rows(contenido)
+    if not rows:
+        return 0, ["el archivo está vacío o sin encabezado"]
+    cols = set(h for h in rows[0].keys() if h)
+    A_SERV = ("servicio", "serv")
+    A_ANIO = ("anio_tarifario", "anio", "año", "ano", "año_tarifario", "anio_tar")
+    A_VAL = ("valor_ejecutado", "valor", "ejecutado", "valor_ejec", "poir_ejecutado")
+    faltan = [c for c, al in (("servicio", A_SERV), ("anio_tarifario", A_ANIO),
+                              ("valor_ejecutado", A_VAL)) if not (cols & set(al))]
+    if faltan:
+        return 0, ["faltan columnas obligatorias: " + ", ".join(faltan)]
+
+    def _col(r, *names):
+        for n in names:
+            if n in r and (r.get(n) or "").strip() != "":
+                return r.get(n)
+        return None
+
+    conn.execute(text("DELETE FROM poir_ejec_anual WHERE empresa_id=:e"), {"e": empresa_id})
+    ok, err = 0, []
+    for i, r in enumerate(rows, 2):
+        serv = _ing._norm_serv(_col(r, *A_SERV))
+        anio = _ing._int(_col(r, *A_ANIO))
+        val = _ing._num(_col(r, *A_VAL))
+        if not serv:
+            err.append(f"fila {i}: servicio inválido '{_col(r, *A_SERV)}'"); continue
+        if anio is None:
+            err.append(f"fila {i}: año tarifario inválido"); continue
+        try:
+            with conn.begin_nested():
+                conn.execute(text(
+                    "INSERT INTO poir_ejec_anual(empresa_id,servicio,anio_tarifario,valor_ejecutado,cargado_por) "
+                    "VALUES (:e,:s,:a,:v,:u) ON CONFLICT (empresa_id,servicio,anio_tarifario) "
+                    "DO UPDATE SET valor_ejecutado=EXCLUDED.valor_ejecutado, cargado_por=EXCLUDED.cargado_por"),
+                    {"e": empresa_id, "s": serv, "a": anio, "v": val, "u": usuario_id})
+            ok += 1
+        except Exception as ex:
+            err.append(f"fila {i}: {type(ex).__name__}")
+    return ok, err
+
+
 def poir_plan_resumen(conn, empresa_id):
     """POIR planeado por TRAMO del CMI_POIR (Paso 1). Por cada tramo: el total esperado por servicio
     (Paso 1), lo cargado (nº, Σcmi por servicio, validación Σ=total), las filas y la serie por año
