@@ -1645,7 +1645,7 @@ def inversiones(request: Request, eid: int):
         return r
     user = session_user(request)
     sec = request.query_params.get("sec") or "agua"
-    if sec not in ("agua", "bcr", "poir", "poir_ejec", "base", "poir1032", "poir1032_ejec", "activos", "provision", "proyeccion"):
+    if sec not in ("agua", "bcr", "poir", "poir_ejec", "compensacion", "base", "poir1032", "poir1032_ejec", "activos", "provision", "proyeccion"):
         sec = "agua"
     # El POIR del marco 1032 (prospectivo, desde el año 1) se separa del POIR 688 (histórico, inicio).
     marco_sec = "1032" if sec in ("poir1032", "poir1032_ejec") else "688"
@@ -1660,6 +1660,8 @@ def inversiones(request: Request, eid: int):
         bcr_activos = bcr.lista(conn, eid)
         r_emp = float(emp["r"]) if emp["r"] is not None else 0.0903
         bcr0 = bcr.bcr0_calculo(conn, eid, r_emp)
+        comp_det = bcr.compensacion_detalle(conn, eid, r_emp)   # detalle por activo de la compensación (Paso 5)
+        poir_cumpl = bcr.poir_cumplimiento(conn, eid)           # cumplimiento del POIR ejecutado (Paso 4)
         bcr_ini = bcr.cmi_inicio(conn, eid, "bcr", r_emp)   # BCR₀/CMI_BCR del período de inicio (Paso 2)
         poir_ini = bcr.cmi_inicio(conn, eid, "poir", r_emp)  # VI_POIR₀/CMI_POIR del período de inicio (Paso 3)
         cmi_det = {"bcr": bcr.cmi_proyecto_detalle(conn, eid, "bcr"),
@@ -1690,6 +1692,7 @@ def inversiones(request: Request, eid: int):
         aps_list=aps_list, aps_nom={a["cod_dane"]: a["municipio"] for a in aps_list},
         bcr_mods=bcr_mods, bcr_cmi=bcr_cmi, cmi_proy=cmi_proy, poir_plan=poir_plan,
         poir_desv=poir_desv, cumpl=cumpl, proy=proy, r_emp=r_emp,
+        comp_det=comp_det, poir_cumpl=poir_cumpl,
         puede_cargar=rbac.can(user, "cargar_mensual")))
 
 

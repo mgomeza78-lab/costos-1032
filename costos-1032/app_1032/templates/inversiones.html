@@ -21,6 +21,7 @@
   <a class="paso {{ 'on' if sec=='bcr' }}" href="/empresa/{{ emp.id }}/inversiones?sec=bcr">BCR de inicio</a>
   <a class="paso {{ 'on' if sec=='poir' }}" href="/empresa/{{ emp.id }}/inversiones?sec=poir">POIR 688 planeado</a>
   <a class="paso {{ 'on' if sec=='poir_ejec' }}" href="/empresa/{{ emp.id }}/inversiones?sec=poir_ejec">POIR 688 ejecutado</a>
+  <a class="paso {{ 'on' if sec=='compensacion' }}" href="/empresa/{{ emp.id }}/inversiones?sec=compensacion">Compensación de la base</a>
   <a class="paso {{ 'on' if sec=='base' }}" href="/empresa/{{ emp.id }}/inversiones?sec=base">Base de capital y CMI</a>
   <a class="paso {{ 'on' if sec=='proyeccion' }}" href="/empresa/{{ emp.id }}/inversiones?sec=proyeccion">Proyección del CMI</a>
   {% endif %}
@@ -519,6 +520,76 @@ el POIR <b>actualizado</b> (art. 52).</p>
 <p class="muted2" style="margin:2px 0 0">Ejecutado = Σ CMI de los activos cargados aquí (= CMI_POIR cobrado del Paso 1). Planeado = Σ CMI del POIR del Paso 3.</p>
 {% endif %}
 
+{# ---- Evaluación del cumplimiento de la ejecución del POIR (por servicio) ---- #}
+{% if poir_cumpl and poir_cumpl.servicios %}
+<h3 class="serv-h" style="margin-top:22px">Cumplimiento de la ejecución del POIR <span class="muted2">· planeado vs. ejecutado por servicio</span></h3>
+<p class="muted2">Compara el POIR <b>planeado</b> (POIR actualizado, Paso 3) contra el <b>ejecutado</b> (registro de ejecución),
+por <b>año tarifario</b> de la 688. El <b>% de ejecución</b> = VNA(ejecutado)/VNA(planeado), donde el <b>VNA</b> (valor neto
+actual, precios dic-2014) descuenta la serie anual a la tasa de la 688 (r688); el <b>rezago</b> es lo planeado que no se
+ejecutó. Replica la lógica de la hoja de seguimiento del POIR del modelo.</p>
+
+<div class="cards">
+  {% for d in poir_cumpl.servicios %}{% if d.hay %}
+  <div class="card">
+    <div class="k">{{ bcr_serv[d.servicio] }} · % de ejecución</div>
+    <div class="v" style="font-size:24px">{{ (d.pct*100)|round(2) ~ ' %' if d.pct is not none else '—' }}</div>
+    <div style="margin:6px 0">{{ bar((d.pct*100) if d.pct is not none else 0, 'var(--good)' if (d.pct and d.pct>=0.8) else 'var(--amber)') }}</div>
+    <div class="muted2">VNA planeado {{ d.vna_plan|valor('$') }} · VNA ejecutado {{ d.vna_ejec|valor('$') }}</div>
+    <div class="muted2">rezago (VNA) {{ d.rezago_vna|valor('$') }} · r688 {{ (d.r688*100)|round(2) ~ ' %' if d.r688 is not none else '—' }}</div>
+  </div>
+  {% endif %}{% endfor %}
+  {% if poir_cumpl.consolidado and poir_cumpl.consolidado.hay %}{% set c = poir_cumpl.consolidado %}
+  <div class="card" style="border-color:#0b7a6b">
+    <div class="k">Consolidado · % de ejecución</div>
+    <div class="v" style="font-size:24px">{{ (c.pct*100)|round(2) ~ ' %' if c.pct is not none else '—' }}</div>
+    <div style="margin:6px 0">{{ bar((c.pct*100) if c.pct is not none else 0, '#0b7a6b') }}</div>
+    <div class="muted2">VNA planeado {{ c.vna_plan|valor('$') }} · VNA ejecutado {{ c.vna_ejec|valor('$') }}</div>
+    <div class="muted2">rezago (VNA) {{ c.rezago_vna|valor('$') }}</div>
+  </div>
+  {% endif %}
+</div>
+
+<div style="display:flex;gap:14px;flex-wrap:wrap;margin:12px 0 2px">
+  <span class="muted2" style="font-size:12px"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#0b7a6b;margin-right:5px;vertical-align:middle"></span>Planeado</span>
+  <span class="muted2" style="font-size:12px"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#c77d11;margin-right:5px;vertical-align:middle"></span>Ejecutado</span>
+</div>
+{% for d in poir_cumpl.servicios %}{% if d.hay %}
+<div style="margin-top:8px"><b class="muted2">{{ bcr_serv[d.servicio] }}</b> <span class="muted2" style="font-size:11px">· valor por año tarifario (M$ dic-2014)</span>
+  <div style="display:flex;align-items:flex-end;gap:10px;height:150px;border-bottom:1px solid var(--line);padding-bottom:2px;margin-top:4px">
+    {% for pt in d.serie %}
+    <div style="flex:1;display:flex;align-items:flex-end;justify-content:center;gap:3px;height:100%">
+      <div title="Año {{ pt.anio }} · planeado: {{ pt.plan|valor('$') if pt.plan is not none else '—' }}" style="flex:1;max-width:42%;background:#0b7a6b;border-radius:3px 3px 0 0;height:{{ (pt.plan/d.anios_max*100)|round(1) if (d.anios_max and pt.plan) else 0 }}%;min-height:1px"></div>
+      <div title="Año {{ pt.anio }} · ejecutado: {{ pt.ejec|valor('$') if pt.ejec is not none else '—' }}" style="flex:1;max-width:42%;background:#c77d11;border-radius:3px 3px 0 0;height:{{ (pt.ejec/d.anios_max*100)|round(1) if (d.anios_max and pt.ejec) else 0 }}%;min-height:1px"></div>
+    </div>
+    {% endfor %}
+  </div>
+  <div style="display:flex;gap:10px;margin-top:2px">
+    {% for pt in d.serie %}<div style="flex:1;text-align:center" class="muted2"><small>{{ pt.anio }}</small></div>{% endfor %}
+  </div>
+</div>
+{% endif %}{% endfor %}
+
+<details style="margin:12px 0 2px">
+  <summary class="muted2" style="cursor:pointer">Detalle por año tarifario (planeado, ejecutado y rezago)</summary>
+  <div style="overflow-x:auto"><table class="tabla" style="margin-top:6px">
+    <thead><tr><th>Servicio</th><th class="c">Año</th><th class="r">Planeado (M$)</th><th class="r">Ejecutado (M$)</th><th class="r">Rezago (M$)</th></tr></thead>
+    <tbody>
+      {% for d in poir_cumpl.servicios %}{% if d.hay %}{% for pt in d.serie %}
+      <tr><td>{% if loop.first %}{{ bcr_serv[d.servicio] }}{% endif %}</td><td class="c">{{ pt.anio }}</td>
+        <td class="num">{{ pt.plan|millones(1) if pt.plan is not none else '—' }}</td>
+        <td class="num">{{ pt.ejec|millones(1) if pt.ejec is not none else '—' }}</td>
+        <td class="num">{{ ((pt.plan or 0) - (pt.ejec or 0))|millones(1) }}</td></tr>
+      {% endfor %}
+      <tr style="font-weight:600;background:#f6f3ea"><td>{{ bcr_serv[d.servicio] }} · total</td><td class="c">1–{{ poir_cumpl.anios|last }}</td>
+        <td class="num">{{ d.tot_plan|millones(1) }}</td><td class="num">{{ d.tot_ejec|millones(1) }}</td>
+        <td class="num">{{ d.rezago_nom|millones(1) }}</td></tr>
+      {% endif %}{% endfor %}
+    </tbody>
+  </table></div>
+  <p class="muted2" style="margin:4px 0 0">Nominal a precios dic-2014 (M$). El <b>% de ejecución</b> se calcula sobre el <b>VNA</b> (serie descontada al r688), no sobre el nominal. Rezago = planeado − ejecutado.</p>
+</details>
+{% endif %}
+
 <h3 class="serv-h" style="margin-top:22px">Seguimiento de ejecución (para el recálculo)</h3>
 <p class="muted2">Registra la <b>ejecución real</b> de los proyectos del POIR y revisa el nivel de cumplimiento
 por año tarifario. Al superar el <b>80 %</b> de ejecución y entrar en operación, el valor incurrido se
@@ -568,6 +639,82 @@ BCR del año siguiente; la no ejecución activa el mecanismo de provisión que l
 del quinto año tarifario.</p>
 {% else %}<p class="empty">Aún no hay plan ni ejecución para evaluar el cumplimiento.</p>{% endif %}
 {% endif %}{# fin sec=poir_ejec #}
+
+{# ===================== PASO 5 · COMPENSACIÓN DE LA BASE DE CAPITAL ===================== #}
+{% if sec=='compensacion' %}
+<h2 class="serv-h">Paso 5 · Compensación de la base de capital</h2>
+<p class="muted2">La base de capital se arma con el <b>VA₀</b> de cada activo (VPR₀ capitalizado × fa0; Pasos 2 y 3). El
+<b>art. 2.1.2.1.5.2.1.1</b> ordena <b>descontar los VA₀ⱼ negativos</b> (sobre-recuperación: lo que la tarifa 688 recaudó
+de más, típicamente POIR cobrado nivelado que no se ejecutó, con VIA688 = 0) <b>contra los activos positivos del mismo
+servicio y componente</b>, por <b>orden de prelación de menor PRR primero</b> —para absorber la sobre-recuperación en
+los activos que están por salir de la base—. Un activo <b>«desaparece»</b> cuando el descuento asignado cancela su VA₀
+bruto (VA₀ compensado = 0). De aquí sale la <b>BCR₀ compensada</b> que consolida el
+<a href="/empresa/{{ emp.id }}/inversiones?sec=base">Paso 6</a>.</p>
+
+{% for s in servicios %}{% set d = comp_det.get(s) %}
+<h3 class="serv-h" style="margin-top:16px">{{ bcr_serv[s] }}</h3>
+{% if not d or not d.n_activos %}
+<p class="empty">Aún no hay activos de base cargados para {{ bcr_serv[s] }} (se derivan de los Pasos 2 y 3).</p>
+{% else %}
+  <div class="cards">
+    <div class="card"><div class="k">BCR₀ compensada</div><div class="v">{{ d.bcr|valor('$') }}</div>
+      <div class="muted2">base de capital tras compensar</div></div>
+    <div class="card"><div class="k">Descuento total · VA₀ negativos</div><div class="v">{{ d.descuento|valor('$') }}</div>
+      <div class="muted2">{{ 'sobre-recuperación a absorber' if d.hay_negativos else 'no hay sobre-recuperación' }}</div></div>
+    <div class="card"><div class="k">Activos que desaparecen</div><div class="v">{{ d.n_desaparecen }}</div>
+      <div class="muted2">absorbidos por completo (VA₀ comp. = 0)</div></div>
+  </div>
+  {% if not d.hay_negativos %}
+  <p class="hint" style="margin-top:6px">No hay <b>valores pendientes negativos</b> en {{ bcr_serv[s] }}: no hay compensación por aplicar en el
+  período de inicio. La base de capital es la <b>suma de los VA₀ positivos</b> (VA₀ compensado = VA₀ bruto en todos los activos).</p>
+  {% endif %}
+  {% for k, g in d.componentes.items() if (g.n_pos or g.n_neg) %}
+  <div style="border:1px solid #e7e2d4;border-radius:8px;padding:8px 10px;margin:8px 0">
+    <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;align-items:center">
+      <span><b>Componente {{ k }}</b> <span class="muted2">· {{ bcr_comp[k] }}</span></span>
+      <span class="muted2">{{ g.n_pos }} positivo(s) · {{ g.n_neg }} negativo(s) · descuento {{ g.descuento_total|valor('$') }} · BCR₀ {{ g.bcr|valor('$') }}</span>
+    </div>
+    {% if g.n_neg %}
+    <details style="margin:6px 0 2px" open>
+      <summary class="muted2" style="cursor:pointer">Sobre-recuperación (VA₀ negativo) que se reparte como descuento ({{ g.n_neg }})</summary>
+      <div style="overflow-x:auto"><table class="tabla" style="margin-top:6px">
+        <thead><tr><th>ID</th><th>Activo</th><th>Origen</th><th class="r">VIA688 (M$)</th><th class="r">VPR₀ (M$)</th><th class="r">VA₀ bruto (M$)</th></tr></thead>
+        <tbody>{% for a in g.negativos %}
+          <tr><td class="comp">{{ a.id }}</td><td>{{ a.nombre or '—' }}</td><td class="muted2">{{ a.origen or '—' }}</td>
+            <td class="num">{{ a.via688|millones(1) if a.via688 is not none else '—' }}</td>
+            <td class="num">{{ a.vpr0|millones(1) if a.vpr0 is not none else '—' }}</td>
+            <td class="num" style="color:#b5342b">{{ a.va0|millones(1) }}</td></tr>
+        {% endfor %}</tbody>
+      </table></div>
+    </details>
+    {% endif %}
+    <details style="margin:6px 0 2px"{{ ' open' if g.n_neg else '' }}>
+      <summary class="muted2" style="cursor:pointer">Valor pendiente por recuperar (VA₀ positivo): prelación y compensación ({{ g.n_pos }})</summary>
+      <div style="overflow-x:auto"><table class="tabla" style="margin-top:6px">
+        <thead><tr><th class="c">Prelación</th><th>ID</th><th>Activo</th><th class="r">PRR</th>
+          <th class="r">VA₀ bruto (M$)</th><th class="r">Descuento (M$)</th><th class="r">VA₀ compensado (M$)</th><th class="c">Estado</th></tr></thead>
+        <tbody>{% for a in g.positivos|sort(attribute='orden') %}
+          <tr><td class="c">{{ a.orden }}</td><td class="comp">{{ a.id }}</td><td>{{ a.nombre or '—' }}</td>
+            <td class="num">{{ a.prr|round(1) if a.prr is not none else '—' }}</td>
+            <td class="num">{{ a.va0|millones(1) }}</td>
+            <td class="num">{{ a.descuento|millones(1) if a.descuento else '—' }}</td>
+            <td class="num">{{ a.va0_comp|millones(1) }}</td>
+            <td class="c">{% if a.desaparece %}<span style="background:#fde2e0;color:#b5342b;padding:1px 7px;border-radius:7px;font-size:11px">desaparece</span>{% elif a.descuento %}<span style="background:#fdf1d7;color:#8a6d1f;padding:1px 7px;border-radius:7px;font-size:11px">reducido</span>{% else %}<span class="muted2">íntegro</span>{% endif %}</td></tr>
+        {% endfor %}</tbody>
+      </table></div>
+    </details>
+  </div>
+  {% endfor %}
+{% endif %}
+{% endfor %}
+
+<p class="muted2" style="margin-top:12px"><b>Nota regulatoria.</b> La compensación opera <b>por componente y servicio</b> (art. 2.1.2.1.5.2.1.1):
+los negativos de un componente solo se descuentan contra los positivos del mismo componente. Los <b>activos
+administrativos y operativos</b> (<a href="/empresa/{{ emp.id }}/inversiones?sec=activos">sección aparte</a>) no provienen
+del CMI de la 688 y no pudieron sobre-recuperar: entran a la base <b>sin reparto</b> (descuento cero, sin prelación). El
+<b>PRR₀</b> de cada activo sigue el parágrafo 2 del art. 2.1.2.1.3.5.12 (VUR − t para la base 688; PR − TO para el POIR),
+redondeado al entero mayor (art. 2.1.2.1.3.5.11). Montos en <b>millones</b> de pesos dic-2025 (M$).</p>
+{% endif %}{# fin sec=compensacion #}
 
 {# ===================== PASO 6 · BASE DE CAPITAL Y CMI DE REFERENCIA ===================== #}
 {% if sec=='base' %}

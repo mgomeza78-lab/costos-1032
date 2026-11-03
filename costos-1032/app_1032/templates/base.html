@@ -52,6 +52,7 @@
           {% if req.aplica(pc,'bcr0') %}<li><a class="link {{ 'active' if en_bcr and sec|default('')=='bcr' }}" href="/empresa/{{ emp.id }}/inversiones?sec=bcr">BCR de inicio</a></li>{% endif %}
           {% if req.aplica(pc,'poir688_plan') %}<li><a class="link {{ 'active' if en_bcr and sec|default('')=='poir' }}" href="/empresa/{{ emp.id }}/inversiones?sec=poir">POIR 688 · planeado</a></li>{% endif %}
           {% if req.aplica(pc,'poir688_ejec') %}<li><a class="link {{ 'active' if en_bcr and sec|default('')=='poir_ejec' }}" href="/empresa/{{ emp.id }}/inversiones?sec=poir_ejec">POIR 688 · ejecutado</a></li>{% endif %}
+          {% if req.aplica(pc,'bcr0') %}<li><a class="link {{ 'active' if en_bcr and sec|default('')=='compensacion' }}" href="/empresa/{{ emp.id }}/inversiones?sec=compensacion">Compensación de la base</a></li>{% endif %}
           {% if req.aplica(pc,'bcr0') %}<li><a class="link {{ 'active' if en_bcr and sec|default('')=='base' }}" href="/empresa/{{ emp.id }}/inversiones?sec=base">Base de capital y CMI</a></li>{% endif %}
           {% if req.aplica(pc,'bcr0') %}<li><a class="link {{ 'active' if en_bcr and sec|default('')=='proyeccion' }}" href="/empresa/{{ emp.id }}/inversiones?sec=proyeccion">Proyección del CMI</a></li>{% endif %}
           {% if req.aplica(pc,'poir1032_plan') %}<li><a class="link {{ 'active' if en_bcr and sec|default('')=='poir1032' }}" href="/empresa/{{ emp.id }}/inversiones?sec=poir1032">POIR 1032 · plan de inversiones</a></li>{% endif %}

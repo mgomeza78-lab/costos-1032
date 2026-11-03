@@ -781,20 +781,24 @@ def via_de_ejecucion(a, r688):
     return None
 
 
-def bcr0_calculo(conn, empresa_id, r_emp=None):
-    """BCR₀ por servicio y componente con compensación de VA₀<0 (art. 2.1.2.1.5.2.1.1).
+def compensacion_detalle(conn, empresa_id, r_emp=None):
+    """Detalle POR ACTIVO de la compensación de la base de capital (art. 2.1.2.1.5.2.1.1).
 
-    VA₀ por activo = va0 almacenado, o VPR₀·(1+r688)^t·fa0, o (fallback) valor_pendiente.
-    Compensa negativos contra positivos del mismo servicio+componente (prioridad menor PRR).
-    CI = Σcak + BCR₀·r; CMI_BCR = CI/CCP.
-    """
+    Los VA₀ⱼ NEGATIVOS (sobre-recuperación: lo que la tarifa 688 recaudó de más, típicamente
+    POIR cobrado nivelado que no se ejecutó, con VIA688=0) se descuentan contra los activos
+    POSITIVOS del mismo servicio y componente, por ORDEN DE PRELACIÓN de menor PRR primero
+    —para absorber la sobre-recuperación en los activos que están por salir de la base—. Un
+    activo "desaparece" de la base cuando su descuento asignado cancela su VA₀ bruto (VA₀
+    compensado = 0). Expone por activo: VIA688, VPR₀, VA₀ bruto, PRR, orden de prelación,
+    descuento asignado y VA₀ compensado; y por servicio/componente los totales, la BCR₀
+    compensada y cuántos desaparecen. Misma derivación del VA₀ que la base (VA₀ⱼ =
+    VPR₀ⱼ·(1+r688)^t·fa0; VPR₀ = VIA − VP(CMI×Q) si no viene explícito). Fuente única de verdad:
+    de aquí deriva bcr0_calculo sus agregados."""
     emp_row = conn.execute(text(
         "SELECT r, suscriptores_seg, fecha_inicio_688, fecha_inicio_1032 FROM empresa WHERE id=:e"),
         {"e": empresa_id}).mappings().first()
     if r_emp is None:
         r_emp = float(emp_row["r"]) if (emp_row and emp_row["r"] is not None) else 0.0
-    # Valores que ya no se digitan: el r688 lo da el segmento de la 688; los IPC salen de la
-    # tabla; la fecha de inicio 688, de la empresa; el CCP, de los consumos del año base.
     seg688 = segmento_688(emp_row["suscriptores_seg"]) if emp_row else None
     r688_auto = r688_de_segmento(seg688)
     i14, i25 = ipc_dic(conn, 2014), ipc_dic(conn, 2025)
@@ -822,10 +826,12 @@ def bcr0_calculo(conn, empresa_id, r_emp=None):
         suma_via = sum(via_de_ejecucion(a, r688) or 0.0 for a in activos
                        if a["servicio"] == s and a["vpr0"] is None and a["va0"] is None
                        and not (a["codigo"] and a["codigo"] in cmi_cod))
-        comp = {1: {"pos": [], "neg": 0.0}, 2: {"pos": [], "neg": 0.0}, 3: {"pos": [], "neg": 0.0}}
+        comp = {1: {"pos": [], "neg": []}, 2: {"pos": [], "neg": []}, 3: {"pos": [], "neg": []}}
         for a in activos:
             if a["servicio"] != s:
                 continue
+            via688 = via_de_ejecucion(a, r688)
+            vpr0 = float(a["vpr0"]) if a["vpr0"] is not None else None
             va0 = a["va0"]
             if va0 is None and a["vpr0"] is not None and r688 is not None and t is not None and fa0 is not None:
                 va0 = float(a["vpr0"]) * ((1 + r688) ** t) * fa0
@@ -833,14 +839,18 @@ def bcr0_calculo(conn, empresa_id, r_emp=None):
             if (va0 is None and a["vpr0"] is None and a["codigo"] and r688 is not None
                     and t is not None and fa0 is not None):
                 vpq = vp_cmi_q_activo(a["codigo"], mods, cmi_cod, serie_q, r688, fecha_inicio)
-                via = via_de_ejecucion(a, r688)
+                via = via688
                 if vpq is not None and via is not None:
                     va0 = (via - vpq) * ((1 + r688) ** t) * fa0
+                    if vpr0 is None:
+                        vpr0 = via - vpq
             # Fallback: VIA688 sin VPR₀, repartiendo el VP de ingresos agregado por VIA
             if (va0 is None and a["vpr0"] is None and a["via688"] is not None and vping is not None
                     and suma_via and r688 is not None and t is not None and fa0 is not None):
                 vp_j = vping * (float(a["via688"]) / suma_via)
                 va0 = (float(a["via688"]) - vp_j) * ((1 + r688) ** t) * fa0
+                if vpr0 is None:
+                    vpr0 = float(a["via688"]) - vp_j
             if va0 is None:
                 va0 = a["valor_pendiente"]
             if va0 is None:
@@ -849,32 +859,46 @@ def bcr0_calculo(conn, empresa_id, r_emp=None):
             prr = float(a["plazo_remanente"]) if a["plazo_remanente"] is not None else None
             ca = float(a["cuota_anual"]) if a["cuota_anual"] is not None else None
             k = a["componente"] if a["componente"] in comp else 3
-            if va0 >= 0:
-                comp[k]["pos"].append({"va0": va0, "prr": prr, "ca": ca})
-            else:
-                comp[k]["neg"] += -va0
-        serv = {"bcr": 0.0, "cak": 0.0, "descuento": 0.0, "comp": {}}
+            item = {"id": a["id"], "nombre": a["nombre"], "origen": a["origen"], "componente": k,
+                    "via688": via688, "vpr0": vpr0, "va0": va0, "prr": prr, "ca": ca}
+            (comp[k]["pos"] if va0 >= 0 else comp[k]["neg"]).append(item)
+        serv = {"componentes": {}, "bcr": 0.0, "cak": 0.0, "descuento": 0.0, "n_desaparecen": 0}
+        hay_neg = False
         for k, g in comp.items():
-            negtot = g["neg"]
-            serv["descuento"] += negtot
-            # compensar: absorber negativos en positivos, prioridad menor PRR
-            for a in sorted(g["pos"], key=lambda x: (x["prr"] if x["prr"] is not None else 1e9), reverse=False):
-                if negtot <= 0:
-                    a["va0d"] = a["va0"]
-                    continue
-                take = min(a["va0"], negtot)
-                a["va0d"] = a["va0"] - take
-                negtot -= take
-            bcr_k = sum(a["va0d"] for a in g["pos"])
+            desc_total = sum(-x["va0"] for x in g["neg"])
+            if desc_total > 0:
+                hay_neg = True
+            # compensar: absorber los negativos en los positivos, prioridad de menor PRR
+            neg = desc_total
+            orden = 0
+            for a in sorted(g["pos"], key=lambda x: (x["prr"] if x["prr"] is not None else 1e9)):
+                orden += 1
+                a["orden"] = orden
+                if neg <= 0:
+                    a["descuento"] = 0.0
+                    a["va0_comp"] = a["va0"]
+                else:
+                    take = min(a["va0"], neg)
+                    a["descuento"] = take
+                    a["va0_comp"] = a["va0"] - take
+                    neg -= take
+                a["desaparece"] = (a["va0_comp"] <= 1e-6 and a["va0"] > 0)
+            bcr_k = sum(a["va0_comp"] for a in g["pos"])
             cak_k = 0.0
             for a in g["pos"]:
                 if a["ca"] is not None:
                     cak_k += a["ca"]
                 elif a["prr"] and a["prr"] > 0:
-                    cak_k += a["va0d"] / a["prr"]
-            serv["comp"][k] = {"bcr": bcr_k, "cak": cak_k, "n": len(g["pos"])}
+                    cak_k += a["va0_comp"] / a["prr"]
+            ndes = sum(1 for a in g["pos"] if a.get("desaparece"))
+            serv["componentes"][k] = {"positivos": g["pos"], "negativos": g["neg"],
+                                       "descuento_total": desc_total, "bcr": bcr_k, "cak": cak_k,
+                                       "n_pos": len(g["pos"]), "n_neg": len(g["neg"]),
+                                       "n_desaparecen": ndes, "sin_absorber": neg}
             serv["bcr"] += bcr_k
             serv["cak"] += cak_k
+            serv["descuento"] += desc_total
+            serv["n_desaparecen"] += ndes
         serv["ci"] = serv["cak"] + serv["bcr"] * r_emp
         serv["cmi_bcr"] = (serv["ci"] / ccp) if ccp else None
         serv["ccp"] = ccp
@@ -884,12 +908,36 @@ def bcr0_calculo(conn, empresa_id, r_emp=None):
         serv["vp_ingresos"] = vping
         serv["seg688"] = seg688
         serv["sin_param"] = r688 is None          # sin r688 (segmento 688) no se puede derivar el VA₀
+        serv["hay_negativos"] = hay_neg
+        serv["n_activos"] = sum(c["n_pos"] + c["n_neg"] for c in serv["componentes"].values())
         out[s] = serv
     out["_r"] = r_emp
     out["_seg688"] = seg688
     out["_ipc_14"] = float(i14) if i14 else None
     out["_ipc_25"] = float(i25) if i25 else None
     out["_fecha_688"] = str(fecha_auto) if fecha_auto else None
+    return out
+
+
+def bcr0_calculo(conn, empresa_id, r_emp=None):
+    """BCR₀ por servicio y componente con compensación de VA₀<0 (art. 2.1.2.1.5.2.1.1).
+
+    Agregado por servicio y componente derivado del detalle por activo (compensacion_detalle),
+    única fuente de verdad de la compensación. CI = Σcak + BCR₀·r; CMI_BCR = CI/CCP."""
+    det = compensacion_detalle(conn, empresa_id, r_emp)
+    out = {}
+    for s in ("acueducto", "alcantarillado"):
+        d = det.get(s)
+        if not d:
+            continue
+        comp = {k: {"bcr": v["bcr"], "cak": v["cak"], "n": v["n_pos"]}
+                for k, v in d["componentes"].items()}
+        out[s] = {"bcr": d["bcr"], "cak": d["cak"], "descuento": d["descuento"], "comp": comp,
+                  "ci": d["ci"], "cmi_bcr": d["cmi_bcr"], "ccp": d["ccp"], "r688": d["r688"],
+                  "t": d["t"], "fa0": d["fa0"], "vp_ingresos": d["vp_ingresos"],
+                  "seg688": d["seg688"], "sin_param": d["sin_param"]}
+    for gk in ("_r", "_seg688", "_ipc_14", "_ipc_25", "_fecha_688"):
+        out[gk] = det.get(gk)
     return out
 
 
@@ -1206,6 +1254,81 @@ def poir_desviacion(conn, empresa_id):
         if any(sv["hay"] for sv in servs):
             out.append({"idx": tr["idx"], "desde": tr["desde"], "hasta": tr["hasta"], "etiqueta": tr.get("etiqueta", ""),
                         "servicios": servs})
+    return out
+
+
+def poir_cumplimiento(conn, empresa_id):
+    """Evaluación del CUMPLIMIENTO del POIR ejecutado frente al planeado, por servicio (Paso 4).
+
+    Planeado por año = Σ valor_poir del POIR planeado (poir_plan, último tramo = actualizado,
+    art. 52 Res. 688) agrupado por año tarifario. Ejecutado por año = valor ejecutado del
+    registro de ejecución (poir_ejec_anual). El VNA (valor neto actual, precios dic-2014) de
+    cada serie = NPV(r688, serie años 1..10) = Σ v_año/(1+r688)^año. % de ejecución =
+    VNA_ejec/VNA_plan; rezago = planeado − ejecutado, en VNA y nominal (hoja 06_Seguimiento del
+    modelo). Devuelve por servicio la serie por año, los VNA, el % y el rezago, más el consolidado."""
+    emp_row = conn.execute(text(
+        "SELECT suscriptores_seg FROM empresa WHERE id=:e"), {"e": empresa_id}).mappings().first()
+    seg688 = segmento_688(emp_row["suscriptores_seg"]) if emp_row else None
+    r688_auto = r688_de_segmento(seg688)
+    ps = params(conn, empresa_id)
+    servs = _servicios_empresa(conn, empresa_id)
+    utramo = conn.execute(text("SELECT max(tramo) FROM poir_plan WHERE empresa_id=:e"),
+                          {"e": empresa_id}).scalar()
+    plan = {}
+    if utramo is not None:
+        for s, y, v in conn.execute(text(
+                "SELECT servicio, anio_planeado, coalesce(sum(valor_poir),0) FROM poir_plan "
+                "WHERE empresa_id=:e AND tramo=:t AND anio_planeado IS NOT NULL "
+                "GROUP BY servicio, anio_planeado"), {"e": empresa_id, "t": utramo}).all():
+            plan[(s, int(y))] = float(v)
+    ejec = {}
+    for s, y, v in conn.execute(text(
+            "SELECT servicio, anio_tarifario, valor_ejecutado FROM poir_ejec_anual WHERE empresa_id=:e"),
+            {"e": empresa_id}).all():
+        if v is not None:
+            ejec[(s, int(y))] = float(v)
+    anios = sorted({y for (_, y) in plan} | {y for (_, y) in ejec})
+
+    def _serie(getter_plan, getter_ejec, r688):
+        serie, vna_p, vna_e, tot_p, tot_e, mx = [], 0.0, 0.0, 0.0, 0.0, 0.0
+        for y in anios:
+            vp, ve = getter_plan(y), getter_ejec(y)
+            serie.append({"anio": y, "plan": vp, "ejec": ve})
+            if vp is not None:
+                tot_p += vp; mx = max(mx, vp)
+                if r688 is not None:
+                    vna_p += vp / ((1 + r688) ** y)
+            if ve is not None:
+                tot_e += ve; mx = max(mx, ve)
+                if r688 is not None:
+                    vna_e += ve / ((1 + r688) ** y)
+        pct = (vna_e / vna_p) if vna_p else None
+        return {"serie": serie, "vna_plan": vna_p, "vna_ejec": vna_e, "pct": pct,
+                "rezago_vna": vna_p - vna_e, "tot_plan": tot_p, "tot_ejec": tot_e,
+                "rezago_nom": tot_p - tot_e, "anios_max": mx,
+                "hay": bool(serie) and (tot_p > 0 or tot_e > 0)}
+
+    out = {"servicios": [], "anios": anios}
+    cons_plan, cons_ejec, cons_r688 = {}, {}, None
+    for s in servs:
+        p = ps.get(s)
+        r688 = float(p["r688"]) if (p and p["r688"] is not None) else r688_auto
+        if r688 is not None:
+            cons_r688 = r688
+        for y in anios:
+            if plan.get((s, y)) is not None:
+                cons_plan[y] = cons_plan.get(y, 0.0) + plan[(s, y)]
+            if ejec.get((s, y)) is not None:
+                cons_ejec[y] = cons_ejec.get(y, 0.0) + ejec[(s, y)]
+        d = _serie(lambda y, s=s: plan.get((s, y)), lambda y, s=s: ejec.get((s, y)), r688)
+        d["servicio"] = s
+        d["r688"] = r688
+        out["servicios"].append(d)
+    if cons_r688 is not None and (cons_plan or cons_ejec):
+        out["consolidado"] = _serie(lambda y: cons_plan.get(y), lambda y: cons_ejec.get(y), cons_r688)
+        out["consolidado"]["r688"] = cons_r688
+    else:
+        out["consolidado"] = None
     return out
 
 
