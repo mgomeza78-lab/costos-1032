@@ -955,35 +955,38 @@ def cmi_inicio(conn, empresa_id, tipo="bcr", r_emp=None):
         sin_serie = total01 is None               # cargado sin serie del Paso 01 para validar
         tol = max(0.01, 0.0005 * abs(total01)) if total01 else 0.01
         ok = (suma_cmi is not None and total01 is not None and abs(suma_cmi - total01) <= tol)
-        # Cadena de valores del soporte (dic-2014 → dic-2025 → capitalizado), separada por el signo
-        # del VPR₀ — es el resumen que se muestra en los Pasos 2/3 (sin compensar todavía):
-        #   VIA688 (activo) − VP(CMI·Q) (ingresos) = VPR₀ [dic-2014];
-        #   VPR₀·fa0 [dic-2025]; VA₀ = VPR₀·fa0·(1+r688)^t [capitalizado].
-        cad = {"pos": {"n": 0, "via": 0.0, "vp": 0.0, "vpr0": 0.0, "vpr0_25": 0.0, "va0": 0.0},
-               "neg": {"n": 0, "via": 0.0, "vp": 0.0, "vpr0": 0.0, "vpr0_25": 0.0, "va0": 0.0}}
-        ok25 = fa0 is not None                                   # se puede llevar a dic-2025
-        okva0 = (fa0 is not None and r688 is not None and t is not None)  # se puede capitalizar
+        # Cadena de valores del soporte, tal como la calcula el modelo (hojas 06_5 / 06_BCR0),
+        # separada por el signo del VPR₀. Es el resumen que se muestra en los Pasos 2/3 (antes de
+        # compensar):
+        #   VIA688 (activo, dic-2014) − VP(CMI·Q) (ingresos, dic-2014) = diferencia [dic-2014];
+        #   VPR₀ = diferencia × (1+r688)^t  [dic-2014, capitalizado — hoja 06_5 'VPR_DIF0'];
+        #   VA₀ = VPR₀ × fa0  [dic-2025].
+        # El VPR₀ cargado ya viene capitalizado (06_5, col VPR_DIF0 = (VIA−VP)×(1+r)^10), así que se
+        # usa directamente; solo se recalcula desde la diferencia como respaldo si faltara.
+        cad = {"pos": {"n": 0, "via": 0.0, "vp": 0.0, "dif": 0.0, "vpr0": 0.0, "va0": 0.0},
+               "neg": {"n": 0, "via": 0.0, "vp": 0.0, "dif": 0.0, "vpr0": 0.0, "va0": 0.0}}
+        okva0 = fa0 is not None                                   # VA₀ = VPR₀·fa0 requiere fa0
         pos, neg, con_soporte = [], 0.0, False
         for r in rs:
-            # VPR₀ = valor del activo − VP de los ingresos (art. 2.1.2.1.3.5.6). Se calcula como la
-            # diferencia cuando se tienen ambos; el VPR₀ cargado explícito solo se usa como respaldo.
-            if r["valor_via688"] is not None and r["vp_cmi_q"] is not None:
-                vpr0 = float(r["valor_via688"]) - float(r["vp_cmi_q"])
-            elif r["vpr0"] is not None:
-                vpr0 = float(r["vpr0"])
-            else:
+            via = float(r["valor_via688"]) if r["valor_via688"] is not None else None
+            vp = float(r["vp_cmi_q"]) if r["vp_cmi_q"] is not None else None
+            dif = (via - vp) if (via is not None and vp is not None) else None
+            vpr0 = float(r["vpr0"]) if r["vpr0"] is not None else None   # ya capitalizado (06_5)
+            if vpr0 is None and dif is not None and r688 is not None and t is not None:
+                vpr0 = dif * ((1 + r688) ** t)                            # respaldo: capitaliza
+            if vpr0 is None:
                 continue
             g = cad["pos"] if vpr0 >= 0 else cad["neg"]
             g["n"] += 1
-            if r["valor_via688"] is not None:
-                g["via"] += float(r["valor_via688"])
-            if r["vp_cmi_q"] is not None:
-                g["vp"] += float(r["vp_cmi_q"])
+            if via is not None:
+                g["via"] += via
+            if vp is not None:
+                g["vp"] += vp
+            if dif is not None:
+                g["dif"] += dif
             g["vpr0"] += vpr0
-            if ok25:
-                g["vpr0_25"] += vpr0 * fa0
             if okva0:
-                va0 = vpr0 * fa0 * ((1 + r688) ** t)
+                va0 = vpr0 * fa0
                 g["va0"] += va0
                 con_soporte = True
                 prr = float(r["prr"]) if r["prr"] is not None else None
@@ -1014,7 +1017,7 @@ def cmi_inicio(conn, empresa_id, tipo="bcr", r_emp=None):
         out[s] = {"cmi_bcr": cmi_c, "total01": total01, "suma_cmi": suma_cmi, "n": n, "ok": ok,
                   "sin_serie": sin_serie,
                   "vpr0_pos": vpr0_pos, "vpr0_neg": vpr0_neg, "n_pos": n_pos, "n_neg": n_neg,
-                  "cad_pos": cad["pos"], "cad_neg": cad["neg"], "cad_ok25": ok25, "cad_okva0": okva0,
+                  "cad_pos": cad["pos"], "cad_neg": cad["neg"], "cad_okva0": okva0,
                   "bcr": base, "cak": cak, "ci": ci, "ccp": ccp, "r688": r688, "t": t, "fa0": fa0,
                   "con_soporte": con_soporte, "descuento": descuento, "seg688": seg688,
                   "cmi_bcr_ci": (ci / ccp if (ci is not None and ccp) else None),
@@ -1047,10 +1050,10 @@ def cmi_proyecto_detalle(conn, empresa_id, tipo):
     out = []
     for r in rows:
         d = dict(r)
-        # VPR₀ = VIA − VP(CMI·Q) cuando se tienen ambos (regulatorio y consistente con el resumen);
-        # si no, el VPR₀ cargado.
-        if d["valor_via688"] is not None and d["vp_cmi_q"] is not None:
-            d["vpr0"] = float(d["valor_via688"]) - float(d["vp_cmi_q"])
+        # El VPR₀ cargado ya viene capitalizado (06_5: VPR_DIF0 = (VIA−VP)×(1+r)^10); se muestra tal
+        # cual. La diferencia cruda VIA − VP se expone aparte para trazabilidad.
+        d["dif"] = (float(d["valor_via688"]) - float(d["vp_cmi_q"])) \
+            if (d["valor_via688"] is not None and d["vp_cmi_q"] is not None) else None
         out.append(d)
     return out
 

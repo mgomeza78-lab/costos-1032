@@ -172,7 +172,7 @@ negativos y el cálculo de la BCR₀, el CCP y el CMI de referencia se hacen en 
   {% endfor %}
 </div>
 
-{# Resumen del soporte por servicio: VIA − VP(ingresos) = VPR₀ (dic-2014) → dic-2025 → capitalizado #}
+{# Resumen del soporte por servicio: VIA − VP = diferencia (dic-2014) → VPR₀ capitalizado ×(1+r)^10 → VA₀ ×fa0 (dic-2025) #}
 {% for s in servicios %}{% set b = bcr_ini.get(s) %}{% set cp = b.cad_pos %}{% set cn = b.cad_neg %}
 <h3 style="font-family:var(--head);font-size:14.5px;color:var(--teal-deep);margin:16px 0 6px">{{ bcr_serv[s] }}
   <span class="muted2">· resumen del soporte (sin compensar)</span></h3>
@@ -184,14 +184,13 @@ negativos y el cálculo de la BCR₀, el CCP y el CMI de referencia se hacen en 
       <td class="num">{{ cp.via|valor('$') }}</td><td class="num">{{ cn.via|valor('$') }}</td><td class="num"><b>{{ (cp.via + cn.via)|valor('$') }}</b></td></tr>
     <tr><td>(−) VP de ingresos · CMI·Q <span class="muted2">(dic-2014)</span></td>
       <td class="num">{{ cp.vp|valor('$') }}</td><td class="num">{{ cn.vp|valor('$') }}</td><td class="num"><b>{{ (cp.vp + cn.vp)|valor('$') }}</b></td></tr>
-    <tr style="background:var(--teal-bg,#f0f6f6)"><td><b>(=) VPR₀ = VIA − VP</b> <span class="muted2">(dic-2014)</span></td>
+    <tr><td>(=) Diferencia · VIA − VP <span class="muted2">(dic-2014)</span></td>
+      <td class="num">{{ cp.dif|valor('$') }}</td><td class="num">{{ cn.dif|valor('$') }}</td><td class="num"><b>{{ (cp.dif + cn.dif)|valor('$') }}</b></td></tr>
+    <tr style="background:var(--teal-bg,#f0f6f6)"><td><b>VPR₀ = diferencia × (1+r688)¹⁰</b> <span class="muted2">(dic-2014, capitalizado)</span></td>
       <td class="num">{{ cp.vpr0|valor('$') }}</td><td class="num">{{ cn.vpr0|valor('$') }}</td><td class="num"><b>{{ (cp.vpr0 + cn.vpr0)|valor('$') }}</b></td></tr>
-    <tr><td>VPR₀ a dic-2025 <span class="muted2">(× fa0 {{ b.fa0|round(4) if b.fa0 is not none else '—' }})</span></td>
-      {% if b.cad_ok25 %}<td class="num">{{ cp.vpr0_25|valor('$') }}</td><td class="num">{{ cn.vpr0_25|valor('$') }}</td><td class="num"><b>{{ (cp.vpr0_25 + cn.vpr0_25)|valor('$') }}</b></td>
-      {% else %}<td class="num" colspan="3">falta fa0 (IPC dic-2014/2025)</td>{% endif %}</tr>
-    <tr style="background:var(--teal-bg,#f0f6f6)"><td><b>VA₀ capitalizado</b> <span class="muted2">(× (1+r688)^t, t={{ b.t|round(2) if b.t is not none else '—' }})</span></td>
+    <tr style="background:var(--teal-bg,#f0f6f6)"><td><b>VA₀ = VPR₀ × fa0</b> <span class="muted2">(dic-2025, fa0={{ b.fa0|round(4) if b.fa0 is not none else '—' }})</span></td>
       {% if b.cad_okva0 %}<td class="num">{{ cp.va0|valor('$') }}</td><td class="num">{{ cn.va0|valor('$') }}</td><td class="num"><b>{{ (cp.va0 + cn.va0)|valor('$') }}</b></td>
-      {% else %}<td class="num" colspan="3">falta r688 / t / fa0</td>{% endif %}</tr>
+      {% else %}<td class="num" colspan="3">falta fa0 (IPC dic-2014/2025)</td>{% endif %}</tr>
   </tbody>
 </table>
 </div>
@@ -289,7 +288,7 @@ se hacen en el paso <a href="/empresa/{{ emp.id }}/inversiones?sec=base">Base de
   {% endfor %}
 </div>
 
-{# Resumen del soporte por servicio: VIA − VP(ingresos) = VPR₀ (dic-2014) → dic-2025 → capitalizado #}
+{# Resumen del soporte por servicio: VIA − VP = diferencia (dic-2014) → VPR₀ capitalizado ×(1+r)^10 → VA₀ ×fa0 (dic-2025) #}
 {% for s in servicios %}{% set b = poir_ini.get(s) %}{% set cp = b.cad_pos %}{% set cn = b.cad_neg %}
 <h3 style="font-family:var(--head);font-size:14.5px;color:var(--teal-deep);margin:14px 0 4px">{{ bcr_serv[s] }}
   <span class="muted2">· resumen del soporte (sin compensar)</span></h3>
@@ -301,14 +300,13 @@ se hacen en el paso <a href="/empresa/{{ emp.id }}/inversiones?sec=base">Base de
       <td class="num">{{ cp.via|valor('$') }}</td><td class="num">{{ cn.via|valor('$') }}</td><td class="num"><b>{{ (cp.via + cn.via)|valor('$') }}</b></td></tr>
     <tr><td>(−) VP de ingresos · CMI·Q <span class="muted2">(dic-2014)</span></td>
       <td class="num">{{ cp.vp|valor('$') }}</td><td class="num">{{ cn.vp|valor('$') }}</td><td class="num"><b>{{ (cp.vp + cn.vp)|valor('$') }}</b></td></tr>
-    <tr style="background:var(--teal-bg,#f0f6f6)"><td><b>(=) VPR₀ = VIA − VP</b> <span class="muted2">(dic-2014)</span></td>
+    <tr><td>(=) Diferencia · VIA − VP <span class="muted2">(dic-2014)</span></td>
+      <td class="num">{{ cp.dif|valor('$') }}</td><td class="num">{{ cn.dif|valor('$') }}</td><td class="num"><b>{{ (cp.dif + cn.dif)|valor('$') }}</b></td></tr>
+    <tr style="background:var(--teal-bg,#f0f6f6)"><td><b>VPR₀ = diferencia × (1+r688)¹⁰</b> <span class="muted2">(dic-2014, capitalizado)</span></td>
       <td class="num">{{ cp.vpr0|valor('$') }}</td><td class="num">{{ cn.vpr0|valor('$') }}</td><td class="num"><b>{{ (cp.vpr0 + cn.vpr0)|valor('$') }}</b></td></tr>
-    <tr><td>VPR₀ a dic-2025 <span class="muted2">(× fa0 {{ b.fa0|round(4) if b.fa0 is not none else '—' }})</span></td>
-      {% if b.cad_ok25 %}<td class="num">{{ cp.vpr0_25|valor('$') }}</td><td class="num">{{ cn.vpr0_25|valor('$') }}</td><td class="num"><b>{{ (cp.vpr0_25 + cn.vpr0_25)|valor('$') }}</b></td>
-      {% else %}<td class="num" colspan="3">falta fa0 (IPC dic-2014/2025)</td>{% endif %}</tr>
-    <tr style="background:var(--teal-bg,#f0f6f6)"><td><b>VA₀ capitalizado</b> <span class="muted2">(× (1+r688)^t, t={{ b.t|round(2) if b.t is not none else '—' }})</span></td>
+    <tr style="background:var(--teal-bg,#f0f6f6)"><td><b>VA₀ = VPR₀ × fa0</b> <span class="muted2">(dic-2025, fa0={{ b.fa0|round(4) if b.fa0 is not none else '—' }})</span></td>
       {% if b.cad_okva0 %}<td class="num">{{ cp.va0|valor('$') }}</td><td class="num">{{ cn.va0|valor('$') }}</td><td class="num"><b>{{ (cp.va0 + cn.va0)|valor('$') }}</b></td>
-      {% else %}<td class="num" colspan="3">falta r688 / t / fa0</td>{% endif %}</tr>
+      {% else %}<td class="num" colspan="3">falta fa0 (IPC dic-2014/2025)</td>{% endif %}</tr>
   </tbody>
 </table>
 </div>
@@ -466,8 +464,8 @@ del quinto año tarifario.</p>
 {# ===================== PASO 6 · BASE DE CAPITAL Y CMI DE REFERENCIA ===================== #}
 {% if sec=='base' %}
 <h2 class="serv-h">Paso 6 · Base de capital regulada y CMI de referencia</h2>
-<p class="muted2">Este paso toma el <b>VPR₀</b> cargado en los Pasos 2 y 3, <b>compensa</b> los VPR₀ negativos contra
-los positivos (prioridad al menor PRR; art. 2.1.2.1.5.2.1.1), los actualiza a VA₀ = VPR₀·(1+r688)^t·fa0 y obtiene
+<p class="muted2">Este paso toma el <b>VA₀</b> de cada activo (VPR₀ capitalizado × fa0, Pasos 2 y 3), <b>compensa</b> los
+VA₀ negativos contra los positivos (prioridad al menor PRR; art. 2.1.2.1.5.2.1.1) y obtiene
 la <b>base de capital</b> de cada componente (BCR₀ y VI_POIR₀), su <b>cak</b> y el <b>CI = Σcak + base·r</b>. Dividido
 por el <b>CCP</b> del año base resulta el <b>CMI de referencia</b> (CI/CCP). <b>Nota:</b> en el período de inicio
 (jul–dic 2026) el CMI que se cobra es el del último tramo (Pasos 2 y 3); este cálculo es el <b>insumo del primer
@@ -489,7 +487,7 @@ t = <b>{{ bA.t|round(2) if bA.t is not none else '—' }}</b> años (inicio 688 
 <div style="font-family:var(--head);font-size:13px;color:var(--teal-deep);margin:10px 0 2px">{{ lbl }}</div>
 <div class="cards">
   <div class="card"><div class="k">{{ basen }} (Σ VA₀ compensado)</div><div class="v" style="font-size:20px">{{ b.bcr|valor('$') if b.bcr is not none else '—' }}</div>
-    <div class="muted2">{% if b.con_soporte %}de VPR₀·(1+r688)^t·fa0{% if b.descuento %} · compensado {{ b.descuento|valor('$') }}{% endif %}{% else %}soporte opcional{% endif %}</div></div>
+    <div class="muted2">{% if b.con_soporte %}Σ VA₀ (VPR₀×fa0) tras compensar{% if b.descuento %} · compensado {{ b.descuento|valor('$') }}{% endif %}{% else %}soporte opcional{% endif %}</div></div>
   <div class="card"><div class="k">Σ cak</div><div class="v" style="font-size:20px">{{ b.cak|valor('$') if b.cak is not none else '—' }}</div></div>
   <div class="card"><div class="k">CI = Σcak + {{ basen }}·r</div><div class="v" style="font-size:20px">{{ b.ci|valor('$') if b.ci is not none else '—' }}</div></div>
   <div class="card"><div class="k">{{ lbl }} resultante = CI/CCP</div><div class="v" style="font-size:20px">{{ b.cmi_bcr_ci|valor('$') ~ ' /m³' if b.cmi_bcr_ci is not none else '—' }}</div>
