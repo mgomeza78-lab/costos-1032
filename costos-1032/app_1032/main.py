@@ -1358,6 +1358,12 @@ PLANTILLAS = {
          "acueducto,2,2409745366.43",
          "alcantarillado,1,4588694421.19",
          "alcantarillado,2,3270663687.81"]),
+    "poir_registro": ("plantilla_poir_registro.csv",
+        "id_activo,servicio,anio_tarifario,valor_ejecutado,fecha_operacion,vida_util",
+        ["1,acueducto,1,5265345905,2016-09-12,45",
+         "1,acueducto,2,1200000000,2016-09-12,45",
+         "2,acueducto,1,1884743200,2016-11-30,45",
+         "57,alcantarillado,10,318000000,2024-06-15,29"]),
     "balance": ("plantilla_balance_prueba.csv",
         "cuenta,nombre,saldo",
         ["511095,Gastos de personal administrativo,125000000",
@@ -3937,6 +3943,38 @@ def poir_ejec_anual_csv(request: Request, eid: int,
             tot_ok += ok; errs += (err or []); n_arch += 1
     db.audit(scope_of(user), "poir_ejec_anual_csv", "empresa", eid, f"{n_arch} arch, {tot_ok} filas")
     aviso = f"msg=POIR+ejecutado+por+año:+{tot_ok}+fila(s)+cargada(s)"
+    if errs:
+        aviso += ";+" + ",+".join(errs[:3]).replace(" ", "+") + ("+…" if len(errs) > 3 else "")
+    return RedirectResponse(_dest(next, dflt, aviso), status_code=303)
+
+
+@app.post("/empresa/{eid}/poir-registro-csv")
+def poir_registro_csv(request: Request, eid: int,
+                      archivos: list[UploadFile] = File(..., alias="archivos"),
+                      next: str = Form(""), csrf: str = Form("")):
+    """Cargue ÚNICO del POIR ejecutado (Paso 4): la ejecución real por activo y año tarifario de la 688,
+    con la fecha de entrada en operación. De él el sistema calcula —descontando todo al inicio de la 688—
+    el VIA688, el VP(CMI×Q), el VPR₀ y el CMI de referencia por activo (la base, cmi_proyecto) y la serie
+    ejecutada por año (el cumplimiento, poir_ejec_anual). Reemplaza los dos cargues anteriores."""
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    dflt = f"/empresa/{eid}/inversiones?sec=poir_ejec"
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
+    tot_ok, errs, n_arch = 0, [], 0
+    with db.scope_conn(scope_of(user)) as conn:
+        if not _emp_or_redirect(conn, eid):
+            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        for arch in archivos:
+            if not getattr(arch, "filename", ""):
+                continue
+            ok, err = bcr.poir_registro_cargar(conn, eid, _leer_csv(arch), user.get("user_id"))
+            tot_ok += ok; errs += (err or []); n_arch += 1
+    db.audit(scope_of(user), "poir_registro_csv", "empresa", eid, f"{n_arch} arch, {tot_ok} filas")
+    aviso = f"msg=POIR+ejecutado:+{tot_ok}+registro(s)+cargado(s);+base+y+cumplimiento+recalculados"
     if errs:
         aviso += ";+" + ",+".join(errs[:3]).replace(" ", "+") + ("+…" if len(errs) > 3 else "")
     return RedirectResponse(_dest(next, dflt, aviso), status_code=303)

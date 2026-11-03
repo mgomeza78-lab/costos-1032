@@ -390,11 +390,14 @@ planeado</b> se muestra en el <a href="/empresa/{{ emp.id }}/inversiones?sec=poi
 {# ============================ PASO 4 · POIR EJECUTADO ============================ #}
 {% if sec=='poir_ejec' %}
 <h2 class="serv-h">Paso 4 · POIR ejecutado (marco 688)</h2>
-<p class="muted2">Aquí se carga el <b>POIR efectivamente ejecutado</b> (lo que entró en operación) por
-<b>tramo</b>, y de él salen el <b>CMI_POIR de referencia</b>, el VPR₀ y el VA₀ que alimentan la BCR₀. El
-CMI_POIR del período de inicio = <b>Σ CMI del último tramo</b> (Paso 1). La compensación y el CMI de referencia
-se consolidan en el <a href="/empresa/{{ emp.id }}/inversiones?sec=base">Paso 6 · Base de capital y CMI</a>. La
-comparación plan vs. ejecución se hace contra el <b>POIR actualizado</b> (<a href="/empresa/{{ emp.id }}/inversiones?sec=poir">Paso 3</a>).</p>
+<p class="muted2">Aquí se carga, en <b>un solo archivo</b>, el <b>POIR efectivamente ejecutado</b> por <b>activo y año
+tarifario</b> de la 688, con la fecha de entrada en operación. De ese registro el sistema calcula —descontando
+todo al <b>inicio de la 688</b>— el <b>VIA688</b>, el <b>VP(CMI·Q)</b>, el <b>VPR₀</b> y el <b>CMI_POIR de referencia</b>
+que alimentan la BCR₀, y la serie ejecutada por año para el <b>cumplimiento</b>. El CMI_POIR del período de inicio =
+<b>Σ CMI del último tramo</b> (Paso 1); el CMI por activo para el VP viene del <b>POIR planeado</b>
+(<a href="/empresa/{{ emp.id }}/inversiones?sec=poir">Paso 3</a>) y la demanda del
+<a href="/empresa/{{ emp.id }}/inversiones?sec=agua">Paso 1</a>. La compensación y el CMI de referencia se consolidan
+en el <a href="/empresa/{{ emp.id }}/inversiones?sec=base">Paso 6 · Base de capital y CMI</a>.</p>
 
 {# CMI_POIR del período de inicio por servicio #}
 <div class="cards">
@@ -435,41 +438,40 @@ comparación plan vs. ejecución se hace contra el <b>POIR actualizado</b> (<a h
 <p class="muted2" style="margin:4px 0 0">La <b>compensación</b> de los VA₀ y el cálculo de VI_POIR₀/CI/CMI de referencia se hacen en el paso
 <a href="/empresa/{{ emp.id }}/inversiones?sec=base">Base de capital y CMI</a>.</p>
 
-{# CMI_POIR ejecutado por proyecto: UN SOLO cargue (la ejecución real; el período de inicio usa el último tramo) #}
-<h3 class="serv-h" style="margin-top:14px">CMI_POIR ejecutado por proyecto <span class="muted2">· la ejecución real</span></h3>
-<p class="muted2">Carga <b>una sola vez</b> el CMI_POIR individual de los activos <b>realmente ejecutados</b> del POIR
-(la ejecución al cierre de la 688, que es la que se cobra en el período de inicio). Σ CMI de los proyectos =
-<b>CMI_POIR del período de inicio</b> (Paso 1). Columnas: <code>id_activo, servicio, cmi_dic2014</code>
-(soporte: <code>anio_operacion, valor_via688_dic2014, vp_cmi_q_dic2014, vida_util_anios</code>).
-<a href="/empresa/{{ emp.id }}/plantilla/cmi_proyecto">Descargar plantilla</a>.</p>
+{# POIR ejecutado: UN SOLO archivo — la ejecución real por activo y año; el sistema calcula la base y el cumplimiento #}
+<h3 class="serv-h" style="margin-top:14px">Cargar el POIR ejecutado <span class="muted2">· un solo archivo</span></h3>
+<p class="muted2">Carga <b>un único archivo</b> con la <b>ejecución real del POIR por activo y año tarifario</b> de la 688,
+incluyendo la <b>fecha de entrada en operación</b>. Si un activo se ejecuta en <b>varios años</b>, registra una fila por
+año: el sistema <b>descuenta todo al inicio de la 688</b> y calcula por activo el VIA688, el VP(CMI·Q) —con el CMI del
+<a href="/empresa/{{ emp.id }}/inversiones?sec=poir">POIR planeado (Paso 3)</a> vigente en cada tramo y la demanda del
+<a href="/empresa/{{ emp.id }}/inversiones?sec=agua">Paso 1</a>—, el VPR₀ (la base) y la serie anual del cumplimiento.
+Columnas: <code>id_activo, servicio, anio_tarifario, valor_ejecutado</code> (soporte: <code>fecha_operacion, vida_util</code>).
+<a href="/empresa/{{ emp.id }}/plantilla/poir_registro">Descargar plantilla</a>.</p>
 
 {% set trs = cmi_proy.get('poir') %}
 {% set tr = trs[-1] if trs else none %}
 {% if not tr %}<p class="hint">Carga la serie del Paso 1 para fijar el CMI_POIR del período de inicio.</p>{% endif %}
-{% if tr %}
 <div style="border:1px solid #e7e2d4;border-radius:8px;padding:8px 10px;margin:6px 0">
   <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;align-items:center">
-    <span><b>POIR ejecutado</b> <span class="muted2">· período de inicio</span></span>
-    <span>
+    <span><b>POIR ejecutado</b> <span class="muted2">· CMI_POIR del período de inicio = Σ CMI del último tramo (Paso 1)</span></span>
+    {% if tr %}<span>
     {% for sv in tr.servicios %}
       {% set bg = '#d7efe3' if sv.ok else ('#fde2e0' if sv.cargado else '#f0ead7') %}
       {% set fg = '#1f8a70' if sv.ok else ('#b5342b' if sv.cargado else '#8a6d1f') %}
       <span style="background:{{ bg }};color:{{ fg }};padding:2px 7px;border-radius:8px;font-size:11.5px;margin-left:4px">
-        {{ sv.servicio }}: {% if sv.cargado %}{{ sv.n }} proy · Σ {{ sv.suma|valor('$') }} / total {{ sv.total|valor('$') if sv.total is not none else '—' }}
+        {{ sv.servicio }}: {% if sv.cargado %}{{ sv.n }} activo(s) · Σ {{ sv.suma|valor('$') }} / total {{ sv.total|valor('$') if sv.total is not none else '—' }}
         {{ '✓' if sv.ok else '✗ difiere' }}{% else %}total {{ sv.total|valor('$') if sv.total is not none else '—' }} · falta{% endif %}</span>
     {% endfor %}
-    </span>
+    </span>{% endif %}
   </div>
   {% if puede_cargar %}
-  <form method="post" action="/empresa/{{ emp.id }}/cmi-proyecto-csv" enctype="multipart/form-data" class="up-form" style="margin-top:6px">
+  <form method="post" action="/empresa/{{ emp.id }}/poir-registro-csv" enctype="multipart/form-data" class="up-form" style="margin-top:6px">
     <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
-    <input type="hidden" name="tipo" value="poir"><input type="hidden" name="tramo" value="{{ tr.idx }}">
     <input type="file" name="archivos" accept=".csv" required>
     <button class="btn" type="submit">Cargar POIR ejecutado</button>
   </form>
   {% endif %}
 </div>
-{% endif %}
 
 {% set det = cmi_det.get('poir') if cmi_det else none %}
 {% if det %}
@@ -528,16 +530,8 @@ el POIR <b>actualizado</b> (art. 52).</p>
 <p class="muted2">Compara el POIR <b>planeado</b> (POIR actualizado, Paso 3) contra el <b>ejecutado</b> (registro de ejecución),
 por <b>año tarifario</b> de la 688. El <b>% de ejecución</b> = VNA(ejecutado)/VNA(planeado), donde el <b>VNA</b> (valor neto
 actual, precios dic-2014) descuenta la serie anual a la tasa de la 688 (r688); el <b>rezago</b> es lo planeado que no se
-ejecutó. Replica la lógica de la hoja de seguimiento del POIR del modelo.</p>
-{% if puede_cargar %}
-<form method="post" action="/empresa/{{ emp.id }}/poir-ejec-anual-csv" enctype="multipart/form-data" class="up-form" style="margin:4px 0 10px">
-  <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
-  <input type="file" name="archivos" accept=".csv" required>
-  <button class="btn" type="submit">Cargar POIR ejecutado por año</button>
-  <a href="/empresa/{{ emp.id }}/plantilla/poir_ejecutado_anual" class="muted2" style="margin-left:8px">Plantilla</a>
-  <span class="muted2" style="margin-left:8px">columnas: <code>servicio, anio_tarifario, valor_ejecutado</code> ($dic-2014)</span>
-</form>
-{% endif %}
+ejecutó. La serie ejecutada por año se <b>deriva del registro cargado arriba</b> (no requiere otro archivo). Replica la
+lógica de la hoja de seguimiento del POIR del modelo.</p>
 
 <div class="cards">
   {% for d in poir_cumpl.servicios %}{% if d.hay %}

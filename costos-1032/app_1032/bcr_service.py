@@ -13,7 +13,7 @@ de los proyectos del POIR que entran en operación (art. 2.1.2.1.3.5.14). Es una
 **proyección indicativa** con supuestos explícitos; la cuantificación normativa
 activo-por-activo corresponde al recálculo anual.
 """
-from datetime import date
+from datetime import date, datetime
 from sqlalchemy import text
 import poir_cmi_service as poir
 
@@ -1218,6 +1218,208 @@ def poir_ejec_anual_cargar(conn, empresa_id, contenido, usuario_id=None):
             ok += 1
         except Exception as ex:
             err.append(f"fila {i}: {type(ex).__name__}")
+    return ok, err
+
+
+def _parse_fecha(x):
+    """Parsea una fecha de celda/CSV a date (YYYY-MM-DD, DD/MM/YYYY, o datetime)."""
+    if x is None or x == "":
+        return None
+    if isinstance(x, datetime):
+        return x.date()
+    if isinstance(x, date):
+        return x
+    s = str(x).strip()
+    if " " in s:
+        s = s.split(" ")[0]
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%Y/%m/%d", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(s, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def poir_registro_computar(conn, empresa_id):
+    """Calcula el POIR ejecutado desde el REGISTRO (poir_ejec_registro) y puebla lo que la base y el
+    cumplimiento ya consumen: cmi_proyecto (tipo='poir') con VIA688/VP(CMI×Q)/VPR₀/CMI por activo, y
+    poir_ejec_anual con la serie ejecutada por año. Reproduce la hoja 06_3 del modelo:
+      · VIA688ⱼ = VPN del ejecutado por año, anclado al año 1 = Σ valorₖ/(1+r688)^(k−1);
+      · VP(CMI×Q)ⱼ = VP del CMI planeado (Paso 3) × demanda (Paso 1);
+      · VPR₀ⱼ = (VIA688ⱼ − VP)·(1+r688)^10.
+    Si un activo se ejecuta en varios años no hay problema: cada año se descuenta por separado. El CMI
+    por activo reparte el CMI_POIR del período de inicio (Paso 1) en proporción al VIA688. Devuelve un
+    resumen por servicio."""
+    emp_row = conn.execute(text(
+        "SELECT suscriptores_seg, fecha_inicio_688 FROM empresa WHERE id=:e"),
+        {"e": empresa_id}).mappings().first()
+    seg688 = segmento_688(emp_row["suscriptores_seg"]) if emp_row else None
+    r688_auto = r688_de_segmento(seg688)
+    fecha_auto = emp_row["fecha_inicio_688"] if emp_row else None
+    ps = params(conn, empresa_id)
+    servs = _servicios_empresa(conn, empresa_id)
+    tramos = cmi_tramos_componente(conn, empresa_id).get("poir", [])
+    ult = tramos[-1] if tramos else None
+    ult_idx = int(ult["idx"]) if ult else 1
+    # registro agregado por (servicio, id_activo): valor por año, fecha de operación, vida útil
+    reg = {}
+    for r in conn.execute(text(
+            "SELECT id_activo, servicio, anio_tarifario, valor_ejecutado, fecha_operacion, vida_util "
+            "FROM poir_ejec_registro WHERE empresa_id=:e"), {"e": empresa_id}).mappings().all():
+        s = (r["servicio"] or "").strip().lower()
+        key = (s, str(r["id_activo"]).strip())
+        d = reg.setdefault(key, {"anios": {}, "fecha": None, "vu": None})
+        if r["anio_tarifario"] is not None and r["valor_ejecutado"] is not None:
+            d["anios"][int(r["anio_tarifario"])] = d["anios"].get(int(r["anio_tarifario"]), 0.0) + float(r["valor_ejecutado"])
+        if r["fecha_operacion"] and not d["fecha"]:
+            d["fecha"] = r["fecha_operacion"]
+        if r["vida_util"] is not None and d["vu"] is None:
+            d["vu"] = float(r["vida_util"])
+    # CMI planeado por activo y TRAMO del POIR (tramo 1 = inicial … último = período de inicio).
+    # El VP(CMI×Q) reproduce la hoja 06_3 del modelo: cada mes aplica el CMI del tramo VIGENTE
+    # (0 si el activo no está en ese tramo del POIR), igual que el modelo conmuta del POIR inicial al
+    # ajustado. El tramo vigente mes a mes se lee del cambio del CMI_POIR en la serie (Paso 1): su
+    # primer valor (en orden temporal) es el tramo inicial y cada cambio marca el tramo siguiente.
+    cmi_tr = {}       # (servicio, id, tramo) -> Σ cmi del activo en ese tramo
+    for r in conn.execute(text(
+            "SELECT servicio, id_activo, tramo, sum(cmi) c FROM poir_plan WHERE empresa_id=:e "
+            "GROUP BY servicio, id_activo, tramo"), {"e": empresa_id}).mappings().all():
+        if r["c"] is not None:
+            cmi_tr[((r["servicio"] or "").strip().lower(), str(r["id_activo"]).strip(), int(r["tramo"]))] = float(r["c"])
+    tramos_all = sorted({t for (_, _, t) in cmi_tr})     # tramos del POIR, ascendente
+    tr_ini = tramos_all[0] if tramos_all else 1
+    cmi_plan = {(s2, i): cmi_tr[(s2, i, t)] for (s2, i, t) in cmi_tr if t == tr_ini}   # tramo inicial → universo
+    filas, anual, resumen = [], {}, {}
+    for s in servs:
+        p = ps.get(s)
+        r688 = float(p["r688"]) if (p and p["r688"] is not None) else r688_auto
+        # Serie mensual agregada por (año, mes): Q total y CMI_POIR (del tramo vigente ese mes).
+        meses = {}
+        for x in serie_list(conn, empresa_id, s):
+            if x["q_m3"] is None:
+                continue
+            km = (int(x["anio_tarifario"]), int(x["mes"] or 0))
+            d0 = meses.setdefault(km, {"q": 0.0, "cp": None})
+            d0["q"] += float(x["q_m3"])
+            if x["cmi_poir"] is not None:
+                d0["cp"] = round(float(x["cmi_poir"]), 6)
+        # VPD por tramo: cada mes se asigna al tramo vigente (según el cambio del CMI_POIR), descontado
+        # al año (ancla año 1, igual que el VIA688). Σ vpd_seg = VPD total.
+        vpd_seg, seen = {}, []
+        for km in sorted(meses):
+            anio = km[0]
+            cp = meses[km]["cp"]
+            if cp is not None and cp not in seen:
+                seen.append(cp)
+            seg = (seen.index(cp) + 1) if (cp is not None and cp in seen) else max(1, len(seen))
+            tr = tramos_all[min(seg - 1, len(tramos_all) - 1)] if tramos_all else tr_ini
+            if r688 is not None:
+                vpd_seg[tr] = vpd_seg.get(tr, 0.0) + meses[km]["q"] / ((1 + r688) ** (anio - 1))
+        total01 = (ult["totales"].get(s) if ult else None)   # CMI_POIR del período de inicio (Paso 1)
+        # Universo = activos PLANEADOS tramo inicial (generen o no VIA688) ∪ activos EJECUTADOS (registro).
+        # Los planeados no ejecutados tienen VIA688=0 pero VP>0 → VPR₀<0 (sobre-recuperación a compensar).
+        # Los ejecutados no planeados en el tramo inicial toman su VP del CMI del tramo posterior (ajustado).
+        ids_s = ({idv for (ss, idv) in cmi_plan if ss == s} |
+                 {idv for (ss, idv) in reg if ss == s})
+        act = []
+        for idv in ids_s:
+            d = reg.get((s, idv))
+            via = (sum(d["anios"].get(k, 0.0) / ((1 + r688) ** (k - 1)) for k in range(1, 11))
+                   if (d and r688 is not None) else 0.0)
+            # VP(CMI×Q)ⱼ = Σ_tramo CMIⱼ,tramo · VPD_tramo (cada tramo aporta solo sus meses vigentes).
+            vp = (sum(cmi_tr.get((s, idv, tr), 0.0) * vp_seg for tr, vp_seg in vpd_seg.items())
+                  if r688 is not None else None)
+            vpr0 = ((via - (vp or 0.0)) * ((1 + r688) ** 10)) if r688 is not None else None
+            act.append({"id": idv, "via": via, "vp": vp, "vpr0": vpr0,
+                        "anio_op": (d["fecha"].year if (d and d["fecha"]) else None),
+                        "vu": (d["vu"] if d else None)})
+            if d:
+                for k, v in d["anios"].items():
+                    anual[(s, k)] = anual.get((s, k), 0.0) + v
+        sum_via = sum(a["via"] for a in act if a["via"]) or 0.0
+        for a in act:
+            a["cmi"] = (total01 * a["via"] / sum_via) if (total01 and sum_via and a["via"]) else None
+            a["s"] = s
+            filas.append(a)
+        resumen[s] = {"n": len(act), "sum_via": sum_via,
+                      "sum_vpr0": sum(a["vpr0"] or 0.0 for a in act), "cmi_total": total01}
+    # poblar cmi_proyecto (un solo set del POIR ejecutado, en el último tramo)
+    conn.execute(text("DELETE FROM cmi_proyecto WHERE empresa_id=:e AND tipo='poir'"), {"e": empresa_id})
+    for f in filas:
+        conn.execute(text(
+            "INSERT INTO cmi_proyecto(empresa_id,tipo,servicio,tramo,id_activo,cmi,vida_util,"
+            "anio_operacion,valor_via688,vp_cmi_q,vpr0,cargado_por) "
+            "VALUES (:e,'poir',:s,:tr,:id,:cmi,:vu,:op,:via,:vp,:vpr,NULL) "
+            "ON CONFLICT (empresa_id,tipo,servicio,tramo,id_activo) DO UPDATE SET "
+            " cmi=excluded.cmi, vida_util=excluded.vida_util, anio_operacion=excluded.anio_operacion, "
+            " valor_via688=excluded.valor_via688, vp_cmi_q=excluded.vp_cmi_q, vpr0=excluded.vpr0"),
+            {"e": empresa_id, "s": f["s"], "tr": ult_idx, "id": f["id"], "cmi": f["cmi"], "vu": f["vu"],
+             "op": f["anio_op"], "via": f["via"], "vp": f["vp"], "vpr": f["vpr0"]})
+    # poblar poir_ejec_anual (serie ejecutada por año → cumplimiento)
+    conn.execute(text("DELETE FROM poir_ejec_anual WHERE empresa_id=:e"), {"e": empresa_id})
+    for (s, k), v in anual.items():
+        conn.execute(text(
+            "INSERT INTO poir_ejec_anual(empresa_id,servicio,anio_tarifario,valor_ejecutado) "
+            "VALUES (:e,:s,:k,:v) ON CONFLICT (empresa_id,servicio,anio_tarifario) "
+            "DO UPDATE SET valor_ejecutado=excluded.valor_ejecutado"),
+            {"e": empresa_id, "s": s, "k": k, "v": v})
+    return resumen
+
+
+def poir_registro_cargar(conn, empresa_id, contenido, usuario_id=None):
+    """Carga el REGISTRO de ejecución del POIR (un solo archivo) y recalcula todo. Columnas:
+    id_activo, servicio, anio_tarifario, valor_ejecutado, fecha_operacion, vida_util. Reemplaza el
+    registro de la empresa y repuebla cmi_proyecto (base) y poir_ejec_anual (cumplimiento)."""
+    import ingesta as _ing
+    rows = _ing._rows(contenido)
+    if not rows:
+        return 0, ["el archivo está vacío o sin encabezado"]
+    cols = set(h for h in rows[0].keys() if h)
+    A_ID = ("id_activo", "id", "idactivo", "activo", "id_proyecto", "codigo")
+    A_SERV = ("servicio", "serv")
+    A_ANIO = ("anio_tarifario", "anio", "año", "ano", "año_tarifario", "at")
+    A_VAL = ("valor_ejecutado", "valor", "ejecutado", "capex")
+    A_FOP = ("fecha_operacion", "fecha_entrada_operacion", "fecha_operación", "fecha_entrada", "fecha_entrada_operación")
+    A_VU = ("vida_util", "vida_util_anios", "vu", "vida_util_años")
+    faltan = [c for c, al in (("id_activo", A_ID), ("servicio", A_SERV), ("anio_tarifario", A_ANIO),
+                              ("valor_ejecutado", A_VAL)) if not (cols & set(al))]
+    if faltan:
+        return 0, ["faltan columnas obligatorias: " + ", ".join(faltan)]
+
+    def _col(r, *names):
+        for n in names:
+            if n in r and (r.get(n) or "").strip() != "":
+                return r.get(n)
+        return None
+
+    conn.execute(text("DELETE FROM poir_ejec_registro WHERE empresa_id=:e"), {"e": empresa_id})
+    ok, err = 0, []
+    for i, r in enumerate(rows, 2):
+        idv = _col(r, *A_ID)
+        serv = _ing._norm_serv(_col(r, *A_SERV))
+        anio = _ing._int(_col(r, *A_ANIO))
+        val = _ing._num(_col(r, *A_VAL))
+        if not idv:
+            err.append(f"fila {i}: falta id_activo"); continue
+        if not serv:
+            err.append(f"fila {i}: servicio inválido '{_col(r, *A_SERV)}'"); continue
+        if anio is None:
+            err.append(f"fila {i}: año tarifario inválido"); continue
+        try:
+            with conn.begin_nested():
+                conn.execute(text(
+                    "INSERT INTO poir_ejec_registro(empresa_id,id_activo,servicio,anio_tarifario,"
+                    "valor_ejecutado,fecha_operacion,vida_util,cargado_por) "
+                    "VALUES (:e,:id,:s,:a,:v,:f,:vu,:u)"),
+                    {"e": empresa_id, "id": str(idv).strip(), "s": serv, "a": anio, "v": val,
+                     "f": _parse_fecha(_col(r, *A_FOP)), "vu": _ing._num(_col(r, *A_VU)), "u": usuario_id})
+            ok += 1
+        except Exception as ex:
+            err.append(f"fila {i}: {type(ex).__name__}")
+    try:
+        poir_registro_computar(conn, empresa_id)
+    except Exception as ex:
+        err.append(f"cálculo: {type(ex).__name__}")
     return ok, err
 
 
