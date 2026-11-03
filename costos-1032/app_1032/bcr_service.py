@@ -1058,6 +1058,88 @@ def cmi_proyecto_detalle(conn, empresa_id, tipo):
     return out
 
 
+# ================== POIR PLANEADO (inicial y actualizado art. 52) — informativo ==================
+def poir_plan_cargar(conn, empresa_id, tipo, contenido, usuario_id=None):
+    """Carga el POIR PLANEADO (tipo='ini' inicial 06_1 | 'act' actualizado 06_2). Reemplaza lo
+    cargado para ese tipo. Obligatorias: id_activo, servicio; el resto es informativo
+    (codigo_poir, subsistema, actividad, nombre, anio, vida_util, valor_poir, vp, cmi)."""
+    import ingesta as _ing
+    tipo = (tipo or "").strip().lower()
+    if tipo not in ("ini", "act"):
+        return 0, ["tipo inválido (debe ser ini o act)"]
+    rows = _ing._rows(contenido)
+    if not rows:
+        return 0, ["el archivo está vacío o sin encabezado"]
+    cols = set(h for h in rows[0].keys() if h)
+    A_ID = ("id_activo", "id", "idactivo", "activo")
+    A_SERV = ("servicio", "serv")
+    A_COD = ("codigo_poir", "codigo", "cod_poir", "código_poir")
+    A_SUB = ("subsistema",)
+    A_ACT = ("actividad",)
+    A_NOM = ("nombre", "identificacion_del_activo", "identificacion", "descripcion", "proyecto")
+    A_ANIO = ("anio_planeado", "anio_ejec_real", "ano_planeado", "año_planeado", "anio", "año")
+    A_VU = ("vida_util_anios", "vida_util", "vu", "vida_util_años")
+    A_VAL = ("valor_poir_planeado", "valor_poir", "valor", "valor_poir_activo")
+    A_VP = ("vp_planeado", "vp", "vp_poir")
+    A_CMI = ("cmi_dic2014", "cmi", "vp_ci", "cmi_poir")
+    faltan = [c for c, al in (("id_activo", A_ID), ("servicio", A_SERV)) if not (cols & set(al))]
+    if faltan:
+        return 0, ["faltan columnas obligatorias: " + ", ".join(faltan)]
+
+    def _col(r, *names):
+        for n in names:
+            if n in r and (r.get(n) or "").strip() != "":
+                return r.get(n)
+        return None
+
+    conn.execute(text("DELETE FROM poir_plan WHERE empresa_id=:e AND tipo=:t"),
+                 {"e": empresa_id, "t": tipo})
+    ok, err = 0, []
+    for i, r in enumerate(rows, 2):
+        idv = _col(r, *A_ID)
+        serv = _ing._norm_serv(_col(r, *A_SERV))
+        if not serv:
+            err.append(f"fila {i}: servicio inválido '{_col(r, *A_SERV)}'"); continue
+        try:
+            with conn.begin_nested():
+                conn.execute(text(
+                    "INSERT INTO poir_plan(empresa_id,tipo,servicio,id_activo,codigo_poir,subsistema,"
+                    "actividad,nombre,anio_planeado,vida_util,valor_poir,vp_poir,cmi,cargado_por) "
+                    "VALUES (:e,:t,:s,:id,:cod,:sub,:act,:nom,:anio,:vu,:val,:vp,:cmi,:u)"),
+                    {"e": empresa_id, "t": tipo, "s": serv,
+                     "id": (str(idv).strip() if idv else None),
+                     "cod": (str(_col(r, *A_COD)).strip() if _col(r, *A_COD) else None),
+                     "sub": (str(_col(r, *A_SUB)).strip() if _col(r, *A_SUB) else None),
+                     "act": (str(_col(r, *A_ACT)).strip() if _col(r, *A_ACT) else None),
+                     "nom": (str(_col(r, *A_NOM)).strip() if _col(r, *A_NOM) else None),
+                     "anio": _ing._int(_col(r, *A_ANIO)), "vu": _ing._num(_col(r, *A_VU)),
+                     "val": _ing._num(_col(r, *A_VAL)), "vp": _ing._num(_col(r, *A_VP)),
+                     "cmi": _ing._num(_col(r, *A_CMI)), "u": usuario_id})
+            ok += 1
+        except Exception as ex:
+            err.append(f"fila {i}: {type(ex).__name__}")
+    return ok, err
+
+
+def poir_plan_resumen(conn, empresa_id):
+    """Por tipo ('ini'|'act') y servicio: lista de filas y totales (n, Σvalor, Σvp, Σcmi)."""
+    out = {}
+    for tipo in ("ini", "act"):
+        filas = conn.execute(text(
+            "SELECT servicio, id_activo, codigo_poir, subsistema, actividad, nombre, anio_planeado, "
+            "vida_util, valor_poir, vp_poir, cmi FROM poir_plan WHERE empresa_id=:e AND tipo=:t "
+            "ORDER BY servicio, id_activo"), {"e": empresa_id, "t": tipo}).mappings().all()
+        tot = {}
+        for f in filas:
+            a = tot.setdefault(f["servicio"], {"n": 0, "valor": 0.0, "vp": 0.0, "cmi": 0.0})
+            a["n"] += 1
+            a["valor"] += f["valor_poir"] or 0.0
+            a["vp"] += f["vp_poir"] or 0.0
+            a["cmi"] += f["cmi"] or 0.0
+        out[tipo] = {"filas": [dict(f) for f in filas], "tot": tot, "n": len(filas)}
+    return out
+
+
 def eliminar(conn, empresa_id, aid):
     conn.execute(text("DELETE FROM bcr_activo WHERE empresa_id=:e AND id=:i"),
                  {"e": empresa_id, "i": aid})
