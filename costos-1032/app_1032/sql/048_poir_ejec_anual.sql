@@ -32,14 +32,15 @@ CREATE POLICY poirejecanual_all ON poir_ejec_anual FOR ALL
 GRANT SELECT, INSERT, UPDATE, DELETE ON poir_ejec_anual TO app_user;
 
 -- ---------------------------------------------------------------------
---  Seed Las Ceibas (empresa_id = 1): valor ejecutado del POIR por año
---  tarifario, a precios dic-2014. Fuente: modelo "Modelo completo (con
---  reclasificación) - Las Ceibas CRA1032 V2", hoja 06_Seguimiento POIR,
---  filas "POIR Ejecutado" (acueducto y alcantarillado). Información
---  REPORTADA POR LA EMPRESA. Idempotente (solo si existe la empresa 1).
+--  Seed Las Ceibas: valor ejecutado del POIR por año tarifario, a precios
+--  dic-2014. Fuente: modelo "Modelo completo (con reclasificación) - Las
+--  Ceibas CRA1032 V2", hoja 06_Seguimiento POIR, filas "POIR Ejecutado"
+--  (acueducto y alcantarillado). Información REPORTADA POR LA EMPRESA.
+--  Busca la empresa POR NOMBRE (no por id fijo, que cambia entre entornos).
+--  Idempotente (solo si existe una empresa cuyo nombre contenga "ceibas").
 -- ---------------------------------------------------------------------
 INSERT INTO poir_ejec_anual (empresa_id, servicio, anio_tarifario, valor_ejecutado)
-SELECT 1, v.servicio, v.anio, v.valor
+SELECT e.id, v.servicio, v.anio, v.valor
 FROM (VALUES
   ('acueducto', 1, 8874386075.54),
   ('acueducto', 2, 2409745366.43),
@@ -62,6 +63,8 @@ FROM (VALUES
   ('alcantarillado', 9, 7375030690.18),
   ('alcantarillado', 10, 4387741298.01)
 ) AS v(servicio, anio, valor)
-WHERE EXISTS (SELECT 1 FROM empresa WHERE id = 1)
+CROSS JOIN LATERAL (
+  SELECT id FROM empresa WHERE nombre ILIKE '%ceibas%' ORDER BY id LIMIT 1
+) e
 ON CONFLICT (empresa_id, servicio, anio_tarifario)
   DO UPDATE SET valor_ejecutado = EXCLUDED.valor_ejecutado;
