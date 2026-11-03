@@ -3873,10 +3873,10 @@ def cmi_proyecto_csv(request: Request, eid: int, tipo: str = Form(...), tramo: i
 
 
 @app.post("/empresa/{eid}/poir-plan-csv")
-def poir_plan_csv(request: Request, eid: int, tipo: str = Form(...),
+def poir_plan_csv(request: Request, eid: int, tramo: int = Form(...),
                   archivos: list[UploadFile] = File(..., alias="archivos"),
                   next: str = Form(""), csrf: str = Form("")):
-    """Cargue del POIR PLANEADO (tipo='ini' inicial | 'act' actualizado art. 52), Paso 3 · informativo."""
+    """Cargue del POIR PLANEADO de un TRAMO (1 = inicial; 2..N = actualizaciones), Paso 3 · informativo."""
     if (r := _need_login(request)):
         return r
     if (bad := _bad_csrf(request, csrf)):
@@ -3892,11 +3892,10 @@ def poir_plan_csv(request: Request, eid: int, tipo: str = Form(...),
         for arch in archivos:
             if not getattr(arch, "filename", ""):
                 continue
-            ok, err = bcr.poir_plan_cargar(conn, eid, tipo, _leer_csv(arch), user.get("user_id"))
+            ok, err = bcr.poir_plan_cargar(conn, eid, tramo, _leer_csv(arch), user.get("user_id"))
             tot_ok += ok; errs += (err or []); n_arch += 1
-    db.audit(scope_of(user), "poir_plan_csv", "empresa", eid, f"{tipo}: {n_arch} arch, {tot_ok} proyectos")
-    lbl = "inicial" if tipo == "ini" else "actualizado"
-    aviso = f"msg=POIR+planeado+({lbl}):+{tot_ok}+proyecto(s)+cargado(s)"
+    db.audit(scope_of(user), "poir_plan_csv", "empresa", eid, f"tramo {tramo}: {n_arch} arch, {tot_ok} proyectos")
+    aviso = f"msg=POIR+planeado+(tramo+{tramo}):+{tot_ok}+proyecto(s)+cargado(s)"
     if errs:
         aviso += ";+" + ",+".join(errs[:3]).replace(" ", "+") + ("+…" if len(errs) > 3 else "")
     return RedirectResponse(_dest(next, dflt, aviso), status_code=303)

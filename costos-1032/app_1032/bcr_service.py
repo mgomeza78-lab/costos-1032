@@ -1059,14 +1059,15 @@ def cmi_proyecto_detalle(conn, empresa_id, tipo):
 
 
 # ================== POIR PLANEADO (inicial y actualizado art. 52) — informativo ==================
-def poir_plan_cargar(conn, empresa_id, tipo, contenido, usuario_id=None):
-    """Carga el POIR PLANEADO (tipo='ini' inicial 06_1 | 'act' actualizado 06_2). Reemplaza lo
-    cargado para ese tipo. Obligatorias: id_activo, servicio; el resto es informativo
+def poir_plan_cargar(conn, empresa_id, tramo, contenido, usuario_id=None):
+    """Carga el POIR PLANEADO de UN TRAMO (tramo 1 = inicial; 2..N = actualizaciones). Reemplaza lo
+    cargado para ese tramo. Obligatorias: id_activo, servicio; el resto es informativo
     (codigo_poir, subsistema, actividad, nombre, anio, vida_util, valor_poir, vp, cmi)."""
     import ingesta as _ing
-    tipo = (tipo or "").strip().lower()
-    if tipo not in ("ini", "act"):
-        return 0, ["tipo inválido (debe ser ini o act)"]
+    try:
+        tramo = int(tramo)
+    except (TypeError, ValueError):
+        return 0, ["tramo inválido"]
     rows = _ing._rows(contenido)
     if not rows:
         return 0, ["el archivo está vacío o sin encabezado"]
@@ -1092,8 +1093,8 @@ def poir_plan_cargar(conn, empresa_id, tipo, contenido, usuario_id=None):
                 return r.get(n)
         return None
 
-    conn.execute(text("DELETE FROM poir_plan WHERE empresa_id=:e AND tipo=:t"),
-                 {"e": empresa_id, "t": tipo})
+    conn.execute(text("DELETE FROM poir_plan WHERE empresa_id=:e AND tramo=:tr"),
+                 {"e": empresa_id, "tr": tramo})
     ok, err = 0, []
     for i, r in enumerate(rows, 2):
         idv = _col(r, *A_ID)
@@ -1103,10 +1104,10 @@ def poir_plan_cargar(conn, empresa_id, tipo, contenido, usuario_id=None):
         try:
             with conn.begin_nested():
                 conn.execute(text(
-                    "INSERT INTO poir_plan(empresa_id,tipo,servicio,id_activo,codigo_poir,subsistema,"
+                    "INSERT INTO poir_plan(empresa_id,tramo,servicio,id_activo,codigo_poir,subsistema,"
                     "actividad,nombre,anio_planeado,vida_util,valor_poir,vp_poir,cmi,cargado_por) "
-                    "VALUES (:e,:t,:s,:id,:cod,:sub,:act,:nom,:anio,:vu,:val,:vp,:cmi,:u)"),
-                    {"e": empresa_id, "t": tipo, "s": serv,
+                    "VALUES (:e,:tr,:s,:id,:cod,:sub,:act,:nom,:anio,:vu,:val,:vp,:cmi,:u)"),
+                    {"e": empresa_id, "tr": tramo, "s": serv,
                      "id": (str(idv).strip() if idv else None),
                      "cod": (str(_col(r, *A_COD)).strip() if _col(r, *A_COD) else None),
                      "sub": (str(_col(r, *A_SUB)).strip() if _col(r, *A_SUB) else None),
@@ -1122,21 +1123,51 @@ def poir_plan_cargar(conn, empresa_id, tipo, contenido, usuario_id=None):
 
 
 def poir_plan_resumen(conn, empresa_id):
-    """Por tipo ('ini'|'act') y servicio: lista de filas y totales (n, Σvalor, Σvp, Σcmi)."""
-    out = {}
-    for tipo in ("ini", "act"):
-        filas = conn.execute(text(
-            "SELECT servicio, id_activo, codigo_poir, subsistema, actividad, nombre, anio_planeado, "
-            "vida_util, valor_poir, vp_poir, cmi FROM poir_plan WHERE empresa_id=:e AND tipo=:t "
-            "ORDER BY servicio, id_activo"), {"e": empresa_id, "t": tipo}).mappings().all()
-        tot = {}
+    """POIR planeado por TRAMO del CMI_POIR (Paso 1). Por cada tramo: el total esperado por servicio
+    (Paso 1), lo cargado (nº, Σcmi por servicio, validación Σ=total), las filas y la serie por año
+    (Σ valor) para la gráfica. El nº de tramos lo fija el Paso 1; se añaden tramos extra si el usuario
+    cargó más de los que hay en la serie."""
+    tramos = cmi_tramos_componente(conn, empresa_id).get("poir", [])
+    porf = {}
+    for r in conn.execute(text(
+            "SELECT tramo, servicio, id_activo, codigo_poir, subsistema, actividad, nombre, "
+            "anio_planeado, vida_util, valor_poir, vp_poir, cmi FROM poir_plan WHERE empresa_id=:e "
+            "ORDER BY tramo, servicio, id_activo"), {"e": empresa_id}).mappings().all():
+        porf.setdefault(int(r["tramo"]), []).append(dict(r))
+
+    def _anios(filas):
+        ac = {}
         for f in filas:
-            a = tot.setdefault(f["servicio"], {"n": 0, "valor": 0.0, "vp": 0.0, "cmi": 0.0})
-            a["n"] += 1
-            a["valor"] += f["valor_poir"] or 0.0
-            a["vp"] += f["vp_poir"] or 0.0
-            a["cmi"] += f["cmi"] or 0.0
-        out[tipo] = {"filas": [dict(f) for f in filas], "tot": tot, "n": len(filas)}
+            y = f["anio_planeado"]
+            if y is not None:
+                ac[int(y)] = ac.get(int(y), 0.0) + (f["valor_poir"] or 0.0)
+        return sorted(ac.items())
+
+    def _fila(idx, desde, hasta, totales, filas):
+        servicios = []
+        for s, total in (totales or {}).items():
+            fs = [f for f in filas if f["servicio"] == s]
+            suma = sum((f["cmi"] or 0.0) for f in fs) if fs else None
+            tol = max(0.01, 0.0005 * abs(total)) if total else 0.01
+            ok = (suma is not None and total is not None and abs(suma - total) <= tol)
+            servicios.append({"servicio": s, "total": total, "n": len(fs), "suma": suma,
+                              "ok": ok, "cargado": len(fs) > 0,
+                              "dif": (suma - total) if (suma is not None and total is not None) else None})
+        etq = "inicial" if idx == 1 else ("actualización %d" % (idx - 1))
+        an = _anios(filas)
+        return {"idx": idx, "desde": desde, "hasta": hasta, "etiqueta": etq,
+                "servicios": servicios, "filas": filas, "n": len(filas),
+                "anios": an, "anios_max": max((v for _, v in an), default=0.0)}
+
+    out = []
+    vistos = set()
+    for tr in tramos:
+        vistos.add(tr["idx"])
+        out.append(_fila(tr["idx"], tr["desde"], tr["hasta"], tr["totales"], porf.get(tr["idx"], [])))
+    # tramos cargados que exceden los del Paso 1 (el usuario cargó más versiones)
+    for idx in sorted(porf):
+        if idx not in vistos:
+            out.append(_fila(idx, "—", "—", {}, porf[idx]))
     return out
 
 
