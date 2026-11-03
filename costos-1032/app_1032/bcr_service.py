@@ -893,6 +893,112 @@ def bcr0_calculo(conn, empresa_id, r_emp=None):
     return out
 
 
+def bcr0_inicio(conn, empresa_id, r_emp=None):
+    """Costos del componente BCR (marco 688) para el PERÍODO DE INICIO, a partir del detalle de
+    CMI por proyecto cargado en el Paso 02 (tipo='bcr') y de la validación del Paso 01.
+
+    El CMI_BCR del período de inicio es el que se venía cobrando al cierre de la 688: por eso se
+    toma = Σ CMI individual del ÚLTIMO tramo = CMI_BCR total del último tramo (Paso 01). La base de
+    capital regulada BCR₀ (insumo para el primer recálculo) se deriva del soporte de esos activos:
+    VA₀ⱼ = VPR₀ⱼ·(1+r688)^t·fa0 (VPR₀ = VIA − VP(CMI×Q) si no viene explícito), compensando los VA₀
+    negativos contra los positivos (art. 2.1.2.1.5.2.1.1); cak = Σ VA₀d/PRR; CI = Σcak + BCR₀·r.
+    Si no hay soporte cargado, la BCR₀ cae a la de activos (bcr0_calculo). Una sola fuente de verdad
+    para los cuadros del Paso 2 y para la proyección."""
+    emp_row = conn.execute(text(
+        "SELECT r, suscriptores_seg, fecha_inicio_688, fecha_inicio_1032 FROM empresa WHERE id=:e"),
+        {"e": empresa_id}).mappings().first()
+    if r_emp is None:
+        r_emp = float(emp_row["r"]) if (emp_row and emp_row["r"] is not None) else 0.0
+    seg688 = segmento_688(emp_row["suscriptores_seg"]) if emp_row else None
+    r688_auto = r688_de_segmento(seg688)
+    i14, i25 = ipc_dic(conn, 2014), ipc_dic(conn, 2025)
+    fa0_auto = (float(i25) / float(i14)) if (i14 and i25) else None
+    fecha_auto = emp_row["fecha_inicio_688"] if emp_row else None
+    fecha_1032 = emp_row["fecha_inicio_1032"] if emp_row else None
+    ps = params(conn, empresa_id)
+    servs = _servicios_empresa(conn, empresa_id)
+    tramos_bcr = cmi_tramos_componente(conn, empresa_id).get("bcr", [])
+    ultimo = tramos_bcr[-1] if tramos_bcr else None
+    ult_idx = ultimo["idx"] if ultimo else None
+    # Robustez: si aún no hay serie del Paso 01 pero sí se cargó el detalle, usa el tramo máximo
+    # presente en cmi_proyecto (sin total contra el cual validar).
+    if ult_idx is None:
+        mx = conn.execute(text(
+            "SELECT max(tramo) FROM cmi_proyecto WHERE empresa_id=:e AND tipo='bcr'"),
+            {"e": empresa_id}).scalar()
+        ult_idx = int(mx) if mx is not None else None
+    rows = conn.execute(text(
+        "SELECT servicio, cmi, vpr0, valor_via688, vp_cmi_q, prr, vida_util "
+        "FROM cmi_proyecto WHERE empresa_id=:e AND tipo='bcr' AND tramo=:tr"),
+        {"e": empresa_id, "tr": ult_idx}).mappings().all() if ult_idx else []
+    by_serv = {}
+    for r in rows:
+        by_serv.setdefault(r["servicio"], []).append(r)
+    calc_fallback = None
+    out = {}
+    for s in servs:
+        p = ps.get(s)
+        r688 = float(p["r688"]) if (p and p["r688"] is not None) else r688_auto
+        fecha_inicio = (p["fecha_inicio_688"] if (p and p["fecha_inicio_688"]) else fecha_auto)
+        t = _t_anios(fecha_inicio, fecha_1032) if fecha_inicio else None
+        fa0 = _fa0(p) if (p and p["ipc_dic_2014"] and p["ipc_dic_2025"]) else fa0_auto
+        ccp = float(p["ccp_2025"]) if (p and p["ccp_2025"] is not None) else ccp_desde_consumos(conn, empresa_id, s)
+        total01 = (ultimo["totales"].get(s) if ultimo else None)
+        rs = by_serv.get(s, [])
+        n = len(rs)
+        suma_cmi = sum(float(r["cmi"]) for r in rs if r["cmi"] is not None) if rs else None
+        # CMI_BCR del período de inicio: lo cargado (Σ) si existe; si no, el total del Paso 01.
+        cmi_bcr = suma_cmi if (suma_cmi is not None and n > 0) else total01
+        sin_serie = total01 is None               # cargado sin serie del Paso 01 para validar
+        tol = max(0.01, 0.0005 * abs(total01)) if total01 else 0.01
+        ok = (suma_cmi is not None and total01 is not None and abs(suma_cmi - total01) <= tol)
+        # BCR₀ derivada del soporte de los activos del último tramo.
+        pos, neg, con_soporte = [], 0.0, False
+        for r in rs:
+            vpr0 = r["vpr0"]
+            if vpr0 is None and r["valor_via688"] is not None and r["vp_cmi_q"] is not None:
+                vpr0 = float(r["valor_via688"]) - float(r["vp_cmi_q"])
+            if vpr0 is None or r688 is None or t is None or fa0 is None:
+                continue
+            con_soporte = True
+            va0 = float(vpr0) * ((1 + r688) ** t) * fa0
+            prr = float(r["prr"]) if r["prr"] is not None else None
+            if va0 >= 0:
+                pos.append({"va0": va0, "prr": prr})
+            else:
+                neg += -va0
+        bcr0 = cak = ci = None
+        descuento = neg
+        if con_soporte:
+            negtot = neg
+            for a in sorted(pos, key=lambda x: (x["prr"] if x["prr"] is not None else 1e9)):
+                if negtot <= 0:
+                    a["va0d"] = a["va0"]; continue
+                take = min(a["va0"], negtot); a["va0d"] = a["va0"] - take; negtot -= take
+            bcr0 = sum(a["va0d"] for a in pos)
+            cak = sum((a["va0d"] / a["prr"]) for a in pos if a["prr"] and a["prr"] > 0)
+            ci = cak + bcr0 * r_emp
+        else:
+            if calc_fallback is None:
+                calc_fallback = bcr0_calculo(conn, empresa_id, r_emp)
+            cf = calc_fallback.get(s, {})
+            bcr0, cak, ci = cf.get("bcr"), cf.get("cak"), cf.get("ci")
+            descuento = cf.get("descuento") or 0.0
+        out[s] = {"cmi_bcr": cmi_bcr, "total01": total01, "suma_cmi": suma_cmi, "n": n, "ok": ok,
+                  "sin_serie": sin_serie,
+                  "bcr": bcr0, "cak": cak, "ci": ci, "ccp": ccp, "r688": r688, "t": t, "fa0": fa0,
+                  "con_soporte": con_soporte, "descuento": descuento, "seg688": seg688,
+                  "cmi_bcr_ci": (ci / ccp if (ci is not None and ccp) else None),
+                  "sin_param": r688 is None}
+    out["_r"] = r_emp
+    out["_seg688"] = seg688
+    out["_ipc_14"] = float(i14) if i14 else None
+    out["_ipc_25"] = float(i25) if i25 else None
+    out["_fecha_688"] = str(fecha_auto) if fecha_auto else None
+    out["_ultimo"] = (ultimo["desde"] + " → " + ultimo["hasta"]) if ultimo else None
+    return out
+
+
 def eliminar(conn, empresa_id, aid):
     conn.execute(text("DELETE FROM bcr_activo WHERE empresa_id=:e AND id=:i"),
                  {"e": empresa_id, "i": aid})
@@ -983,7 +1089,8 @@ def proyeccion(conn, empresa_id, servicio, r, demanda=None, horizonte=5, anio0=2
     depreciación lineal a `vida_util`). El POIR 688 no se suma aquí: su valor ya está incorporado
     en la BCR₀, de modo que la evolución hacia adelante la gobierna el POIR 1032.
     """
-    calc = bcr0_calculo(conn, empresa_id, r).get(servicio, {"bcr": 0.0, "cak": 0.0})
+    # BCR₀ del período de inicio (detalle de CMI por proyecto; cae a activos si no hay soporte).
+    calc = bcr0_inicio(conn, empresa_id, r).get(servicio, {"bcr": 0.0, "cak": 0.0})
     bcr = float(calc.get("bcr") or 0.0); cuota = float(calc.get("cak") or 0.0)
     if demanda is None:
         demanda = demanda_anual(conn, empresa_id, servicio)

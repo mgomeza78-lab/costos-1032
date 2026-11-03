@@ -1653,6 +1653,7 @@ def inversiones(request: Request, eid: int):
         bcr_activos = bcr.lista(conn, eid)
         r_emp = float(emp["r"]) if emp["r"] is not None else 0.0903
         bcr0 = bcr.bcr0_calculo(conn, eid, r_emp)
+        bcr_ini = bcr.bcr0_inicio(conn, eid, r_emp)        # BCR₀/CMI_BCR del período de inicio (Paso 02)
         bcr_params = bcr.params(conn, eid)
         aps_list = conn.execute(text(
             "SELECT a.cod_dane, m.nombre AS municipio FROM aps a LEFT JOIN municipio m ON m.cod_dane=a.cod_dane "
@@ -1670,7 +1671,7 @@ def inversiones(request: Request, eid: int):
         periodo_activo=pa, es_inicio=req.es_inicio(pa["clave"]),
         clasificaciones=inv.CLASIFICACIONES, estados=inv.ESTADOS,
         comp_ac=inv.COMPONENTES_AC, comp_al=inv.COMPONENTES_AL,
-        servicios=servicios, bcr_activos=bcr_activos, bcr0=bcr0, bcr_comp=bcr.COMPONENTES,
+        servicios=servicios, bcr_activos=bcr_activos, bcr0=bcr0, bcr_ini=bcr_ini, bcr_comp=bcr.COMPONENTES,
         bcr_serv=bcr.SERVICIOS, bcr_params=bcr_params, bcr_series=bcr_series, bcr_ingresos=bcr_ingresos,
         bcr_tramos=bcr_tramos,
         aps_list=aps_list, aps_nom={a["cod_dane"]: a["municipio"] for a in aps_list},

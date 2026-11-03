@@ -151,71 +151,61 @@ año i se obtiene el <b>VP(CMI×Q)</b>, que se resta al VIA688 para el VPR₀ (a
 {# ============================ PASO 2 · BCR DE INICIO ============================ #}
 {% if sec=='bcr' %}
 <h2 class="serv-h">Paso 2 · BCR₀ de inicio (marco 688)</h2>
-<p class="muted2">BCR₀ = VI688₀ + VIDIFCMI_688₀ (arts. 2.1.2.1.3.5.3 a .7). VA₀ⱼ = VPR₀ⱼ·(1+r688)^t·fa0;
-los VA₀ negativos se compensan contra activos con pendiente &gt; 0 (art. 2.1.2.1.5.2.1.1). CI = Σcak + BCR₀·r;
-CMI_BCR = CI / CCP. El VPR₀ usa el VP(CMI×Q) del paso 1.</p>
+<p class="muted2">En el <b>período de inicio</b> (jul–dic 2026) el CMI_BCR es el que se venía cobrando al cierre
+de la 688: por eso se toma = <b>Σ CMI individual del último tramo = CMI_BCR total del último tramo</b> (Paso 1).
+La <b>BCR₀</b> (base de capital regulada) es el insumo para el primer recálculo y se deriva del soporte de esos
+activos: VA₀ⱼ = VPR₀ⱼ·(1+r688)^t·fa0, compensando los VA₀&lt;0 (art. 2.1.2.1.5.2.1.1); CI = Σcak + BCR₀·r.</p>
 
+{# Resumen: CMI_BCR del período de inicio (lo que importa) + r #}
 <div class="cards">
-  {% for s in servicios %}{% set b = bcr0.get(s) %}
-  <div class="card"><div class="k">BCR₀ · {{ bcr_serv[s] }}</div><div class="v">{{ b.bcr|valor('$') }}</div>
-    <div class="muted2">CMI_BCR {{ b.cmi_bcr|valor('$') ~ ' /m³' if b.cmi_bcr is not none else 'falta CCP' }}</div></div>
+  {% for s in servicios %}{% set b = bcr_ini.get(s) %}
+  <div class="card"><div class="k">CMI_BCR · {{ bcr_serv[s] }} <span class="muted2">· período de inicio</span></div>
+    <div class="v">{{ b.cmi_bcr|valor('$') ~ ' /m³' if b.cmi_bcr is not none else '—' }}</div>
+    <div class="muted2">{% if b.n and b.sin_serie %}{{ b.n }} proy · Σ {{ b.suma_cmi|valor('$') }}
+      <b style="color:#8a6d1f">· sin total Paso 1 para validar</b>
+      {% elif b.n %}{{ b.n }} proy · Σ {{ b.suma_cmi|valor('$') }} / total {{ b.total01|valor('$') if b.total01 is not none else '—' }}
+      <b style="color:{{ '#1f8a70' if b.ok else '#b5342b' }}">{{ '✓ cuadra' if b.ok else '✗ difiere' }}</b>
+      {% elif b.total01 is not none %}total Paso 1 {{ b.total01|valor('$') }} · falta cargar el detalle por proyecto (abajo)
+      {% else %}carga la serie del Paso 1{% endif %}</div></div>
   {% endfor %}
   <div class="card"><div class="k">Tasa de remuneración r</div><div class="v" style="font-size:22px">{{ (r_emp*100)|round(2) }} %</div>
     <div class="muted2">art. 2.1.2.1.3.1.7</div></div>
 </div>
 
-{% if puede_cargar %}
-<h3 class="serv-h" style="margin-top:6px">Cargar el inventario de activos de la BCR₀ (inicio de la 688)</h3>
-<p class="muted2">Sube un archivo con <b>todos los activos</b> que entraron al inicio de la 688 — una fila por
-activo (VI287, VIdif287, POIR 688, VIDIF_688, ambientales VI_IAR, admin/operativos VI_AO, terrenos). El
-sistema calcula el VA₀, la BCR₀ y el CMI_BCR a partir de ellos.
-<a href="/empresa/{{ emp.id }}/bcr-activos-plantilla"><b>Descargar plantilla Excel</b></a>. Puedes subir varios archivos (Excel o CSV).</p>
-<form method="post" action="/empresa/{{ emp.id }}/bcr-activos-csv" enctype="multipart/form-data" class="up-form">
-  <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
-  <label>Inventario de activos (Excel o CSV) <input type="file" name="archivos" accept=".xlsx,.xls,.csv" multiple required></label>
-  <button class="btn primary" type="submit">Cargar activos</button>
-</form>
-<p class="muted2" style="margin-top:4px">También puedes agregar o corregir un activo suelto en el paso
-<a href="/empresa/{{ emp.id }}/inversiones?sec=activos">4 · Activos administrativos y operativos</a>.</p>
-{% endif %}
+{# Parámetros 688 — iguales para ambos servicios: una sola línea, no cuadros #}
+{% set bA = bcr_ini.get(servicios[0]) %}
+<p class="hint" style="margin-top:4px"><b>Parámetros 688</b> (iguales para ambos servicios, no se digitan):
+WACC r688 <b>{{ (bA.r688*100)|round(2) ~ ' %' if bA.r688 is not none else '—' }}</b>{% if bA.seg688 %} (segmento {{ bA.seg688 }}, {{ 'grandes >100.000' if bA.seg688==1 else '5.001–100.000' }}){% endif %} ·
+fa0 = IPC dic-25 / dic-14 <b>{{ bA.fa0|round(4) if bA.fa0 is not none else '—' }}</b> ({{ bcr_ini['_ipc_25']|valor if bcr_ini['_ipc_25'] else '—' }} / {{ bcr_ini['_ipc_14']|valor if bcr_ini['_ipc_14'] else '—' }}) ·
+t = <b>{{ bA.t|round(2) if bA.t is not none else '—' }}</b> años (inicio 688 → jun-2026).
+El <b>CCP</b> (consumo corregido por pérdidas) y la <b>BCR₀</b> van por servicio abajo. La provisión POIR se gestiona en su paso (5).</p>
 
-<p class="hint">Estos parámetros ya <b>no se digitan</b>: el <b>r688 lo da el segmento de la 688</b> (Seg 1 &gt;100.000 → 12,28 %; Seg 2
-5.001–100.000 → 12,76 %); los <b>IPC</b> dic-2014 y dic-2025 salen de la tabla de IPC; la <b>fecha de inicio 688</b>,
-de la empresa; y el <b>CCP</b> se calcula de los consumos del año base 2025 con IPUF* = 6 (art. 2.1.2.1.3.5.2, par. 1).
-La <b>provisión POIR</b> se gestiona en su propio paso (5).</p>
-{% for s in servicios %}{% set b = bcr0.get(s) %}{% set pa = bcr_params.get(s) %}
+{# CCP y base de capital por servicio — secundario, insumo del recálculo #}
+{% for s in servicios %}{% set b = bcr_ini.get(s) %}
 <h3 style="font-family:var(--head);font-size:14.5px;color:var(--teal-deep);margin:16px 0 6px">{{ bcr_serv[s] }}</h3>
 <div class="cards">
-  <div class="card"><div class="k">WACC r688 (del segmento 688)</div><div class="v" style="font-size:22px">{{ (b.r688*100)|round(2) ~ ' %' if b.r688 is not none else '—' }}</div>
-    <div class="muted2">{% if b.seg688 %}Segmento 688 {{ b.seg688 }} · {{ 'Grandes >100.000' if b.seg688==1 else '5.001–100.000' }}{% else %}falta el n.º de suscriptores de la empresa{% endif %}</div></div>
-  <div class="card"><div class="k">fa0 = IPC dic-25 / dic-14</div><div class="v" style="font-size:22px">{{ b.fa0|round(4) if b.fa0 is not none else '—' }}</div>
-    <div class="muted2">IPC 2014 {{ bcr0['_ipc_14']|valor if bcr0['_ipc_14'] else 'falta en tabla IPC' }} · 2025 {{ bcr0['_ipc_25']|valor if bcr0['_ipc_25'] else 'falta en tabla IPC' }}</div></div>
-  <div class="card"><div class="k">CCP 2025 (de consumos)</div><div class="v" style="font-size:20px">{{ b.ccp|valor('m³') if b.ccp is not none else '—' }}</div>
-    <div class="muted2">facturado 2025 + 6·Σsusc·mes {% if b.ccp is none %}· carga los consumos 2025{% endif %}</div></div>
+  <div class="card"><div class="k">CCP año base 2025</div><div class="v" style="font-size:20px">{{ b.ccp|valor('m³') if b.ccp is not none else '—' }}</div>
+    <div class="muted2">consumo corregido por pérdidas = AP − 6·Σsusc·mes (art. 2.1.2.1.3.3.1){% if b.ccp is none %} · carga consumos/macromedición 2025{% endif %}</div></div>
+  <div class="card"><div class="k">BCR₀ (Σ VA₀ compensado)</div><div class="v" style="font-size:22px">{{ b.bcr|valor('$') if b.bcr is not none else '—' }}</div>
+    <div class="muted2">{% if b.con_soporte %}de VPR₀·(1+r688)^t·fa0{% if b.descuento %} · descuento {{ b.descuento|valor('$') }}{% endif %}{% else %}insumo del recálculo · soporte opcional{% endif %}</div></div>
+  <div class="card"><div class="k">Σ cak · CI</div><div class="v" style="font-size:20px">{{ b.ci|valor('$') if b.ci is not none else '—' }}</div>
+    <div class="muted2">Σcak {{ b.cak|valor('$') if b.cak is not none else '—' }} · CI/CCP = {{ b.cmi_bcr_ci|valor('$') ~ ' /m³' if b.cmi_bcr_ci is not none else '—' }} (comprobación)</div></div>
 </div>
-<div class="cards">
-  <div class="card"><div class="k">BCR₀ (Σ VA₀ compensado)</div><div class="v" style="font-size:22px">{{ b.bcr|valor('$') }}</div></div>
-  <div class="card"><div class="k">Σ cak</div><div class="v" style="font-size:22px">{{ b.cak|valor('$') }}</div></div>
-  <div class="card"><div class="k">CI = Σcak + BCR₀·r</div><div class="v" style="font-size:22px">{{ b.ci|valor('$') }}</div></div>
-  <div class="card"><div class="k">CMI_BCR</div><div class="v" style="font-size:22px">{{ b.cmi_bcr|valor('$') ~ ' /m³' if b.cmi_bcr is not none else '—' }}</div>
-    <div class="muted2">{% if b.descuento %}descuento compensado {{ b.descuento|valor('$') }} · {% endif %}t={{ b.t|round(3) if b.t is not none else '—' }} · fa0={{ b.fa0|round(4) if b.fa0 is not none else '—' }}</div></div>
-</div>
-{% if b.sin_param %}<p class="hint">Falta cargar los parámetros 688 ({{ bcr_serv[s] }}) para calcular el VA₀ a partir del VPR₀.</p>{% endif %}
+{% if b.sin_param %}<p class="hint">Falta el n.º de suscriptores de la empresa para derivar el r688 y el VA₀.</p>{% endif %}
 {% endfor %}
 
 {# ---- Detalle del CMI por proyecto (sustento del cobro 688) ---- #}
-<h2 class="serv-h" style="margin-top:22px">Detalle del CMI por proyecto (sustento del cobro 688)</h2>
-<p class="muted2">La empresa carga el <b>CMI individual de cada proyecto/activo</b> (está en sus modelos),
-separado por componente (<b>CMI_BCR</b> y <b>CMI_POIR</b>) y por <b>tramo</b>: el Paso 1 fija cuántos archivos
-(uno por cada período en que el CMI total se mantuvo estable). El sistema valida que, por servicio,
-<b>Σ CMI de los proyectos = CMI total del tramo</b>. Columnas obligatorias: <code>id_activo, servicio,
-cmi_dic2014</code>; de soporte (estilo formato BCR0 CRA): <code>vida_util_anios, prr_anios,
-anio_operacion, valor_via688_dic2014, vp_cmi_q_dic2014</code>. <a href="/empresa/{{ emp.id }}/plantilla/cmi_proyecto">Descargar plantilla</a>.</p>
+<h2 class="serv-h" style="margin-top:22px">Detalle del CMI_BCR por proyecto (sustento del cobro 688)</h2>
+<p class="muted2">La empresa carga el <b>CMI_BCR individual de cada proyecto/activo</b> (está en sus modelos),
+por <b>tramo</b>: el Paso 1 fija cuántos archivos — uno por cada período en que el CMI_BCR total se mantuvo
+estable. El sistema valida que, por servicio, <b>Σ CMI de los proyectos = CMI_BCR total del tramo</b>, y el
+soporte (<code>valor_via688_dic2014, vp_cmi_q_dic2014, vpr0_dic2014, prr_anios</code>) alimenta la <b>BCR₀</b> de arriba.
+Columnas obligatorias: <code>id_activo, servicio, cmi_dic2014</code>.
+<a href="/empresa/{{ emp.id }}/plantilla/cmi_proyecto">Descargar plantilla</a>.
+El detalle del <b>CMI_POIR</b> va en el <a href="/empresa/{{ emp.id }}/inversiones?sec=poir">Paso 3 · POIR</a>.</p>
 
-{% for tipo, lbl in [('bcr','CMI_BCR'), ('poir','CMI_POIR')] %}
-{% set trs = cmi_proy.get(tipo) %}
-<h3 style="font-family:var(--head);font-size:14px;color:var(--teal-deep);margin:14px 0 4px">{{ lbl }}</h3>
-{% if not trs %}<p class="hint">Carga la serie del Paso 1 para que aparezcan los tramos de {{ lbl }}.</p>{% endif %}
+{% set trs = cmi_proy.get('bcr') %}
+{% if not trs %}<p class="hint">Carga la serie del Paso 1 para que aparezcan los tramos del CMI_BCR.</p>{% endif %}
 {% for tr in trs %}
 <div style="border:1px solid #e7e2d4;border-radius:8px;padding:8px 10px;margin:6px 0">
   <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;align-items:center">
@@ -233,13 +223,12 @@ anio_operacion, valor_via688_dic2014, vp_cmi_q_dic2014</code>. <a href="/empresa
   {% if puede_cargar %}
   <form method="post" action="/empresa/{{ emp.id }}/cmi-proyecto-csv" enctype="multipart/form-data" class="up-form" style="margin-top:6px">
     <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
-    <input type="hidden" name="tipo" value="{{ tipo }}"><input type="hidden" name="tramo" value="{{ tr.idx }}">
+    <input type="hidden" name="tipo" value="bcr"><input type="hidden" name="tramo" value="{{ tr.idx }}">
     <input type="file" name="archivos" accept=".csv" required>
     <button class="btn" type="submit">Cargar tramo {{ tr.idx }}</button>
   </form>
   {% endif %}
 </div>
-{% endfor %}
 {% endfor %}
 
 <h2 class="serv-h" style="margin-top:22px">Proyección del CMI · próximos 5 años tarifarios</h2>
@@ -267,7 +256,45 @@ de lo facturado o del CCP cargado.</p>
 {# ============================ PASO 3 · POIR 688 ============================ #}
 {% if sec=='poir' %}
 <h2 class="serv-h">Paso 3 · POIR planeado · CMI por proyecto y plan de inversiones</h2>
-<p class="muted2">El CMI es <b>por activo</b> y pudo cambiar con cada <b>modificación del POIR</b>. Indica las
+
+{# ---- Detalle del CMI_POIR por proyecto (sustento del cobro 688) ---- #}
+<h3 class="serv-h" style="margin-top:4px">Detalle del CMI_POIR por proyecto (sustento del cobro 688)</h3>
+<p class="muted2">La empresa carga el <b>CMI_POIR individual de cada proyecto/activo</b> (está en sus modelos),
+por <b>tramo</b>: el Paso 1 fija cuántos archivos — uno por cada período en que el CMI_POIR total se mantuvo
+estable. El sistema valida que, por servicio, <b>Σ CMI de los proyectos = CMI_POIR total del tramo</b>.
+Columnas obligatorias: <code>id_activo, servicio, cmi_dic2014</code>; de soporte: <code>anio_operacion,
+valor_via688_dic2014, vp_cmi_q_dic2014, vida_util_anios</code>.
+<a href="/empresa/{{ emp.id }}/plantilla/cmi_proyecto">Descargar plantilla</a>.</p>
+
+{% set trs = cmi_proy.get('poir') %}
+{% if not trs %}<p class="hint">Carga la serie del Paso 1 para que aparezcan los tramos del CMI_POIR.</p>{% endif %}
+{% for tr in trs %}
+<div style="border:1px solid #e7e2d4;border-radius:8px;padding:8px 10px;margin:6px 0">
+  <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;align-items:center">
+    <span><b>Tramo {{ tr.idx }}</b> <span class="muted2">· {{ tr.desde }} → {{ tr.hasta }}</span></span>
+    <span>
+    {% for sv in tr.servicios %}
+      {% set bg = '#d7efe3' if sv.ok else ('#fde2e0' if sv.cargado else '#f0ead7') %}
+      {% set fg = '#1f8a70' if sv.ok else ('#b5342b' if sv.cargado else '#8a6d1f') %}
+      <span style="background:{{ bg }};color:{{ fg }};padding:2px 7px;border-radius:8px;font-size:11.5px;margin-left:4px">
+        {{ sv.servicio }}: {% if sv.cargado %}{{ sv.n }} proy · Σ {{ sv.suma|valor('$') }} / total {{ sv.total|valor('$') if sv.total is not none else '—' }}
+        {{ '✓' if sv.ok else '✗ difiere' }}{% else %}total {{ sv.total|valor('$') if sv.total is not none else '—' }} · falta{% endif %}</span>
+    {% endfor %}
+    </span>
+  </div>
+  {% if puede_cargar %}
+  <form method="post" action="/empresa/{{ emp.id }}/cmi-proyecto-csv" enctype="multipart/form-data" class="up-form" style="margin-top:6px">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+    <input type="hidden" name="tipo" value="poir"><input type="hidden" name="tramo" value="{{ tr.idx }}">
+    <input type="file" name="archivos" accept=".csv" required>
+    <button class="btn" type="submit">Cargar tramo {{ tr.idx }}</button>
+  </form>
+  {% endif %}
+</div>
+{% endfor %}
+
+<h3 class="serv-h" style="margin-top:18px">POIR planeado por modificaciones · VIA y VP(CMI×Q) por activo</h3>
+<p class="muted2">Alternativa detallada: el CMI es <b>por activo</b> y pudo cambiar con cada <b>modificación del POIR</b>. Indica las
 fechas de las modificaciones y sube un Excel por cada una (incluida la 0 = original). El sistema calcula el
 VIA y el VP(CMI×Q) por activo usando el CMI vigente en cada año. La <b>ejecución real</b> se registra en el
 paso 4 · POIR ejecutado.
