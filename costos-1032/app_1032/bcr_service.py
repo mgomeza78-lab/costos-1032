@@ -1135,29 +1135,39 @@ def poir_plan_resumen(conn, empresa_id):
             "ORDER BY tramo, servicio, id_activo"), {"e": empresa_id}).mappings().all():
         porf.setdefault(int(r["tramo"]), []).append(dict(r))
 
+    servs_emp = _servicios_empresa(conn, empresa_id)
+
     def _anios(filas):
+        # Σ valor por (año, servicio) → lista [(año, {acueducto:v, alcantarillado:v}), …] para la gráfica por servicio.
         ac = {}
         for f in filas:
             y = f["anio_planeado"]
             if y is not None:
-                ac[int(y)] = ac.get(int(y), 0.0) + (f["valor_poir"] or 0.0)
+                d = ac.setdefault(int(y), {})
+                d[f["servicio"]] = d.get(f["servicio"], 0.0) + (f["valor_poir"] or 0.0)
         return sorted(ac.items())
 
     def _fila(idx, desde, hasta, totales, filas):
         servicios = []
-        for s, total in (totales or {}).items():
+        # servicios con total del Paso 1, más cualquier servicio cargado que no esté
+        claves = list((totales or {}).keys()) or servs_emp
+        for s in claves:
+            total = (totales or {}).get(s)
             fs = [f for f in filas if f["servicio"] == s]
             suma = sum((f["cmi"] or 0.0) for f in fs) if fs else None
+            valor = sum((f["valor_poir"] or 0.0) for f in fs) if fs else None
+            vp = sum((f["vp_poir"] or 0.0) for f in fs) if fs else None
             tol = max(0.01, 0.0005 * abs(total)) if total else 0.01
             ok = (suma is not None and total is not None and abs(suma - total) <= tol)
             servicios.append({"servicio": s, "total": total, "n": len(fs), "suma": suma,
-                              "ok": ok, "cargado": len(fs) > 0,
+                              "valor": valor, "vp": vp, "ok": ok, "cargado": len(fs) > 0,
                               "dif": (suma - total) if (suma is not None and total is not None) else None})
         etq = "inicial" if idx == 1 else ("actualización %d" % (idx - 1))
         an = _anios(filas)
+        mx = max((v for _, d in an for v in d.values()), default=0.0)
         return {"idx": idx, "desde": desde, "hasta": hasta, "etiqueta": etq,
                 "servicios": servicios, "filas": filas, "n": len(filas),
-                "anios": an, "anios_max": max((v for _, v in an), default=0.0)}
+                "anios": an, "anios_max": mx}
 
     out = []
     vistos = set()
