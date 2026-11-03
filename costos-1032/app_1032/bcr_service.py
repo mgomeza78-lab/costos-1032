@@ -955,16 +955,25 @@ def cmi_inicio(conn, empresa_id, tipo="bcr", r_emp=None):
         sin_serie = total01 is None               # cargado sin serie del Paso 01 para validar
         tol = max(0.01, 0.0005 * abs(total01)) if total01 else 0.01
         ok = (suma_cmi is not None and total01 is not None and abs(suma_cmi - total01) <= tol)
-        # Base de capital derivada del soporte de los activos del último tramo.
+        # VPR₀ crudo (sin compensar), separado por signo — es lo que se muestra en los Pasos 2/3.
+        vpr0_pos, vpr0_neg, n_pos, n_neg = 0.0, 0.0, 0, 0
+        # Base de capital derivada del soporte (VA₀ = VPR₀·(1+r688)^t·fa0) — insumo del paso de base.
         pos, neg, con_soporte = [], 0.0, False
         for r in rs:
             vpr0 = r["vpr0"]
             if vpr0 is None and r["valor_via688"] is not None and r["vp_cmi_q"] is not None:
                 vpr0 = float(r["valor_via688"]) - float(r["vp_cmi_q"])
-            if vpr0 is None or r688 is None or t is None or fa0 is None:
+            if vpr0 is None:
+                continue
+            vpr0 = float(vpr0)
+            if vpr0 >= 0:
+                vpr0_pos += vpr0; n_pos += 1
+            else:
+                vpr0_neg += vpr0; n_neg += 1
+            if r688 is None or t is None or fa0 is None:
                 continue
             con_soporte = True
-            va0 = float(vpr0) * ((1 + r688) ** t) * fa0
+            va0 = vpr0 * ((1 + r688) ** t) * fa0
             prr = float(r["prr"]) if r["prr"] is not None else None
             if va0 >= 0:
                 pos.append({"va0": va0, "prr": prr})
@@ -990,6 +999,7 @@ def cmi_inicio(conn, empresa_id, tipo="bcr", r_emp=None):
             descuento = cf.get("descuento") or 0.0
         out[s] = {"cmi_bcr": cmi_c, "total01": total01, "suma_cmi": suma_cmi, "n": n, "ok": ok,
                   "sin_serie": sin_serie,
+                  "vpr0_pos": vpr0_pos, "vpr0_neg": vpr0_neg, "n_pos": n_pos, "n_neg": n_neg,
                   "bcr": base, "cak": cak, "ci": ci, "ccp": ccp, "r688": r688, "t": t, "fa0": fa0,
                   "con_soporte": con_soporte, "descuento": descuento, "seg688": seg688,
                   "cmi_bcr_ci": (ci / ccp if (ci is not None and ccp) else None),

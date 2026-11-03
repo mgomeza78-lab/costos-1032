@@ -1638,7 +1638,7 @@ def inversiones(request: Request, eid: int):
         return r
     user = session_user(request)
     sec = request.query_params.get("sec") or "agua"
-    if sec not in ("agua", "bcr", "poir", "poir_ejec", "poir1032", "poir1032_ejec", "activos", "provision", "proyeccion"):
+    if sec not in ("agua", "bcr", "poir", "poir_ejec", "base", "poir1032", "poir1032_ejec", "activos", "provision", "proyeccion"):
         sec = "agua"
     # El POIR del marco 1032 (prospectivo, desde el año 1) se separa del POIR 688 (histórico, inicio).
     marco_sec = "1032" if sec in ("poir1032", "poir1032_ejec") else "688"
