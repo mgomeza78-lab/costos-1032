@@ -142,10 +142,11 @@ presente y validar la cobertura mensual de m³ facturados 688. Los <b>IPC</b> sa
 {% endif %}
 
 {% if fuente=='comercial' %}
-<h2 class="serv-h">Comercial · reporte de facturación del SUI</h2>
-<p class="muted2">Suscriptores, consumos y facturación por clase/estrato. Es el <b>reporte comercial
-original del SUI</b> (una fila por suscriptor); el sistema lo agrega por clase de uso. Es una sola
-fuente y un solo formato: no se resume ni se digita nada, <b>todo sale del archivo</b>.</p>
+<h2 class="serv-h">Comercial · Facturación / Información Comercial del SUI</h2>
+<p class="muted2">Suscriptores, consumos y facturación por clase/estrato, directo del <b>reporte del SUI</b>:
+no se resume ni se digita nada, <b>todo sale del archivo</b>. El sistema admite el de <b>Facturación</b>
+(una fila por suscriptor, con subsidiable — recomendado) y, como alternativa, el de <b>Información
+Comercial</b> (formato 1539, una fila por clase; sin subsidiable, limita subsidios).</p>
 {% if puede_cargar %}
 <div class="carga-metodo">
   <div class="metodo-tabs">
@@ -156,8 +157,9 @@ fuente y un solo formato: no se resume ni se digita nada, <b>todo sale del archi
   <div class="metodo-panel active" data-m="masivo">
     <p class="muted2">Sube el reporte del SUI <b>tal como lo descargas</b>, <b>uno por mes</b>, y varios meses
     a la vez: elige el <b>período</b>, el <b>año</b> y el <b>servicio</b>; el sistema detecta el <b>mes</b> por
-    el nombre de cada archivo y lo puedes corregir antes de cargar. Reconoce los <b>dos formatos del SUI</b>
-    (el clásico y el nuevo), separador coma o «;», y <b>desagrega por APS</b> con el municipio/DANE del reporte.</p>
+    el nombre de cada archivo y lo puedes corregir antes de cargar. Reconoce tanto la <b>Facturación</b>
+    (por suscriptor) como la <b>Información Comercial</b> (agregada, formato 1539), separador coma o «;»,
+    y <b>desagrega por APS</b> con el municipio/DANE del reporte.</p>
     <form method="post" action="/empresa/{{ emp.id }}/cargar-sui-lote" enctype="multipart/form-data" class="form-grid" id="suiLote">
       <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
       {{ periodo_anio() }}

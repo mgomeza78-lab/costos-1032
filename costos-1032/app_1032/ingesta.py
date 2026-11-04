@@ -441,7 +441,7 @@ def _cargar_sui_agregado(conn, empresa_id, serv, anio, mes, reader, cols, col_su
     c_cons = next((cols[a] for a in _CONS if a in cols), None)
     c_serv = next((cols[a] for a in _SERV if a in cols), None)
     if not c_clase or not c_cons:
-        return 0, ["reporte agregado del SUI: no se hallaron las columnas de clase de uso o de consumo total"]
+        return 0, ["Informacion Comercial del SUI (1539): no se hallaron las columnas de clase de uso o de consumo total"]
     cfg = CAMPOS_SUI[serv]
     c_dep = next((cols[a] for a in cfg["depto"] if a in cols), None)
     c_mun = next((cols[a] for a in cfg["mun"] if a in cols), None)
@@ -499,10 +499,10 @@ def _cargar_sui_agregado(conn, empresa_id, serv, anio, mes, reader, cols, col_su
              "suscriptores=excluded.suscriptores, m3_facturados=excluded.m3_facturados, "
              "origen=excluded.origen, cargado_en=now()",
              {"e": empresa_id, "a": anio, "m": mes, "s": serv, "su": tot_susc, "m3": tot_m3})
-        err.insert(0, "Nota: formato agregado del SUI sin consumo subsidiable ni factores; la "
-                      "estimacion de subsidios y contribuciones queda limitada")
+        err.insert(0, "Nota: Informacion Comercial del SUI (formato 1539) sin consumo subsidiable "
+                      "ni factores; la estimacion de subsidios y contribuciones queda limitada")
     elif not err:
-        err.append("reporte agregado del SUI: no hay filas para el servicio seleccionado "
+        err.append("Informacion Comercial del SUI (1539): no hay filas para el servicio seleccionado "
                    "(revisa la columna «Servicio»: 1=acueducto, 2=alcantarillado)")
     return ok, err
 
