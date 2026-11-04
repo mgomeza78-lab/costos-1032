@@ -195,8 +195,8 @@ def ingesta_activos(conn, empresa_id, filas, usuario_id):
     return ok, err
 
 
-_SERV_IN = {"ac": "acueducto", "acueducto": "acueducto",
-            "al": "alcantarillado", "alcantarillado": "alcantarillado"}
+_SERV_IN = {"ac": "acueducto", "acueducto": "acueducto", "1": "acueducto",
+            "al": "alcantarillado", "alcantarillado": "alcantarillado", "2": "alcantarillado"}
 
 
 def plantilla_activos_bytes():
