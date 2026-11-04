@@ -434,10 +434,12 @@ def cargar_facturacion_sui(conn, empresa_id, servicio, anio, mes, contenido):
 
 
 def _cargar_sui_agregado(conn, empresa_id, serv, anio, mes, reader, cols, col_susc):
-    """Reporte AGREGADO del SUI: una fila por servicio/clase, con suscriptores y consumo YA sumados.
-    Opción ALTERNATIVA al reporte de Facturación. Filtra por el servicio seleccionado con la columna
-    «Servicio» (1=acueducto, 2=alcantarillado) si está presente. No trae consumo subsidiable ni
-    factores de subsidio → quedan en NULL y la estimación de subsidios y contribuciones es LIMITADA."""
+    """Reporte AGREGADO del SUI (Información Comercial, formato 1539): una fila por servicio/clase,
+    con suscriptores y consumo YA sumados. Alternativa al reporte de Facturación. El archivo trae
+    AMBOS servicios en la columna «Servicio» (1=acueducto, 2=alcantarillado), así que se cargan los
+    DOS de una sola vez (no hay que elegir servicio ni subirlo dos veces); si no hay columna
+    «Servicio» se carga como el servicio seleccionado. No trae consumo subsidiable ni factores de
+    subsidio → quedan en NULL y la estimación de subsidios y contribuciones es LIMITADA."""
     _CLASE = ["CODIGOCLASEDEUSO", "CODIGOCLASEUSO", "CLASEUSO"]
     _CONS = ["TOTALCONSUMOOVERTIMIENTODELPERIODOENMETROSCUBICOSM3", "TOTALCONSUMOOVERTIMIENTOM3",
              "TOTALCONSUMOOVERTIMIENTO", "CONSUMOM3", "VERTIMIENTOM3"]
@@ -455,59 +457,70 @@ def _cargar_sui_agregado(conn, empresa_id, serv, anio, mes, reader, cols, col_su
     usa_aps = usa_combo or bool(c_full)
     mapa = aps_mapa(conn, empresa_id) if usa_aps else {}
 
-    def _coincide_serv(v):
-        if c_serv is None:
-            return True
-        t = (v or "").strip().upper()
-        return (t in ("1", "AC", "ACUEDUCTO")) if serv == "acueducto" else (t in ("2", "AL", "ALC", "ALCANTARILLADO"))
-
-    agg = defaultdict(lambda: {"n": 0, "m3": 0.0})
-    for r in reader:
-        if not _coincide_serv(r.get(c_serv) if c_serv else None):
-            continue
-        clv = _int(r.get(c_clase))
-        if clv is None:
-            continue
-        cod = ""
-        if usa_combo:
-            cod5 = _cod_dane_combinado(r.get(c_dep), r.get(c_mun))
-            if cod5:
-                cod, _e = _resolver_aps(cod5, mapa); cod = cod or ""
-        elif c_full:
-            cod, _e = _resolver_aps(r.get(c_full), mapa); cod = cod or ""
-        a = agg[(clv, cod)]
-        a["n"] += _int(r.get(col_susc)) or 0
-        a["m3"] += _num(r.get(c_cons)) or 0.0
+    filas = list(reader)
+    _MATCH = {"acueducto": ("1", "AC", "ACUEDUCTO"),
+              "alcantarillado": ("2", "AL", "ALC", "ALCANTARILLADO")}
     sql_d = ("INSERT INTO carga_mensual_detalle(empresa_id,anio,mes,servicio,clase,cod_dane,"
              "suscriptores,m3,m3_subsidiable,origen) VALUES (:e,:a,:m,:s,:c,:cd,:su,:m3,NULL,'SUI') "
              "ON CONFLICT (empresa_id,anio,mes,servicio,clase,cod_dane) DO UPDATE SET "
              "suscriptores=excluded.suscriptores, m3=excluded.m3, "
              "m3_subsidiable=excluded.m3_subsidiable, origen=excluded.origen")
-    conn.execute(text("DELETE FROM carga_mensual_detalle WHERE empresa_id=:e AND anio=:a "
-                      "AND mes=:m AND servicio=:s"), {"e": empresa_id, "a": anio, "m": mes, "s": serv})
-    conn.execute(text("DELETE FROM carga_mensual WHERE empresa_id=:e AND anio=:a AND mes=:m "
-                      "AND servicio=:s AND cod_dane<>''"), {"e": empresa_id, "a": anio, "m": mes, "s": serv})
+
+    def _una(serv_t):
+        match = _MATCH[serv_t]
+        agg = defaultdict(lambda: {"n": 0, "m3": 0.0})
+        for r in filas:
+            if c_serv is not None and (r.get(c_serv) or "").strip().upper() not in match:
+                continue
+            clv = _int(r.get(c_clase))
+            if clv is None:
+                continue
+            cod = ""
+            if usa_combo:
+                cod5 = _cod_dane_combinado(r.get(c_dep), r.get(c_mun))
+                if cod5:
+                    cod, _e = _resolver_aps(cod5, mapa); cod = cod or ""
+            elif c_full:
+                cod, _e = _resolver_aps(r.get(c_full), mapa); cod = cod or ""
+            a = agg[(clv, cod)]
+            a["n"] += _int(r.get(col_susc)) or 0
+            a["m3"] += _num(r.get(c_cons)) or 0.0
+        conn.execute(text("DELETE FROM carga_mensual_detalle WHERE empresa_id=:e AND anio=:a "
+                          "AND mes=:m AND servicio=:s"), {"e": empresa_id, "a": anio, "m": mes, "s": serv_t})
+        conn.execute(text("DELETE FROM carga_mensual WHERE empresa_id=:e AND anio=:a AND mes=:m "
+                          "AND servicio=:s AND cod_dane<>''"), {"e": empresa_id, "a": anio, "m": mes, "s": serv_t})
+        ok_s, err_s = 0, []
+        for (clase, cod), a in sorted(agg.items()):
+            good, msg = _ins(conn, sql_d, {"e": empresa_id, "a": anio, "m": mes, "s": serv_t, "c": clase,
+                                           "cd": cod, "su": a["n"], "m3": a["m3"]})
+            if good:
+                ok_s += 1
+            else:
+                err_s.append(f"{serv_t} · clase {clase}{(' · '+cod) if cod else ''}: {msg}")
+        if ok_s:
+            tot_susc = sum(a["n"] for a in agg.values()); tot_m3 = sum(a["m3"] for a in agg.values())
+            _ins(conn,
+                 "INSERT INTO carga_mensual(empresa_id,anio,mes,servicio,cod_dane,suscriptores,m3_facturados,origen) "
+                 "VALUES (:e,:a,:m,:s,'',:su,:m3,'SUI') "
+                 "ON CONFLICT (empresa_id,anio,mes,servicio,cod_dane) DO UPDATE SET "
+                 "suscriptores=excluded.suscriptores, m3_facturados=excluded.m3_facturados, "
+                 "origen=excluded.origen, cargado_en=now()",
+                 {"e": empresa_id, "a": anio, "m": mes, "s": serv_t, "su": tot_susc, "m3": tot_m3})
+        return ok_s, err_s
+
+    # El agregado trae la columna «Servicio» → se cargan AMBOS servicios de una vez; si no, el seleccionado.
+    objetivos = ["acueducto", "alcantarillado"] if c_serv is not None else [serv]
     ok, err = 0, []
-    for (clase, cod), a in sorted(agg.items()):
-        good, msg = _ins(conn, sql_d, {"e": empresa_id, "a": anio, "m": mes, "s": serv, "c": clase,
-                                       "cd": cod, "su": a["n"], "m3": a["m3"]})
-        if good:
-            ok += 1
-        else:
-            err.append(f"clase {clase}{(' · '+cod) if cod else ''}: {msg}")
+    for st in objetivos:
+        o, e = _una(st)
+        ok += o
+        err += e
     if ok:
-        tot_susc = sum(a["n"] for a in agg.values()); tot_m3 = sum(a["m3"] for a in agg.values())
-        _ins(conn,
-             "INSERT INTO carga_mensual(empresa_id,anio,mes,servicio,cod_dane,suscriptores,m3_facturados,origen) "
-             "VALUES (:e,:a,:m,:s,'',:su,:m3,'SUI') "
-             "ON CONFLICT (empresa_id,anio,mes,servicio,cod_dane) DO UPDATE SET "
-             "suscriptores=excluded.suscriptores, m3_facturados=excluded.m3_facturados, "
-             "origen=excluded.origen, cargado_en=now()",
-             {"e": empresa_id, "a": anio, "m": mes, "s": serv, "su": tot_susc, "m3": tot_m3})
-        err.insert(0, "Nota: Informacion Comercial del SUI (formato 1539) sin consumo subsidiable "
-                      "ni factores; la estimacion de subsidios y contribuciones queda limitada")
+        err.insert(0, "Nota: Informacion Comercial del SUI (formato 1539) sin consumo subsidiable ni "
+                      "factores; subsidios y contribuciones quedan limitados. Se cargaron los servicios "
+                      "presentes en el archivo (acueducto y/o alcantarillado).")
     elif not err:
-        err.append("Informacion Comercial del SUI (1539): no hay filas para el servicio seleccionado "
+        err.append("Informacion Comercial del SUI (1539): no hay filas con clase y consumo "
                    "(revisa la columna «Servicio»: 1=acueducto, 2=alcantarillado)")
     return ok, err
 

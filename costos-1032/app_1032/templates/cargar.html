@@ -159,7 +159,9 @@ Comercial</b> (formato 1539, una fila por clase; sin subsidiable, limita subsidi
     a la vez: elige el <b>período</b>, el <b>año</b> y el <b>servicio</b>; el sistema detecta el <b>mes</b> por
     el nombre de cada archivo y lo puedes corregir antes de cargar. Reconoce tanto la <b>Facturación</b>
     (por suscriptor) como la <b>Información Comercial</b> (agregada, formato 1539), separador coma o «;»,
-    y <b>desagrega por APS</b> con el municipio/DANE del reporte.</p>
+    y <b>desagrega por APS</b> con el municipio/DANE del reporte. La <b>Información Comercial</b> (agregada) trae
+    los dos servicios en una columna «Servicio», así que se cargan <b>acueducto y alcantarillado de una sola vez</b>
+    (el selector de servicio de arriba aplica solo a la Facturación por suscriptor).</p>
     <form method="post" action="/empresa/{{ emp.id }}/cargar-sui-lote" enctype="multipart/form-data" class="form-grid" id="suiLote">
       <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
       {{ periodo_anio() }}
