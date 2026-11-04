@@ -10,6 +10,7 @@ inválida (o bloqueada por RLS) se descarta sin tumbar las demás.
 import csv
 import io
 import re
+import unicodedata
 from collections import defaultdict, Counter
 from sqlalchemy import text
 
@@ -292,12 +293,19 @@ def cargar_indicadores(conn, empresa_id, contenido):
     return ok, err
 
 
+def _sin_tildes(s):
+    return "".join(c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c))
+
+
 def _mapa_base(fieldnames):
-    """BASENAME (sin _NN, en mayúsculas) -> encabezado real."""
+    """BASENAME (sin _NN, sin tildes, sin espacios/puntuación salvo '_', en mayúsculas) -> encabezado
+    real. Reconoce encabezados con espacios y tildes (p. ej. «Código clase de uso» del reporte
+    AGREGADO del SUI) sin romper los esquemas clásico/nuevo (que no llevan espacios ni tildes)."""
     m = {}
     for h in fieldnames:
         if h:
-            m[_SUFIJO.sub("", h.strip()).upper()] = h
+            base = re.sub(r"[^0-9A-Za-z_]", "", _sin_tildes(_SUFIJO.sub("", h.strip()))).upper()
+            m[base] = h
     return m
 
 
@@ -328,6 +336,12 @@ def cargar_facturacion_sui(conn, empresa_id, servicio, anio, mes, contenido):
     if not reader.fieldnames:
         return 0, ["el archivo está vacío"]
     cols = _mapa_base(reader.fieldnames)
+    # Formato ALTERNATIVO: reporte AGREGADO del SUI (una fila por servicio/clase, con la columna de
+    # suscriptores ya sumada). Se reconoce por esa columna. No trae consumo subsidiable ni factores.
+    _AGG_SUSC = ["NUMERODESUSCRIPTORESATENDIDOS", "NUMEROSUSCRIPTORESATENDIDOS", "SUSCRIPTORESATENDIDOS"]
+    col_susc = next((cols[a] for a in _AGG_SUSC if a in cols), None)
+    if col_susc:
+        return _cargar_sui_agregado(conn, empresa_id, serv, anio, mes, reader, cols, col_susc)
     campos, faltan = _resolver_campos(cols, CAMPOS_SUI[serv], CAMPOS_SUI_REQ)
     if faltan:
         etq = {"clase": "clase de uso", "cons": "consumo/vertimiento (m³)",
@@ -411,6 +425,85 @@ def cargar_facturacion_sui(conn, empresa_id, servicio, anio, mes, contenido):
              "suscriptores=excluded.suscriptores, m3_facturados=excluded.m3_facturados, "
              "origen=excluded.origen, cargado_en=now()",
              {"e": empresa_id, "a": anio, "m": mes, "s": serv, "su": tot_susc, "m3": tot_m3})
+    return ok, err
+
+
+def _cargar_sui_agregado(conn, empresa_id, serv, anio, mes, reader, cols, col_susc):
+    """Reporte AGREGADO del SUI: una fila por servicio/clase, con suscriptores y consumo YA sumados.
+    Opción ALTERNATIVA al reporte de Facturación. Filtra por el servicio seleccionado con la columna
+    «Servicio» (1=acueducto, 2=alcantarillado) si está presente. No trae consumo subsidiable ni
+    factores de subsidio → quedan en NULL y la estimación de subsidios y contribuciones es LIMITADA."""
+    _CLASE = ["CODIGOCLASEDEUSO", "CODIGOCLASEUSO", "CLASEUSO"]
+    _CONS = ["TOTALCONSUMOOVERTIMIENTODELPERIODOENMETROSCUBICOSM3", "TOTALCONSUMOOVERTIMIENTOM3",
+             "TOTALCONSUMOOVERTIMIENTO", "CONSUMOM3", "VERTIMIENTOM3"]
+    _SERV = ["SERVICIO", "CODIGOSERVICIO", "IDSERVICIO"]
+    c_clase = next((cols[a] for a in _CLASE if a in cols), None)
+    c_cons = next((cols[a] for a in _CONS if a in cols), None)
+    c_serv = next((cols[a] for a in _SERV if a in cols), None)
+    if not c_clase or not c_cons:
+        return 0, ["reporte agregado del SUI: no se hallaron las columnas de clase de uso o de consumo total"]
+    cfg = CAMPOS_SUI[serv]
+    c_dep = next((cols[a] for a in cfg["depto"] if a in cols), None)
+    c_mun = next((cols[a] for a in cfg["mun"] if a in cols), None)
+    c_full = next((cols[a] for a in cfg["muni"] if a in cols), None)
+    usa_combo = bool(c_dep and c_mun)
+    usa_aps = usa_combo or bool(c_full)
+    mapa = aps_mapa(conn, empresa_id) if usa_aps else {}
+
+    def _coincide_serv(v):
+        if c_serv is None:
+            return True
+        t = (v or "").strip().upper()
+        return (t in ("1", "AC", "ACUEDUCTO")) if serv == "acueducto" else (t in ("2", "AL", "ALC", "ALCANTARILLADO"))
+
+    agg = defaultdict(lambda: {"n": 0, "m3": 0.0})
+    for r in reader:
+        if not _coincide_serv(r.get(c_serv) if c_serv else None):
+            continue
+        clv = _int(r.get(c_clase))
+        if clv is None:
+            continue
+        cod = ""
+        if usa_combo:
+            cod5 = _cod_dane_combinado(r.get(c_dep), r.get(c_mun))
+            if cod5:
+                cod, _e = _resolver_aps(cod5, mapa); cod = cod or ""
+        elif c_full:
+            cod, _e = _resolver_aps(r.get(c_full), mapa); cod = cod or ""
+        a = agg[(clv, cod)]
+        a["n"] += _int(r.get(col_susc)) or 0
+        a["m3"] += _num(r.get(c_cons)) or 0.0
+    sql_d = ("INSERT INTO carga_mensual_detalle(empresa_id,anio,mes,servicio,clase,cod_dane,"
+             "suscriptores,m3,m3_subsidiable,origen) VALUES (:e,:a,:m,:s,:c,:cd,:su,:m3,NULL,'SUI') "
+             "ON CONFLICT (empresa_id,anio,mes,servicio,clase,cod_dane) DO UPDATE SET "
+             "suscriptores=excluded.suscriptores, m3=excluded.m3, "
+             "m3_subsidiable=excluded.m3_subsidiable, origen=excluded.origen")
+    conn.execute(text("DELETE FROM carga_mensual_detalle WHERE empresa_id=:e AND anio=:a "
+                      "AND mes=:m AND servicio=:s"), {"e": empresa_id, "a": anio, "m": mes, "s": serv})
+    conn.execute(text("DELETE FROM carga_mensual WHERE empresa_id=:e AND anio=:a AND mes=:m "
+                      "AND servicio=:s AND cod_dane<>''"), {"e": empresa_id, "a": anio, "m": mes, "s": serv})
+    ok, err = 0, []
+    for (clase, cod), a in sorted(agg.items()):
+        good, msg = _ins(conn, sql_d, {"e": empresa_id, "a": anio, "m": mes, "s": serv, "c": clase,
+                                       "cd": cod, "su": a["n"], "m3": a["m3"]})
+        if good:
+            ok += 1
+        else:
+            err.append(f"clase {clase}{(' · '+cod) if cod else ''}: {msg}")
+    if ok:
+        tot_susc = sum(a["n"] for a in agg.values()); tot_m3 = sum(a["m3"] for a in agg.values())
+        _ins(conn,
+             "INSERT INTO carga_mensual(empresa_id,anio,mes,servicio,cod_dane,suscriptores,m3_facturados,origen) "
+             "VALUES (:e,:a,:m,:s,'',:su,:m3,'SUI') "
+             "ON CONFLICT (empresa_id,anio,mes,servicio,cod_dane) DO UPDATE SET "
+             "suscriptores=excluded.suscriptores, m3_facturados=excluded.m3_facturados, "
+             "origen=excluded.origen, cargado_en=now()",
+             {"e": empresa_id, "a": anio, "m": mes, "s": serv, "su": tot_susc, "m3": tot_m3})
+        err.insert(0, "Nota: formato agregado del SUI sin consumo subsidiable ni factores; la "
+                      "estimacion de subsidios y contribuciones queda limitada")
+    elif not err:
+        err.append("reporte agregado del SUI: no hay filas para el servicio seleccionado "
+                   "(revisa la columna «Servicio»: 1=acueducto, 2=alcantarillado)")
     return ok, err
 
 
