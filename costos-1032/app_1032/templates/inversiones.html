@@ -890,6 +890,17 @@ tasa r y recupera su cuota; las obras del POIR 1032 aportan CMI_POIR (arts. 2.1.
 operativos, origen VI_AO). Si cargas el <b>VPR₀</b> y los parámetros 688 del servicio, el VA₀ se calcula
 automáticamente; el <b>valor pendiente</b> que integra la BCR es el VA₀ después de la compensación de negativos.</p>
 
+{% if puede_cargar %}
+<div class="carga-metodo" style="margin:10px 0 14px">
+  <p class="muted2">Carga la <b>plantilla de activos administrativos y operativos</b> (una fila por activo, con su valor neto en libros a 30-jun-2026). El sistema calcula el VI_AO₀ actualizándolo a pesos de dic-2025 (× IPC&nbsp;dic-2025 / IPC del año de operación, art. 2.1.2.1.3.5.6), <b>omite</b> los ya remunerados en el CMI de la 688 (no doble remuneración) y <b>reparte</b> los compartidos por sus %.</p>
+  <form method="post" action="/empresa/{{ emp.id }}/bcr-activos-ao-csv" enctype="multipart/form-data" class="form-grid">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+    <label class="wide">Plantilla(s) admin/operativos (.xlsx/.csv) <input type="file" name="archivos" accept=".xlsx,.csv,.txt" multiple></label>
+    <button class="btn primary" type="submit">Cargar activos admin/operativos</button>
+  </form>
+</div>
+{% endif %}
+
 {% for s in servicios %}
 <h3 style="font-family:var(--head);font-size:14.5px;color:var(--teal-deep);margin:16px 0 6px">{{ bcr_serv[s] }}</h3>
 {% set acts = bcr_activos|selectattr('servicio','equalto',s)|list %}

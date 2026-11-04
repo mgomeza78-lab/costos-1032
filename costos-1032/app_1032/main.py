@@ -4083,6 +4083,39 @@ async def bcr_activos_csv(request: Request, eid: int):
     return RedirectResponse(_dest(nxt, nxt, aviso), status_code=303)
 
 
+@app.post("/empresa/{eid}/bcr-activos-ao-csv")
+async def bcr_activos_ao_csv(request: Request, eid: int):
+    """Carga de los activos administrativos y operativos (componente 3, VI_AO) a la BCR₀."""
+    if (r := _need_login(request)):
+        return r
+    form = await request.form()
+    if (bad := _bad_csrf(request, form.get("csrf"))):
+        return bad
+    user = session_user(request)
+    nxt = form.get("next") or f"/empresa/{eid}/inversiones?sec=activos"
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(nxt, nxt, "err=No+autorizado"), status_code=303)
+    archivos = form.getlist("archivos")
+    tot_ok, errs, n = 0, [], 0
+    with db.scope_conn(scope_of(user)) as conn:
+        if not _emp_or_redirect(conn, eid):
+            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        for arch in archivos:
+            if not getattr(arch, "filename", ""):
+                continue
+            raw = await arch.read()
+            filas, e = bcr.leer_archivo_activos(raw, arch.filename)
+            if e:
+                errs.append(f"{arch.filename}: {e}"); continue
+            ok, err = bcr.ingesta_admin_operativos(conn, eid, filas, user["user_id"])
+            tot_ok += ok; errs += err; n += 1
+    db.audit(scope_of(user), "bcr_activos_ao_csv", "empresa", eid, f"{n} archivos, {tot_ok} VI_AO")
+    aviso = f"msg=Activos+admin/operativos:+{tot_ok}+cargado(s)+de+{n}+archivo(s)"
+    if errs:
+        aviso += ";+" + ",+".join(errs[:3]).replace(" ", "+") + ("+…" if len(errs) > 3 else "")
+    return RedirectResponse(_dest(nxt, nxt, aviso), status_code=303)
+
+
 def _ym(s):
     """Parsea 'YYYY-MM' (del <input type=month>) a (anio, mes); None si no aplica."""
     s = (s or "").strip()

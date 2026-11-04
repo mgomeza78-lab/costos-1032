@@ -195,6 +195,94 @@ def ingesta_activos(conn, empresa_id, filas, usuario_id):
     return ok, err
 
 
+def _fa_ao(conn, anio_op):
+    """Factor de actualización del VI_AO (art. 2.1.2.1.3.5.6): IPC dic-2025 / IPC dic-(año de
+    entrada en operación del activo). None si falta algún IPC."""
+    if not anio_op:
+        return None
+    i25 = ipc_dic(conn, 2025)
+    iop = ipc_dic(conn, int(anio_op))
+    if i25 and iop and float(iop) != 0:
+        return float(i25) / float(iop)
+    return None
+
+
+_REM_SI = {"si", "sí", "s", "1", "true", "verdadero", "x"}
+
+
+def ingesta_admin_operativos(conn, empresa_id, filas, usuario_id):
+    """Carga los activos administrativos y operativos a la BCR₀ como componente 3 (origen VI_AO).
+
+    VI_AO₀ = valor neto en libros a 30-jun-2026, actualizado a pesos de dic-2025
+    (× IPC_dic-2025 / IPC_dic-año de operación), art. 2.1.2.1.3.5.6. Reemplaza lo cargado antes.
+    · Los activos ya remunerados en el CMI de la 688 se OMITEN (Parágrafo 1, no doble remuneración).
+    · Un activo 'compartido' (servicio=3) se reparte por pct_acueducto / pct_alcantarillado.
+    · El plazo de recuperación lo asigna el prestador (art. 2.1.2.1.3.5.13); la cuota anual (cak)
+      se estima lineal = VA₀ / plazo."""
+    conn.execute(text("DELETE FROM bcr_activo WHERE empresa_id=:e AND componente=3 AND origen='VI_AO'"),
+                 {"e": empresa_id})
+    ok, err, omit = 0, [], 0
+    for i, r in enumerate(filas, start=2):
+        nombre = str(r.get("nombre") or "").strip()
+        if not nombre:
+            continue
+        if str(r.get("remunerado_cmi_688") or "").strip().lower() in _REM_SI:
+            omit += 1
+            continue
+        vneto = _num_x(r.get("valor_neto_jun2026"))
+        if vneto is None:
+            c, dep = _num_x(r.get("costo_historico")), _num_x(r.get("depreciacion_acumulada"))
+            vneto = (float(c) - float(dep or 0)) if c is not None else None
+        if vneto is None:
+            err.append(f"fila {i}: falta valor_neto_jun2026 (o costo_historico)")
+            continue
+        fo = str(r.get("fecha_operacion") or "").strip()
+        anio_op = int(fo[:4]) if fo[:4].isdigit() else None
+        fa = _fa_ao(conn, anio_op)
+        if fa is None:
+            err.append(f"fila {i}: sin IPC para actualizar (dic-2025 / dic-{anio_op or '?'}); carga los índices DANE")
+            continue
+        vi_ao = float(vneto) * fa
+        plazo = _num_x(r.get("plazo_recuperacion"))
+        codigo = str(r.get("codigo") or "").strip() or None
+        cuenta = str(r.get("cuenta_contable") or "").strip()
+        tipo, clase = str(r.get("tipo") or "").strip(), str(r.get("clase") or "").strip()
+        sin = str(r.get("servicio") or "").strip().lower()
+        if sin in ("3", "compartido", "ambos", "comp", "c"):
+            pa = float(_num_x(r.get("pct_acueducto")) or 0.0)
+            pal = float(_num_x(r.get("pct_alcantarillado")) or 0.0)
+            if (pa + pal) <= 0:
+                pa = pal = 50.0
+            repartos = [("acueducto", pa), ("alcantarillado", pal)]
+        else:
+            serv = _SERV_IN.get(sin) or _ing._norm_serv(sin)
+            if serv not in ("acueducto", "alcantarillado"):
+                err.append(f"fila {i}: servicio inválido '{r.get('servicio')}'")
+                continue
+            repartos = [(serv, 100.0)]
+        for serv, pct in repartos:
+            if pct <= 0:
+                continue
+            va0 = round(vi_ao * pct / 100.0, 2)
+            vb = round(float(vneto) * pct / 100.0, 2)
+            cod = (f"{codigo}-{'AC' if serv == 'acueducto' else 'AL'}") if (codigo and len(repartos) > 1) else codigo
+            cak = round(va0 / float(plazo), 2) if (plazo and float(plazo) > 0) else None
+            obs = (f"VI_AO · cuenta {cuenta or 's/c'} · {tipo or '-'}/{clase or '-'} · "
+                   f"neto jun-2026 {float(vneto):,.0f} × fa {fa:.4f}"
+                   + (f" · {pct:.0f}% (compartido)" if len(repartos) > 1 else ""))
+            d = {"nombre": nombre, "servicio": serv, "componente": 3, "origen": "VI_AO",
+                 "va0": va0, "valor_bruto": vb, "plazo_remanente": plazo, "cuota_anual": cak,
+                 "codigo": cod, "observacion": obs[:400]}
+            _aid, e = guardar(conn, empresa_id, d, usuario_id)
+            if e:
+                err.append(f"fila {i} ({serv}): {e}")
+            else:
+                ok += 1
+    if omit:
+        err.insert(0, f"{omit} activo(s) omitido(s): ya remunerados en el CMI de la 688 (no se duplican)")
+    return ok, err
+
+
 _SERV_IN = {"ac": "acueducto", "acueducto": "acueducto", "1": "acueducto",
             "al": "alcantarillado", "alcantarillado": "alcantarillado", "2": "alcantarillado"}
 
