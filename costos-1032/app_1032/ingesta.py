@@ -64,7 +64,8 @@ def _cod_dane_combinado(depto, mun):
 _SUFIJO = re.compile(r"_\d+$")
 
 _SERV = {"AC": "acueducto", "AL": "alcantarillado",
-         "ACUEDUCTO": "acueducto", "ALCANTARILLADO": "alcantarillado"}
+         "ACUEDUCTO": "acueducto", "ALCANTARILLADO": "alcantarillado",
+         "1": "acueducto", "2": "alcantarillado"}
 
 
 def _norm_serv(s):
@@ -122,6 +123,10 @@ def _rows(contenido):
     # (para archivos pequeños: IPC, factores, macromedición, etc.). Los encabezados se normalizan
     # a minúsculas y sin espacios, de modo que 'Servicio', 'SERVICIO' y 'servicio' son equivalentes.
     texto, sep = _preparar(contenido)
+    # Plantillas de intake: la fila 1 es un banner «SICTAAA · …», no un encabezado; se descarta.
+    if texto.lstrip().upper().startswith("SICTAAA") and "\n" in texto:
+        texto = texto.split("\n", 1)[1]
+        sep = _sep(texto.split("\n", 1)[0])
     out = []
     for r in csv.DictReader(io.StringIO(texto), delimiter=sep):
         out.append({(k.strip().lower() if k else k): v for k, v in r.items()})

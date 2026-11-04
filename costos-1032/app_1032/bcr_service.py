@@ -131,6 +131,8 @@ def leer_archivo_activos(raw, filename=""):
             ws = wb.active
             it = ws.iter_rows(values_only=True)
             hdr = next(it, None)
+            if hdr and str(hdr[0] or "").strip().upper().startswith("SICTAAA"):
+                hdr = next(it, None)   # la fila 1 es el banner de la plantilla; el encabezado va en la fila 2
             if not hdr:
                 return [], "el archivo está vacío"
             cols = [str(h).strip().lower() if h is not None else "" for h in hdr]
@@ -142,7 +144,10 @@ def leer_archivo_activos(raw, filename=""):
         else:
             import csv as _csv
             txt = raw.decode("utf-8-sig", "ignore") if isinstance(raw, bytes) else raw
-            rows = list(_csv.DictReader(_io.StringIO(txt.replace("\r\n", "\n"))))
+            txt = txt.replace("\r\n", "\n")
+            if txt.lstrip().upper().startswith("SICTAAA") and "\n" in txt:
+                txt = txt.split("\n", 1)[1]   # descarta el banner de la fila 1
+            rows = list(_csv.DictReader(_io.StringIO(txt)))
             rows = [{(k or "").strip().lower(): v for k, v in r.items()} for r in rows]
     except Exception as ex:
         return [], f"no se pudo leer el archivo ({type(ex).__name__})"
@@ -205,20 +210,18 @@ def plantilla_activos_bytes():
     ws.append(COLS_ACTIVO)
     for c in ws[1]:
         c.font = Font(bold=True)
-    ws.append(["AC-001", "Red matriz sector norte", "acueducto", 1, "VI287", "red",
+    ws.append(["AC-001", "Red matriz sector norte", 1, 1, "VI287", "red",
                41200000000, 9800000000, "", 22, "", "", "", "", "heredado 287"])
-    ws.append(["AC-POIR-012", "Ampliación conducción", "acueducto", 1, "POIR688", "conducción",
+    ws.append(["AC-POIR-012", "Ampliación conducción", 1, 1, "POIR688", "conducción",
                "", "", "", 40, "", 5, 300000000, "2021-03-01", "proyecto POIR"])
-    ws.append(["AL-AO-003", "Equipos administrativos", "alcantarillado", 3, "VI_AO", "admin",
-               800000000, 650000000, "", 10, "", "", "", "", "activo admin/operativo"])
     nota = wb.create_sheet("INSTRUCCIONES")
     txt = [
         "Una fila por activo que entró al inicio de la 688. Columnas:",
         "codigo: identificador del activo (para poder actualizarlo después). Opcional pero recomendado.",
         "nombre: descripción del activo (OBLIGATORIO).",
-        "servicio: acueducto o alcantarillado (acepta AC / AL) (OBLIGATORIO).",
-        "componente: 1 infraestructura · 2 ambiental/riesgo · 3 admin/operativos (OBLIGATORIO).",
-        "origen: VI287 · VIdif287 · POIR688 · VIDIF_688 · VI_IAR · VI_AO · TERRENO.",
+        "servicio: 1 = acueducto, 2 = alcantarillado (también acepta AC/AL o el nombre) (OBLIGATORIO).",
+        "componente: 1 infraestructura · 2 ambiental/riesgo (OBLIGATORIO). Los activos administrativos y operativos NO van aquí: use plantilla_activos_admin_operativos.",
+        "origen: VI287 · VIdif287 · POIR688 · VIDIF_688 · VI_IAR · TERRENO.",
         "via688: valor de inversión del activo en pesos de diciembre de 2014.",
         "vpr0: valor pendiente por recuperar ($2014). Si lo cargas, el VA₀ se calcula solo (VPR₀·(1+r688)^t·fa0).",
         "va0: valor actualizado ($dic-2025). Opcional; si no, se deriva del VPR₀.",
