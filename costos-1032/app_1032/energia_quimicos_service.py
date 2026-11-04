@@ -211,7 +211,11 @@ def _leer_csv(texto):
 
 def _serv(s):
     s = (s or "").strip().lower()
-    return "alcantarillado" if s.startswith("alcan") else ("acueducto" if s.startswith("acu") else s)
+    if s in ("1", "ac", "acueducto") or s.startswith("acu"):
+        return "acueducto"
+    if s in ("2", "al", "alc", "alcantarillado") or s.startswith("alcan"):
+        return "alcantarillado"
+    return s
 
 
 def _tipo(s):
@@ -317,10 +321,45 @@ def energia_masivo(conn, empresa_id, anio, texto, cargado_por=None):
     return n, err
 
 
+_MES_NUM = {1: "ene", 2: "feb", 3: "mar", 4: "abr", 5: "may", 6: "jun",
+            7: "jul", 8: "ago", 9: "sep", 10: "oct", 11: "nov", 12: "dic"}
+
+
+def _quimico_a_ancho(filas, anio_sel):
+    """Acepta el formato LARGO (una fila por insumo y mes: columnas `mes` y `kg_consumidos`/`kg`)
+    y lo pivota al ancho (una fila por insumo, kg en ene..dic). Si ya viene ancho, lo devuelve
+    igual. Retrocompatible."""
+    if not filas:
+        return filas
+    cols = set(filas[0].keys())
+    es_largo = ("mes" in cols) and (("kg_consumidos" in cols) or ("kg" in cols)) and not (set(MES_HDR) & cols)
+    if not es_largo:
+        return filas
+    agg = {}
+    for r in filas:
+        if not (r.get("insumo") or "").strip():
+            continue
+        a = _pint(r.get("anio")) or int(anio_sel)
+        key = (a, (r.get("servicio") or "").strip(), (r.get("no_sui") or "").strip(),
+               (r.get("punto") or "").strip(), (r.get("insumo") or "").strip(), (r.get("estado") or "").strip())
+        d = agg.get(key)
+        if d is None:
+            d = agg[key] = {"anio": a, "servicio": r.get("servicio"), "no_sui": r.get("no_sui"),
+                            "punto": r.get("punto"), "insumo": r.get("insumo"), "estado": r.get("estado"),
+                            "precio_kg": r.get("precio_kg")}
+        if not (d.get("precio_kg") or "") and (r.get("precio_kg") or ""):
+            d["precio_kg"] = r.get("precio_kg")
+        m = _pint(r.get("mes"))
+        if m and 1 <= m <= 12:
+            d[_MES_NUM[m]] = r.get("kg_consumidos") or r.get("kg")
+    return list(agg.values())
+
+
 def quimico_masivo(conn, empresa_id, anio, texto, cargado_por=None):
-    """Cargue masivo de químicos: una fila por insumo y año (kg por mes). Toma el año de la columna
-    `anio` (si falta, el del selector) y reemplaza cada año presente."""
-    filas = _leer_csv(texto)
+    """Cargue masivo de químicos: una fila por insumo y año (kg por mes). Acepta también el formato
+    largo (una fila por insumo y mes) y lo pivota. Toma el año de la columna `anio` (si falta, el
+    del selector) y reemplaza cada año presente."""
+    filas = _quimico_a_ancho(_leer_csv(texto), anio)
     anios = {(_pint(r.get("anio")) or int(anio)) for r in filas if (r.get("insumo") or "").strip()}
     for a in anios:
         conn.execute(text("DELETE FROM quimico_item WHERE empresa_id=:e AND anio=:a"), {"e": empresa_id, "a": a})
@@ -360,15 +399,17 @@ def quimico_eliminar(conn, empresa_id, qid):
 
 def plantilla_energia():
     # Una fila por punto y mes; el sistema suma los meses al año base.
-    ej = ["2024,1,acueducto,otros,15575,PTAP El Roble,producción,,,98085,1011.47",
-          "2024,2,acueducto,otros,15575,PTAP El Roble,producción,,,95120,1015.30",
-          "2024,1,acueducto,bombeo,5635,17 de diciembre,distribución,57688,65,62004,1000.88"]
+    ej = ["2024,1,1,otros,15575,PTAP El Roble,producción,,,98085,1011.47",
+          "2024,2,1,otros,15575,PTAP El Roble,producción,,,95120,1015.30",
+          "2024,1,1,bombeo,5635,17 de diciembre,distribución,57688,65,62004,1000.88"]
     return "plantilla_energia.csv", ",".join(ENERGIA_HDR) + "\n" + "\n".join(ej) + "\n"
 
 
 def plantilla_quimico():
-    ej = ["2024,acueducto,15575,PTAP El Roble,Cloro,gaseoso,6214.18,2522,2474,2580,2432,2723,2442,2846,2824,2350,2215,2064,3154"]
-    return "plantilla_quimicos.csv", ",".join(QUIMICO_HDR) + "\n" + "\n".join(ej) + "\n"
+    hdr = ["anio", "mes", "servicio", "no_sui", "punto", "insumo", "estado", "precio_kg", "kg_consumidos"]
+    ej = ["2024,1,1,15575,PTAP El Roble,Cloro,gaseoso,6214.18,2522",
+          "2024,2,1,15575,PTAP El Roble,Cloro,gaseoso,6214.18,2474"]
+    return "plantilla_quimicos.csv", ",".join(hdr) + "\n" + "\n".join(ej) + "\n"
 
 
 def ce_ciq_de(conn, empresa_id, servicio, anio):
