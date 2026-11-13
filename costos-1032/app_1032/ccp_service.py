@@ -182,8 +182,12 @@ def _computar(conn, empresa_id, inputs):
     ir9 = _ipuf(series, m9)[0] if fecha else None
     ir10 = _ipuf(series, m10)[0] if fecha else None
 
-    meta9 = inputs.get("ipuf_meta_a9")
-    meta10 = inputs.get("ipuf_meta_a10")
+    # Las metas del IPUF de la 688 (años 9 y 10) son dato del «Punto de partida»: viven en la empresa.
+    mrow = conn.execute(text(
+        "SELECT ipuf_meta_688_a9, ipuf_meta_688_a10 FROM empresa WHERE id=:e"),
+        {"e": empresa_id}).mappings().first()
+    meta9 = mrow["ipuf_meta_688_a9"] if mrow else None
+    meta10 = mrow["ipuf_meta_688_a10"] if mrow else None
     ivh = inputs.get("ivh") or None
     aplica = inputs.get("aplica", True)
 
@@ -265,7 +269,7 @@ def set_fap(conn, empresa_id, d):
         " cumplio_meta=excluded.cumplio_meta, periodo=excluded.periodo, fap=excluded.fap, "
         " observacion=excluded.observacion, actualizado_en=now()"),
         {"e": empresa_id, "ap": bool(d.get("aplica", True)), "ir": v["ipuf_real_ventana"],
-         "ig": v["meta_gobierna"], "m9": d.get("ipuf_meta_a9"), "m10": d.get("ipuf_meta_a10"),
+         "ig": v["meta_gobierna"], "m9": v["meta_a9"], "m10": v["meta_a10"],
          "iv": (d.get("ivh") or None), "me": v["metodologia"], "cm": v["cumplio"],
          "pe": (d.get("periodo") or "inicio"), "fa": v["fap"],
          "ob": (d.get("observacion") or "").strip() or None})

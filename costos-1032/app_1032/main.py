@@ -3074,6 +3074,7 @@ def eliminar_costo_ref688(request: Request, eid: int, servicio: str,
 @app.post("/empresa/{eid}/ref688-datos")
 def guardar_ref688_datos(request: Request, eid: int, fecha_inicio_688: str = Form(""),
                          fecha_inicio_1032: str = Form(""), suscriptores_seg: str = Form(""),
+                         ipuf_meta_688_a9: str = Form(""), ipuf_meta_688_a10: str = Form(""),
                          next: str = Form(""), csrf: str = Form("")):
     if (r := _need_login(request)):
         return r
@@ -3098,6 +3099,12 @@ def guardar_ref688_datos(request: Request, eid: int, fecha_inicio_688: str = For
         upd.append("fecha_inicio_1032=:f1032"); p["f1032"] = _mes(fecha_inicio_1032)
     if susc is not None:
         upd.append("suscriptores_seg=:susc"); p["susc"] = susc
+    _m9 = _fnum(ipuf_meta_688_a9)
+    if _m9 is not None:
+        upd.append("ipuf_meta_688_a9=:m9"); p["m9"] = _m9
+    _m10 = _fnum(ipuf_meta_688_a10)
+    if _m10 is not None:
+        upd.append("ipuf_meta_688_a10=:m10"); p["m10"] = _m10
     if not upd:
         return RedirectResponse(_dest(next, dflt, "err=Nada+que+guardar"), status_code=303)
     try:
@@ -3695,8 +3702,8 @@ def plantilla_quimico(request: Request, eid: int):
 
 @app.post("/empresa/{eid}/ccp-fap")
 def ccp_fap_guardar(request: Request, eid: int, aplica: str = Form(None),
-                    ivh: str = Form(""), ipuf_meta_a9: str = Form(""), ipuf_meta_a10: str = Form(""),
-                    observacion: str = Form(""), next: str = Form(""), csrf: str = Form("")):
+                    ivh: str = Form(""), observacion: str = Form(""),
+                    next: str = Form(""), csrf: str = Form("")):
     if (r := _need_login(request)):
         return r
     if (bad := _bad_csrf(request, csrf)):
@@ -3706,10 +3713,9 @@ def ccp_fap_guardar(request: Request, eid: int, aplica: str = Form(None),
     if not rbac.can(user, "cargar_mensual"):
         return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
     # El Fap es único por empresa: el IPUFreal, la metodología y el cumplimiento de meta los
-    # calcula el sistema; el usuario solo aporta IVH y las metas del IPUF 688 (años 9 y 10).
-    d = {"aplica": aplica is not None, "ivh": ivh or None,
-         "ipuf_meta_a9": _fnum(ipuf_meta_a9), "ipuf_meta_a10": _fnum(ipuf_meta_a10),
-         "observacion": observacion}
+    # calcula el sistema (las metas del IPUF 688 se capturan en «Punto de partida»); aquí el
+    # usuario solo aporta el IVH y si aplica el ajuste.
+    d = {"aplica": aplica is not None, "ivh": ivh or None, "observacion": observacion}
     with db.scope_conn(scope_of(user)) as conn:
         if not _emp_or_redirect(conn, eid):
             return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
