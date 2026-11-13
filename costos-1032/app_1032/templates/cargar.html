@@ -90,6 +90,8 @@ presente y validar la cobertura mensual de m³ facturados 688. Los <b>IPC</b> sa
     <input name="ipuf_meta_688_a9" inputmode="decimal" value="{{ emp.ipuf_meta_688_a9 if emp.ipuf_meta_688_a9 is not none else '' }}"></label>
   <label>Meta IPUF · año tarifario 10 (688) <span class="muted2">· m³/susc·mes</span>
     <input name="ipuf_meta_688_a10" inputmode="decimal" value="{{ emp.ipuf_meta_688_a10 if emp.ipuf_meta_688_a10 is not none else '' }}"></label>
+  <label class="wide">Observación / fuente <span class="muted2">· de dónde salen estos datos (p. ej. el modelo del estudio 688)</span>
+    <textarea name="observacion" rows="2" style="width:100%;font:inherit">{{ emp.punto_partida_obs or '' }}</textarea></label>
   <button class="btn" type="submit">Guardar datos de transición</button>
 </form>
 <p class="muted2" style="margin:4px 0 0">Las <b>metas del IPUF de la 688</b> (años tarifarios 9 y 10) son la senda de

@@ -3075,6 +3075,7 @@ def eliminar_costo_ref688(request: Request, eid: int, servicio: str,
 def guardar_ref688_datos(request: Request, eid: int, fecha_inicio_688: str = Form(""),
                          fecha_inicio_1032: str = Form(""), suscriptores_seg: str = Form(""),
                          ipuf_meta_688_a9: str = Form(""), ipuf_meta_688_a10: str = Form(""),
+                         observacion: str = Form(""),
                          next: str = Form(""), csrf: str = Form("")):
     if (r := _need_login(request)):
         return r
@@ -3105,6 +3106,8 @@ def guardar_ref688_datos(request: Request, eid: int, fecha_inicio_688: str = For
     _m10 = _fnum(ipuf_meta_688_a10)
     if _m10 is not None:
         upd.append("ipuf_meta_688_a10=:m10"); p["m10"] = _m10
+    if observacion.strip():
+        upd.append("punto_partida_obs=:obs"); p["obs"] = observacion.strip()
     if not upd:
         return RedirectResponse(_dest(next, dflt, "err=Nada+que+guardar"), status_code=303)
     try:
