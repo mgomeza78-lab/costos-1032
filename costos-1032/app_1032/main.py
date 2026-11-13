@@ -2901,7 +2901,7 @@ def cargar_info(request: Request, eid: int):
         quimicos = eq.quimico_lista(conn, eid)
         eq_tot = eq.totales(conn, eid)
         servicios_emp = [s for s, on in (("acueducto", emp["presta_ac"]), ("alcantarillado", emp["presta_al"])) if on] or ["acueducto"]
-        ccp_fap = {s: ccp.get(conn, eid, s) for s in servicios_emp}
+        ccp_fap = ccp.vista(conn, eid)   # Fap único por empresa (IPUFreal, metodología y cumplimiento calculados)
         cat_row = conn.execute(text(
             "SELECT n_cuentas, nombre_archivo FROM catalogo_empresa WHERE empresa_id=:e"),
             {"e": eid}).mappings().first()
@@ -3689,9 +3689,8 @@ def plantilla_quimico(request: Request, eid: int):
 
 
 @app.post("/empresa/{eid}/ccp-fap")
-def ccp_fap_guardar(request: Request, eid: int, servicio: str = Form("acueducto"),
-                    aplica: str = Form(None), ipuf_real: str = Form(""), ipuf_planeado: str = Form(""),
-                    ivh: str = Form(""), metodologia: str = Form(""), cumplio: str = Form(""),
+def ccp_fap_guardar(request: Request, eid: int, aplica: str = Form(None),
+                    ivh: str = Form(""), ipuf_meta_a9: str = Form(""), ipuf_meta_a10: str = Form(""),
                     observacion: str = Form(""), next: str = Form(""), csrf: str = Form("")):
     if (r := _need_login(request)):
         return r
@@ -3701,19 +3700,20 @@ def ccp_fap_guardar(request: Request, eid: int, servicio: str = Form("acueducto"
     dflt = f"/empresa/{eid}/cargar?fuente=agua"
     if not rbac.can(user, "cargar_mensual"):
         return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
-    d = {"aplica": aplica is not None, "ipuf_real": _fnum(ipuf_real),
-         "ipuf_planeado": _fnum(ipuf_planeado), "ivh": ivh or None, "metodologia": metodologia or None,
-         "cumplio_meta": (True if cumplio == "si" else (False if cumplio == "no" else None)),
+    # El Fap es único por empresa: el IPUFreal, la metodología y el cumplimiento de meta los
+    # calcula el sistema; el usuario solo aporta IVH y las metas del IPUF 688 (años 9 y 10).
+    d = {"aplica": aplica is not None, "ivh": ivh or None,
+         "ipuf_meta_a9": _fnum(ipuf_meta_a9), "ipuf_meta_a10": _fnum(ipuf_meta_a10),
          "observacion": observacion}
     with db.scope_conn(scope_of(user)) as conn:
         if not _emp_or_redirect(conn, eid):
             return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
-        fap, nota = ccp.set_fap(conn, eid, servicio, d)
-    db.audit(scope_of(user), "ccp_fap", "empresa", eid, f"{servicio}: Fap={fap}")
+        fap, nota = ccp.set_fap(conn, eid, d)
+    db.audit(scope_of(user), "ccp_fap", "empresa", eid, f"Fap={fap}")
     if fap is None:
         msg = "Fap+pendiente+(falta+información)"
     else:
-        msg = ("Fap+" + servicio + "+=+" + ("%.2f" % fap).replace(".", ",")).replace(" ", "+")
+        msg = ("Fap+=+" + ("%.2f" % fap).replace(".", ",")).replace(" ", "+")
     return RedirectResponse(_dest(next, dflt, "msg=" + msg), status_code=303)
 
 

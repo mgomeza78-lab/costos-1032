@@ -126,8 +126,9 @@ def indicadores(conn, empresa_id, anios, ipuf_estrella):
             if _es_acueducto(s):
                 fila["falta"].append("m³ producidos (macromedición)")
 
-        # Fap (ajuste optativo del ISUF, parágrafo 3). Si aplica, el CCP usa el ISUF ajustado.
-        f = ccp.get(conn, empresa_id, s)
+        # Fap (ajuste optativo del ISUF, parágrafo 3). Es ÚNICO por empresa (se construye sobre el
+        # ISUF del acueducto) y aplica por igual al CCP de acueducto y de alcantarillado.
+        f = ccp.get(conn, empresa_id)
         if f and f["fap"] is not None:
             fila["fap"] = float(f["fap"])
             fila["fap_meta"] = {"ivh": f["ivh"], "metodologia": f["metodologia"],

@@ -452,56 +452,81 @@ del SUI.</p>
   </div>
 </div>
 {% endif %}
-<h3 class="serv-h">Cargado</h3>
-{% if agua %}
-<table class="tabla">
-  <thead><tr><th>Período</th><th>Año tarifario</th><th>Servicio</th><th>APS</th><th class="r">Puntos</th><th class="r">m³ producidos</th><th></th></tr></thead>
+{# ===== Fap (único por prestador) — ENCIMA de lo cargado para no tener que bajar la pantalla ===== #}
+<h3 class="serv-h">Fap · ajuste del ISUF por pérdidas (optativo · único por prestador)</h3>
+<p class="muted2">El ajuste es <b>optativo</b>: ISUF ajustado = ISUF − Fap (parágrafo 3 del art. 2.1.2.1.3.3.1,
+Res. CRA 1032). Es <b>uno solo por empresa</b>: el CCP de acueducto y de alcantarillado se construye sobre el
+ISUF del acueducto. El sistema <b>calcula el IPUFreal</b> (ventana IRD1, 1-jul-2024 a 30-jun-2025) de lo
+cargado, toma la <b>metodología anterior</b> del punto de partida y <b>valida el cumplimiento</b> de la meta
+de la 688 (diferencia ≤ 20 %) con las metas del IPUF que ingreses.</p>
+{% set f = ccp_fap %}
+<div class="cards">
+  <div class="card"><div class="k">Fap resuelto</div>
+    <div class="v" style="font-size:22px">{{ ('%.2f'|format(f.fap))|replace('.',',') if f.fap is not none else '—' }}</div>
+    <div class="muted2">{% if not f.aplica %}no aplicado{% elif f.fap is none %}falta información{% else %}se resta del ISUF{% endif %}</div></div>
+  <div class="card"><div class="k">IPUFreal · ventana IRD1</div>
+    <div class="v" style="font-size:22px">{{ ('%.2f'|format(f.ipuf_real_ventana))|replace('.',',') if f.ipuf_real_ventana is not none else '—' }}</div>
+    <div class="muted2">m³/susc·mes · {{ f.meses_ventana }}/12 meses{% if f.rango %} · {{ f.rango }}{% endif %}</div></div>
+  <div class="card"><div class="k">Metodología anterior</div>
+    <div class="v" style="font-size:16px">{{ met_opc.get(f.metodologia, '—') }}</div>
+    <div class="muted2">desde el punto de partida</div></div>
+  <div class="card"><div class="k">ISUF_ac {% if f.isuf_ajustado is not none %}/ ajustado{% endif %}</div>
+    <div class="v" style="font-size:16px">{{ ('%.2f'|format(f.isuf_ventana))|replace('.',',') if f.isuf_ventana is not none else '—' }}{% if f.isuf_ajustado is not none %} → {{ ('%.2f'|format(f.isuf_ajustado))|replace('.',',') }}{% endif %}</div>
+    <div class="muted2">m³/susc·mes</div></div>
+</div>
+{% if f.metodologia=='688' %}
+<table class="tabla" style="margin-top:8px">
+  <thead><tr><th>Año tarifario 688</th><th class="r">IPUF real (sistema)</th><th class="r">Meta 688 (usuario)</th><th class="r">Umbral ×1,20</th><th>Cumplimiento</th></tr></thead>
   <tbody>
-    {% for x in agua %}<tr><td class="comp">{{ meses.get(x.mes,x.mes) }}-{{ x.anio }}</td><td>{{ aniotar(x.anio) }}</td>
-      <td>{{ x.servicio }}</td>
-      <td>{% if x.cod_dane %}{{ x.municipio or x.cod_dane }}{% else %}<span class="muted2">Conjunto</span>{% endif %}</td>
-      <td class="num">{{ x.puntos }}</td><td class="num">{{ x.m3|valor if x.m3 is not none else '—' }}</td>
-      <td class="c">{{ delcargue('agua', x) }}</td></tr>{% endfor %}
+    <tr><td class="comp">Año 9</td>
+      <td class="num">{{ ('%.2f'|format(f.ipuf_real_a9))|replace('.',',') if f.ipuf_real_a9 is not none else '—' }}</td>
+      <td class="num">{{ ('%.2f'|format(f.meta_a9))|replace('.',',') if f.meta_a9 is not none else '—' }}</td>
+      <td class="num">{{ ('%.2f'|format(f.umbral_a9))|replace('.',',') if f.umbral_a9 is not none else '—' }}</td>
+      <td>{% if f.cumple_a9 is none %}<span class="muted2">—</span>{% elif f.cumple_a9 %}<b style="color:#1a7a3a">cumple</b>{% else %}<b style="color:#b0202a">no cumple</b>{% endif %}</td></tr>
+    <tr><td class="comp">Año 10 <span class="muted2">· gobierna</span></td>
+      <td class="num">{{ ('%.2f'|format(f.ipuf_real_a10))|replace('.',',') if f.ipuf_real_a10 is not none else '—' }}</td>
+      <td class="num">{{ ('%.2f'|format(f.meta_a10))|replace('.',',') if f.meta_a10 is not none else '—' }}</td>
+      <td class="num">{{ ('%.2f'|format(f.umbral_a10))|replace('.',',') if f.umbral_a10 is not none else '—' }}</td>
+      <td>{% if f.cumple_a10 is none %}<span class="muted2">—</span>{% elif f.cumple_a10 %}<b style="color:#1a7a3a">cumple</b>{% else %}<b style="color:#b0202a">no cumple</b>{% endif %}</td></tr>
   </tbody>
 </table>
-{% else %}<p class="empty">Aún no hay agua producida cargada.</p>{% endif %}
-
-<h3 class="serv-h">Fap · ajuste del ISUF por pérdidas (optativo)</h3>
-<p class="muted2">El ajuste es <b>optativo</b>: ISUF ajustado = ISUF − Fap (parágrafo 3 del artículo del CCP,
-Res. CRA 1032). El Fap se obtiene de una tabla según: (a) el rango del <b>IPUFreal</b> —para el período de
-inicio, el del <b>1-jul-2024 a 30-jun-2025</b> (indicador IRD1)—, (b) el <b>IVH</b> del IDEAM de la subzona de
-captación, (c) la <b>metodología anterior</b> (688/825) y (d) si <b>cumplió la meta</b> del IPUF de la 688
-(diferencia ≤ 20 %).</p>
-{% for s in servicios_emp %}{% set f = ccp_fap.get(s) %}
-<h4 style="font-family:var(--head);font-size:14px;color:var(--teal-deep);margin:14px 0 4px">{{ s|capitalize }}</h4>
-{% if f %}
-<div class="cards">
-  <div class="card"><div class="k">Fap resuelto</div><div class="v" style="font-size:22px">{{ ('%.2f'|format(f.fap))|replace('.',',') if f.fap is not none else '—' }}</div>
-    <div class="muted2">{% if not f.aplica %}no aplicado{% elif f.fap is none %}falta información{% else %}se resta del ISUF{% endif %}</div></div>
-  <div class="card"><div class="k">IPUFreal</div><div class="v" style="font-size:22px">{{ f.ipuf_real|valor if f.ipuf_real is not none else '—' }}</div><div class="muted2">m³/susc·mes</div></div>
-  <div class="card"><div class="k">IVH</div><div class="v" style="font-size:17px">{{ ivh_opc.get(f.ivh, '—') }}</div></div>
-  <div class="card"><div class="k">Metodología / meta</div><div class="v" style="font-size:15px">{{ f.metodologia or '—' }}{% if f.metodologia=='688' %} · meta {{ 'sí' if f.cumplio_meta else 'no' }}{% endif %}</div></div>
-</div>
 {% endif %}
+{% if f.falta %}<p class="muted2" style="margin:6px 0 0">Falta para resolver el Fap: {{ f.falta|join('; ') }}.</p>{% endif %}
 {% if puede_cargar %}
-<form method="post" action="/empresa/{{ emp.id }}/ccp-fap" class="form-grid">
+<form method="post" action="/empresa/{{ emp.id }}/ccp-fap" class="form-grid" style="margin-top:8px">
   <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="/empresa/{{ emp.id }}/cargar?fuente=agua">
-  <input type="hidden" name="servicio" value="{{ s }}">
   <label class="wide" style="display:flex;gap:8px;align-items:center;font-weight:600">
-    <input type="checkbox" name="aplica" {{ 'checked' if (not f) or f.aplica }}> Aplicar el ajuste del ISUF (optativo)</label>
-  <label>IPUFreal (m³/susc·mes) <input name="ipuf_real" inputmode="decimal" value="{{ f.ipuf_real if f and f.ipuf_real is not none else '' }}"></label>
-  <label>IVH (IDEAM) <select name="ivh"><option value="">—</option>{% for k,v in ivh_opc.items() %}<option value="{{ k }}" {{ 'selected' if f and f.ivh==k }}>{{ v }}</option>{% endfor %}</select></label>
-  <label>Metodología anterior <select name="metodologia"><option value="">—</option>{% for k,v in met_opc.items() %}<option value="{{ k }}" {{ 'selected' if f and f.metodologia==k }}>{{ v }}</option>{% endfor %}</select></label>
-  <label>IPUF planeado (688) <span class="muted2">· para la meta</span><input name="ipuf_planeado" inputmode="decimal" value="{{ f.ipuf_planeado if f and f.ipuf_planeado is not none else '' }}"></label>
-  <label>¿Cumplió la meta? (688) <select name="cumplio"><option value="">Auto (diferencia ≤ 20 %)</option><option value="si">Sí</option><option value="no">No</option></select></label>
-  <label class="wide">Observación <input name="observacion" value="{{ f.observacion if f and f.observacion else '' }}"></label>
+    <input type="checkbox" name="aplica" {{ 'checked' if f.aplica }}> Aplicar el ajuste del ISUF (optativo)</label>
+  <label>IVH (IDEAM · ENA) <select name="ivh"><option value="">—</option>{% for k,v in ivh_opc.items() %}<option value="{{ k }}" {{ 'selected' if f.ivh==k }}>{{ v }}</option>{% endfor %}</select></label>
+  {% if f.metodologia=='688' %}
+  <label>Meta IPUF · año tarifario 9 (688) <input name="ipuf_meta_a9" inputmode="decimal" value="{{ f.meta_a9 if f.meta_a9 is not none else '' }}"></label>
+  <label>Meta IPUF · año tarifario 10 (688) <input name="ipuf_meta_a10" inputmode="decimal" value="{{ f.meta_a10 if f.meta_a10 is not none else '' }}"></label>
+  {% endif %}
+  <label class="wide">Observación <input name="observacion" value="{{ f.observacion if f.observacion else '' }}"></label>
   <button class="btn primary" type="submit">Calcular y guardar Fap</button>
 </form>
 {% endif %}
-{% endfor %}
-<p class="hint">Para la 825 no aplica el cumplimiento de meta (no había metas de ISUF). Si el IPUFreal ≤ 6
-(ya en el estándar), el Fap es 0. El Fap se descuenta del ISUF en el denominador del cargo por consumo,
-generando continuidad con las señales regulatorias de la Res. 688.</p>
+<p class="hint">El <b>IPUFreal</b>, la <b>metodología anterior</b> y el <b>cumplimiento de meta</b> los calcula el
+sistema; solo ingresas el <b>IVH</b> y las <b>metas del IPUF de la 688</b> (años 9 y 10). Para la 825 no
+aplica el cumplimiento de meta. Si el IPUFreal ≤ 6 (ya en el estándar), el Fap es 0. El Fap se descuenta del
+ISUF del acueducto, que entra al cargo por consumo de los dos servicios.</p>
+
+{# ===== Lo cargado: desplegable (colapsado) para no ocupar toda la pantalla ===== #}
+<details style="margin:12px 0 2px">
+  <summary class="serv-h" style="cursor:pointer">Cargado{% if agua %} · {{ agua|length }} registro(s){% endif %}</summary>
+  {% if agua %}
+  <table class="tabla" style="margin-top:8px">
+    <thead><tr><th>Período</th><th>Año tarifario</th><th>Servicio</th><th>APS</th><th class="r">Puntos</th><th class="r">m³ producidos</th><th></th></tr></thead>
+    <tbody>
+      {% for x in agua %}<tr><td class="comp">{{ meses.get(x.mes,x.mes) }}-{{ x.anio }}</td><td>{{ aniotar(x.anio) }}</td>
+        <td>{{ x.servicio }}</td>
+        <td>{% if x.cod_dane %}{{ x.municipio or x.cod_dane }}{% else %}<span class="muted2">Conjunto</span>{% endif %}</td>
+        <td class="num">{{ x.puntos }}</td><td class="num">{{ x.m3|valor if x.m3 is not none else '—' }}</td>
+        <td class="c">{{ delcargue('agua', x) }}</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="empty">Aún no hay agua producida cargada.</p>{% endif %}
+</details>
 {% endif %}
 
 {# ---------------- COSTOS PARTICULARES ---------------- #}

@@ -53,37 +53,37 @@ print("== Ruta: guardar y resolver el Fap ==")
 with db.engine_owner.begin() as cn:
     cn.execute(text("DELETE FROM ccp_fap WHERE empresa_id=:e"), {"e": EID})
 adm = cli("mgomeza78@gmail.com")
-NX = f"/empresa/{EID}/cargar?fuente=ccp"
-tok = csrf(adm, NX)
+NXA = f"/empresa/{EID}/cargar?fuente=agua"    # el Fap vive en el Paso 3 (Producción y Suministro de Agua)
+tok = csrf(adm, NXA)
+# Fap ÚNICO por empresa: el IPUFreal, la metodología y el cumplimiento los calcula el sistema desde lo
+# cargado; el usuario solo aporta el IVH y las metas del IPUF de la 688 (años 9 y 10).
 r = adm.post(f"/empresa/{EID}/ccp-fap", data={
-    "csrf": tok, "next": NX, "servicio": "acueducto", "aplica": "on", "ipuf_real": "17.35",
-    "ivh": "alta", "metodologia": "688", "cumplio": "no"}, follow_redirects=False)
-check("msg=" in r.headers.get("location", ""), "guardado del Fap OK")
+    "csrf": tok, "next": NXA, "aplica": "on", "ivh": "alta",
+    "ipuf_meta_a9": "8", "ipuf_meta_a10": "8"}, follow_redirects=False)
+check("msg=" in r.headers.get("location", ""), "guardado del Fap OK (ruta nueva: IVH + metas 688)")
 with db.engine_owner.connect() as cn:
-    row = ccp.get(cn, EID, "acueducto")
-check(row is not None and abs((row["fap"] or 0) - 1.60) < 1e-9, f"Fap guardado = 1,60 ({row['fap'] if row else None})")
+    row = ccp.get(cn, EID)
+check(row is not None, "fila única del Fap creada (una por empresa)")
+check(row and row["metodologia"] in ("688", "825"),
+      f"metodología derivada del punto de partida ({row['metodologia'] if row else None})")
+check(row and row["ivh"] == "alta", "IVH guardado")
+# La resolución exacta de la tabla del Fap (rango × IVH × metodología × cumplimiento) se verifica
+# arriba en fap_resuelto(...); aquí el IPUFreal depende de lo cargado, por eso no se fija su valor.
 
-# cumplimiento automático desde IPUF planeado/real
-adm.post(f"/empresa/{EID}/ccp-fap", data={
-    "csrf": tok, "next": NX, "servicio": "acueducto", "aplica": "on", "ipuf_real": "13",
-    "ivh": "media", "metodologia": "688", "cumplio": "", "ipuf_planeado": "12"}, follow_redirects=False)
-with db.engine_owner.connect() as cn:
-    row = ccp.get(cn, EID, "acueducto")
-# real 13 vs planeado 12 → diferencia 8,3 % ≤ 20 % → cumplió → 11,5<IPUF≤15·media·688·Sí = 2,00
-check(row and row["cumplio_meta"] is True and abs((row["fap"] or 0) - 2.00) < 1e-9,
-      f"cumplimiento automático → Fap 2,00 ({row['fap'] if row else None})")
-
-print("== La pestaña CCP responde ==")
-check(adm.get(NX).status_code == 200 and "ajuste del ISUF" in adm.get(NX).text, "la pestaña CCP/Fap renderiza")
+print("== La pestaña Agua/Fap responde ==")
+check(adm.get(NXA).status_code == 200 and "ajuste del ISUF" in adm.get(NXA).text, "la pestaña Agua/Fap renderiza")
 
 print("== RLS: AMB no edita el Fap de Las Ceibas ==")
+with db.engine_owner.connect() as cn:
+    fap_prev = (ccp.get(cn, EID) or {}).get("fap")
 amb = cli("operador@amb.com.co")
 tokx = csrf(amb, "/panel")
-amb.post(f"/empresa/{EID}/ccp-fap", data={"csrf": tokx, "servicio": "acueducto", "aplica": "on",
-         "ipuf_real": "7", "ivh": "baja", "metodologia": "825"}, follow_redirects=False)
+amb.post(f"/empresa/{EID}/ccp-fap", data={"csrf": tokx, "aplica": "on", "ivh": "baja",
+         "ipuf_meta_a9": "6", "ipuf_meta_a10": "6"}, follow_redirects=False)
 with db.engine_owner.connect() as cn:
-    row = ccp.get(cn, EID, "acueducto")
-check(row and abs((row["fap"] or 0) - 2.00) < 1e-9, "AMB no alteró el Fap de Las Ceibas")
+    row = ccp.get(cn, EID)
+check(row and row["ivh"] == "alta" and (row["fap"] == fap_prev),
+      "AMB no alteró el Fap de Las Ceibas")
 
 print("\n" + ("TODAS LAS PRUEBAS DE CCP/FAP PASARON" if not _fail else f"FALLARON {len(_fail)}: {_fail}"))
 raise SystemExit(1 if _fail else 0)
