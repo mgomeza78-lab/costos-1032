@@ -100,12 +100,23 @@ def _as_date(v):
 
 
 def _metodologia_y_fecha(conn, empresa_id):
-    """Metodología anterior desde el punto de partida: 688 si hay fecha_inicio_688, si no 825."""
-    row = conn.execute(text(
-        "SELECT fecha_inicio_688 FROM bcr_param WHERE empresa_id=:e AND servicio='acueducto'"),
+    """Metodología anterior y fecha de inicio de la 688.
+
+    Metodología: la EXPLÍCITA de la empresa (selector de «crear/editar empresa»,
+    empresa.metodologia_anterior). Si no se eligió, se infiere: 688 si hay fecha de inicio
+    de la 688 (en la empresa o en el BCR₀), si no 825. La fecha se usa además para mapear
+    los años tarifarios 9 y 10 de la 688 (se prefiere la del BCR₀, por servicio)."""
+    r = conn.execute(text(
+        "SELECT metodologia_anterior, fecha_inicio_688 FROM empresa WHERE id=:e"),
         {"e": empresa_id}).mappings().first()
-    fecha = _as_date(row["fecha_inicio_688"]) if row else None
-    return ("688" if fecha else "825"), fecha
+    met_exp = (r["metodologia_anterior"] if r else None)
+    fe = _as_date(r["fecha_inicio_688"]) if r else None
+    fb = _as_date(conn.execute(text(
+        "SELECT fecha_inicio_688 FROM bcr_param WHERE empresa_id=:e AND servicio='acueducto'"),
+        {"e": empresa_id}).scalar())
+    fecha = fb or fe
+    metod = met_exp if met_exp in ("688", "825") else ("688" if fecha else "825")
+    return metod, fecha
 
 
 def _k688(fecha_inicio, anio, mes):

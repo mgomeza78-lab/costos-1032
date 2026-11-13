@@ -25,6 +25,13 @@
     </label>
     <label>Inicio aplicación 688 <input type="date" name="fecha_688" value="{{ emp.fecha_inicio_688 or '2016-07-01' }}"></label>
     <label>Inicio aplicación 1032 <input type="date" id="f1032" name="fecha_1032" value="{{ emp.fecha_inicio_1032 or '2026-07-01' }}"></label>
+    <label>Metodología que venía aplicando
+      <select name="metodologia_anterior">
+        <option value="">— elegir —</option>
+        <option value="688" {{ 'selected' if emp.metodologia_anterior=='688' }}>Res. CRA 688 de 2014</option>
+        <option value="825" {{ 'selected' if emp.metodologia_anterior=='825' }}>Res. CRA 825 de 2017</option>
+      </select>
+    </label>
   </div>
   <div class="seg-auto">Segmento asignado automáticamente:
     <b id="segOut">Segmento {{ emp.segmento_id }}</b> <span id="segHint" class="muted2"></span>

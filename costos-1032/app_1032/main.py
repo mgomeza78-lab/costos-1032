@@ -497,6 +497,7 @@ def empresa_nueva_form(request: Request):
 def empresa_nueva_post(request: Request, codigo: str = Form(...), nombre: str = Form(""),
                        suscriptores: str = Form(""), codigo_sui: str = Form(""),
                        fecha_688: str = Form(""), fecha_1032: str = Form(""),
+                       metodologia_anterior: str = Form(""),
                        aps_items: list[str] = Form([], alias="aps"), csrf: str = Form(""),
                        catalogo: UploadFile | None = File(None)):
     if (r := _need_login(request)):
@@ -557,13 +558,14 @@ def empresa_nueva_post(request: Request, codigo: str = Form(...), nombre: str = 
                 "kct": base.get("kct") or (float(segrow["kct"]) if segrow else None),
                 "f688": f688 or None, "f1032": f1032 or None, "tardia": tardia,
                 "sui": codigo_sui.strip() or None, "naps": len(pares) or None, "sseg": susc,
+                "metod_ant": (metodologia_anterior.strip() or None),
             }
             eid = conn.execute(text(
                 "INSERT INTO empresa (codigo,nombre,nit,municipio,segmento_id,presta_ac,presta_al,"
                 " esquema,r,kct,fecha_inicio_688,fecha_inicio_1032,aplicacion_1032_tardia,"
-                " codigo_sui,n_aps,suscriptores_seg) "
+                " codigo_sui,n_aps,suscriptores_seg,metodologia_anterior) "
                 "VALUES (:codigo,:nombre,NULL,:municipio,:segmento_id,:presta_ac,:presta_al,"
-                " :esquema,:r,:kct,:f688,:f1032,:tardia,:sui,:naps,:sseg) RETURNING id"), data).scalar()
+                " :esquema,:r,:kct,:f688,:f1032,:tardia,:sui,:naps,:sseg,:metod_ant) RETURNING id"), data).scalar()
             terr.set_municipios(conn, eid, [c for c, _ in pares])
             for idx, (cod, serv) in enumerate(pares, start=1):
                 aps.guardar(conn, eid, cod, {"servicios": serv, "numero_aps": idx}, user["user_id"])
@@ -622,6 +624,7 @@ def empresa_editar_form(request: Request, eid: int):
 def empresa_editar_post(request: Request, eid: int, nombre: str = Form(""),
                         suscriptores: str = Form(""), codigo_sui: str = Form(""),
                         fecha_688: str = Form(""), fecha_1032: str = Form(""),
+                        metodologia_anterior: str = Form(""),
                         aps_items: list[str] = Form([], alias="aps"), csrf: str = Form("")):
     if (r := _need_login(request)):
         return r
@@ -667,11 +670,13 @@ def empresa_editar_post(request: Request, eid: int, nombre: str = Form(""),
                 "f688": f688 or emp["fecha_inicio_688"], "f1032": f1032 or emp["fecha_inicio_1032"],
                 "tardia": tardia, "sui": codigo_sui.strip() or emp["codigo_sui"],
                 "naps": len(pares) or None, "sseg": susc if susc is not None else emp["suscriptores_seg"],
+                "metod_ant": (metodologia_anterior.strip() or None),
             }
             conn.execute(text(
                 "UPDATE empresa SET nombre=:nombre, segmento_id=:segmento_id, presta_ac=:presta_ac, "
                 " presta_al=:presta_al, r=:r, kct=:kct, fecha_inicio_688=:f688, fecha_inicio_1032=:f1032, "
-                " aplicacion_1032_tardia=:tardia, codigo_sui=:sui, n_aps=:naps, suscriptores_seg=:sseg "
+                " aplicacion_1032_tardia=:tardia, codigo_sui=:sui, n_aps=:naps, suscriptores_seg=:sseg, "
+                " metodologia_anterior=:metod_ant "
                 "WHERE id=:e"), data)
             # Reconciliación de municipios/APS sin destruir la configuración ya hecha:
             actuales = {row[0] for row in conn.execute(text(
