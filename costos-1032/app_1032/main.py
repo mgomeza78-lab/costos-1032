@@ -3020,7 +3020,7 @@ def guardar_costo_ref688(request: Request, eid: int, servicio: str = Form(...),
                          cargo_fijo: str = Form(""), cargo_consumo: str = Form(""),
                          cma: str = Form(""), cmo: str = Form(""), cmi: str = Form(""),
                          cmict: str = Form(""), fecha_indexacion: str = Form(""),
-                         indice_base: str = Form(""), acto_admin: str = Form(""),
+                         acto_admin: str = Form(""),
                          observacion: str = Form(""), origen: str = Form("empresa"),
                          next: str = Form(""), csrf: str = Form("")):
     if (r := _need_login(request)):
@@ -3040,7 +3040,7 @@ def guardar_costo_ref688(request: Request, eid: int, servicio: str = Form(...),
             _cid, err = ref688.guardar(conn, eid, servicio, {
                 "cargo_fijo": _fnum(cargo_fijo), "cargo_consumo": _fnum(cargo_consumo),
                 "cma": _fnum(cma), "cmo": _fnum(cmo), "cmi": _fnum(cmi), "cmict": _fnum(cmict),
-                "fecha_indexacion": fecha_indexacion, "indice_base": _fnum(indice_base),
+                "fecha_indexacion": fecha_indexacion, "indice_base": None,
                 "acto_admin": acto_admin, "observacion": observacion, "origen": origen},
                 user["user_id"])
         if err:

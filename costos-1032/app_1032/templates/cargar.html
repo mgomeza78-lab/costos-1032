@@ -68,65 +68,69 @@
 {# ---------------- COMERCIAL ---------------- #}
 {# ===== PUNTO DE PARTIDA 688 (gestión de la información · solo período de inicio) ===== #}
 {% if fuente=='ref688' %}
-<h2 class="serv-h">Punto de partida · último costo de referencia (marco 688)</h2>
+{% set metant = emp.metodologia_anterior or '688' %}
+<h2 class="serv-h">Punto de partida · último costo de referencia (marco {{ metant }})</h2>
 <p class="muted2">Registra, <b>por servicio</b>, la última tarifa o costo de referencia que la empresa venía
-aplicando bajo la metodología anterior (Res. CRA 688 de 2014) y la <b>fecha a la que estaban indexados</b>.
-Es el <b>punto de partida</b> de la transición del período de inicio (art. 2.1.2.1.1.8): no reemplaza el
-cálculo de los costos de la nueva metodología, sino que sirve de comparación y control. Captura la tarifa
-(cargo fijo = CMA; cargo por consumo = CMO+CMI+tasas) y, si la tienes, su desagregación por componente.</p>
+aplicando bajo la <b>metodología anterior</b> (Res. CRA 688 de 2014 o 825 de 2017) y la <b>fecha a la que
+estaban indexados</b>. Es el <b>punto de partida</b> de la transición del período de inicio (art.
+2.1.2.1.1.8): no reemplaza el cálculo de los costos de la nueva metodología, sino que sirve de comparación y
+control. Captura la tarifa (cargo fijo = CMA; cargo por consumo = CMO+CMI+tasas) y, si la tienes, su
+desagregación por componente.</p>
 {% if periodo_activo.es_inicio %}
 
-<h3 class="serv-h">Datos de transición 688 → 1032</h3>
-<p class="muted2">El sistema usa estos datos para derivar el <b>r688</b> (por el segmento), traer el VPR₀ a valor
-presente y validar la cobertura mensual de m³ facturados 688. Los <b>IPC</b> salen del módulo de indexación
-(no se digitan). La <b>1032 pudo aplicarse más tarde</b> que jul‑2026: ajusta su fecha si es el caso.</p>
+<h3 class="serv-h">Datos de transición {{ metant }} → 1032</h3>
+<p class="muted2">El sistema usa estos datos para derivar el <b>r</b> de la metodología anterior (por el
+segmento), traer el VPR₀ a valor presente y validar la cobertura mensual de m³ facturados. Los <b>IPC</b>
+salen del módulo de indexación (no se digitan). La <b>1032 pudo aplicarse más tarde</b> que jul‑2026: ajusta
+su fecha si es el caso.</p>
 {% if puede_cargar %}
 <form method="post" action="/empresa/{{ emp.id }}/ref688-datos" class="form-grid">
   <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
-  <label>Inicio de aplicación de la 688 <input type="month" name="fecha_inicio_688" value="{{ emp.fecha_inicio_688.strftime('%Y-%m') if emp.fecha_inicio_688 else '' }}"></label>
+  <label>Inicio de aplicación de la {{ metant }} <input type="month" name="fecha_inicio_688" value="{{ emp.fecha_inicio_688.strftime('%Y-%m') if emp.fecha_inicio_688 else '' }}"></label>
   <label>Inicio de aplicación de la 1032 <input type="month" name="fecha_inicio_1032" value="{{ emp.fecha_inicio_1032.strftime('%Y-%m') if emp.fecha_inicio_1032 else '2026-07' }}"></label>
-  <label>Suscriptores (segmento 688) <input name="suscriptores_seg" inputmode="numeric" value="{{ emp.suscriptores_seg or '' }}"></label>
+  {% if metant == '688' %}
   <label>Meta IPUF · año tarifario 9 (688) <span class="muted2">· m³/susc·mes</span>
     <input name="ipuf_meta_688_a9" inputmode="decimal" value="{{ emp.ipuf_meta_688_a9 if emp.ipuf_meta_688_a9 is not none else '' }}"></label>
   <label>Meta IPUF · año tarifario 10 (688) <span class="muted2">· m³/susc·mes</span>
     <input name="ipuf_meta_688_a10" inputmode="decimal" value="{{ emp.ipuf_meta_688_a10 if emp.ipuf_meta_688_a10 is not none else '' }}"></label>
+  {% endif %}
+  <label>Suscriptores (segmento {{ metant }}) <input name="suscriptores_seg" inputmode="numeric" value="{{ emp.suscriptores_seg or '' }}"></label>
   <label class="wide">Observación / fuente <span class="muted2">· de dónde salen estos datos (p. ej. el modelo del estudio 688)</span>
     <textarea name="observacion" rows="2" style="width:100%;font:inherit">{{ emp.punto_partida_obs or '' }}</textarea></label>
   <button class="btn" type="submit">Guardar datos de transición</button>
 </form>
-<p class="muted2" style="margin:4px 0 0">Las <b>metas del IPUF de la 688</b> (años tarifarios 9 y 10) son la senda de
+{% if metant == '688' %}<p class="muted2" style="margin:4px 0 0">Las <b>metas del IPUF de la 688</b> (años tarifarios 9 y 10) son la senda de
 pérdidas comprometida en el estudio 688. El sistema las compara con el IPUF real (diferencia ≤ 20 %) para
-resolver el cumplimiento de meta del <b>Fap</b> del CCP.</p>
+resolver el cumplimiento de meta del <b>Fap</b> del CCP.</p>{% endif %}
 {% endif %}
-<p class="muted2">Segmento 688 derivado:
-  {% if ref688_seg %}<b>segmento {{ ref688_seg }} → r688 = {{ '%.2f'|format(ref688_r*100)|replace('.', ',') }} %</b>{% else %}<b>sin definir</b> (ingresa los suscriptores){% endif %}
-  · agua facturada 688 esperada: desde el inicio de la 688 hasta el <b>mes anterior</b> al inicio de la 1032.</p>
+<p class="muted2">Segmento derivado:
+  {% if ref688_seg %}<b>segmento {{ ref688_seg }} → r = {{ '%.2f'|format(ref688_r*100)|replace('.', ',') }} %</b>{% else %}<b>sin definir</b> (ingresa los suscriptores){% endif %}
+  · agua facturada {{ metant }} esperada: desde el inicio de la {{ metant }} hasta el <b>mes anterior</b> al inicio de la 1032.</p>
 
-<h3 class="serv-h">Último costo de referencia aplicado (688)</h3>
+<h3 class="serv-h">Último costo de referencia aplicado ({{ metant }})</h3>
 {% if puede_cargar %}
 <form method="post" action="/empresa/{{ emp.id }}/costo-ref688" class="form-grid">
   <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
   <label>Servicio <select name="servicio" required>{{ servopts() }}</select></label>
-  <label>Cargo fijo 688 ($/suscriptor·mes) <input name="cargo_fijo" inputmode="decimal"></label>
-  <label>Cargo por consumo 688 ($/m³) <input name="cargo_consumo" inputmode="decimal"></label>
+  <label>Cargo fijo {{ metant }} ($/suscriptor·mes) <input name="cargo_fijo" inputmode="decimal"></label>
+  <label>Cargo por consumo {{ metant }} ($/m³) <input name="cargo_consumo" inputmode="decimal"></label>
   <label>Fecha de indexación <input type="month" name="fecha_indexacion"></label>
-  <label>Índice base (IPC) <input name="indice_base" inputmode="decimal"></label>
   <label>CMA ($/susc·mes) <span class="muted2">opcional</span><input name="cma" inputmode="decimal"></label>
   <label>CMO ($/m³) <span class="muted2">opcional</span><input name="cmo" inputmode="decimal"></label>
   <label>CMI ($/m³) <span class="muted2">opcional</span><input name="cmi" inputmode="decimal"></label>
-  <label>CMICT/tasas ($/m³) <span class="muted2">opcional</span><input name="cmict" inputmode="decimal"></label>
-  <label class="wide">Acto administrativo <input name="acto_admin" placeholder="Resolución/acuerdo con que se aplicó el marco 688"></label>
+  <label>CMT · tasas ($/m³) <span class="muted2">opcional</span><input name="cmict" inputmode="decimal"></label>
+  <label class="wide">Acto administrativo <input name="acto_admin" placeholder="Resolución/acuerdo con que se aplicó el marco {{ metant }}"></label>
   <label>Origen <select name="origen"><option value="empresa">Empresa</option><option value="SUI">SUI</option><option value="supuesto">Supuesto</option></select></label>
   <label class="wide">Observación <input name="observacion"></label>
-  <button class="btn" type="submit">Guardar punto de partida 688</button>
+  <button class="btn" type="submit">Guardar punto de partida</button>
 </form>
 {% endif %}
 {% set hay688 = ref688 and (ref688.values()|list) %}
 {% if hay688 %}
 <div style="overflow-x:auto"><table class="tabla compact" style="margin-top:6px">
   <thead><tr><th>Servicio</th><th class="r">CF 688 ($/susc·mes)</th><th class="r">CC 688 ($/m³)</th>
-    <th class="r">CMA</th><th class="r">CMO</th><th class="r">CMI</th><th class="r">CMICT</th>
-    <th>Indexado a</th><th class="r">Índice</th><th>Acto admin.</th>{% if puede_cargar %}<th></th>{% endif %}</tr></thead>
+    <th class="r">CMA</th><th class="r">CMO</th><th class="r">CMI</th><th class="r">CMT</th>
+    <th>Indexado a</th><th>Acto admin.</th>{% if puede_cargar %}<th></th>{% endif %}</tr></thead>
   <tbody>
     {% for s, r in ref688.items() %}<tr>
       <td class="comp">{{ ref688_serv.get(s, s) }}</td>
@@ -137,7 +141,6 @@ resolver el cumplimiento de meta del <b>Fap</b> del CCP.</p>
       <td class="num">{{ r.cmi|valor('$') if r.cmi is not none else '—' }}</td>
       <td class="num">{{ r.cmict|valor('$') if r.cmict is not none else '—' }}</td>
       <td>{{ r.fecha_indexacion or '—' }}</td>
-      <td class="num">{{ r.indice_base|valor if r.indice_base is not none else '—' }}</td>
       <td class="muted2" style="font-size:12px">{{ r.acto_admin or '—' }}</td>
       {% if puede_cargar %}<td class="c"><form method="post" action="/empresa/{{ emp.id }}/costo-ref688/{{ s }}/eliminar" style="display:inline"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}"><button class="btn-link" type="submit" title="eliminar">×</button></form></td>{% endif %}
     </tr>{% endfor %}
