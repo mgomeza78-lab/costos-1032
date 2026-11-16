@@ -397,6 +397,54 @@ def quimico_eliminar(conn, empresa_id, qid):
     conn.execute(text("DELETE FROM quimico_item WHERE empresa_id=:e AND id=:i"), {"e": empresa_id, "i": int(qid)})
 
 
+def series_mensuales(conn, empresa_id, anio=None):
+    """Series MENSUALES para la gráfica de comportamiento (precio y cantidad) de costos particulares.
+
+    Energía: una serie por punto; cantidad = consumo real (kWh) y precio = Pce ($/kWh) de cada mes
+             (el detalle mensual ya se persiste en energia_punto, mes 1..12).
+    Químicos: una serie por insumo; cantidad = kg de cada mes (m1..m12) y precio = precio_kg (anual,
+              constante por contrato; se repite en los 12 meses como referencia).
+    Devuelve {'anios': [...], 'energia': [...], 'quimicos': [...]} listo para |tojson."""
+    # --- Energía: cantidad y precio por mes, por punto ---
+    esql = ("SELECT anio, mes, servicio, no_sui, punto, tipo, consumo_real_kwh, precio_kwh "
+            "FROM energia_punto WHERE empresa_id=:e")
+    pe = {"e": empresa_id}
+    if anio:
+        esql += " AND anio=:a"; pe["a"] = anio
+    eg = {}
+    for r in conn.execute(text(esql), pe).mappings().all():
+        key = (r["anio"], r["servicio"], r["no_sui"] or "", r["punto"] or "")
+        s = eg.get(key)
+        if s is None:
+            s = eg[key] = {"anio": r["anio"], "servicio": r["servicio"], "no_sui": r["no_sui"] or "",
+                           "punto": r["punto"] or "—", "tipo": r["tipo"],
+                           "cant": [None] * 12, "precio": [None] * 12}
+        m = r["mes"] or 0
+        if 1 <= m <= 12:
+            if r["consumo_real_kwh"] is not None:
+                s["cant"][m - 1] = _num(r["consumo_real_kwh"])
+            if r["precio_kwh"] is not None:
+                s["precio"][m - 1] = _num(r["precio_kwh"])
+    energia = sorted(eg.values(), key=lambda d: (-d["anio"], d["servicio"], d["punto"]))
+    # --- Químicos: kg por mes (m1..m12) y precio_kg (constante) por insumo ---
+    cols = ", ".join(MESES_Q)
+    qsql = ("SELECT anio, servicio, no_sui, punto, insumo, estado, precio_kg, " + cols +
+            " FROM quimico_item WHERE empresa_id=:e")
+    pq = {"e": empresa_id}
+    if anio:
+        qsql += " AND anio=:a"; pq["a"] = anio
+    quimicos = []
+    for r in conn.execute(text(qsql), pq).mappings().all():
+        precio = _num(r["precio_kg"]) if r["precio_kg"] is not None else None
+        cant = [(_num(r[m]) if r[m] is not None else None) for m in MESES_Q]
+        quimicos.append({"anio": r["anio"], "servicio": r["servicio"], "no_sui": r["no_sui"] or "",
+                         "punto": r["punto"] or "—", "insumo": r["insumo"], "estado": r["estado"] or "",
+                         "precio_kg": precio, "cant": cant, "precio": [precio] * 12})
+    quimicos.sort(key=lambda d: (-d["anio"], d["servicio"], d["insumo"]))
+    anios = sorted({d["anio"] for d in energia} | {d["anio"] for d in quimicos}, reverse=True)
+    return {"anios": anios, "energia": energia, "quimicos": quimicos}
+
+
 def plantilla_energia():
     # Una fila por punto y mes; el sistema suma los meses al año base.
     ej = ["2024,1,1,otros,15575,PTAP El Roble,producción,,,98085,1011.47",

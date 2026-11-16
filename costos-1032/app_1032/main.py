@@ -2905,6 +2905,7 @@ def cargar_info(request: Request, eid: int):
         energia = eq.energia_lista(conn, eid)
         quimicos = eq.quimico_lista(conn, eid)
         eq_tot = eq.totales(conn, eid)
+        eq_series = eq.series_mensuales(conn, eid)   # detalle mensual (precio y cantidad) para la gráfica
         servicios_emp = [s for s, on in (("acueducto", emp["presta_ac"]), ("alcantarillado", emp["presta_al"])) if on] or ["acueducto"]
         ccp_fap = ccp.vista(conn, eid)   # Fap único por empresa (IPUFreal, metodología y cumplimiento calculados)
         cat_row = conn.execute(text(
@@ -2954,7 +2955,7 @@ def cargar_info(request: Request, eid: int):
         bal_ajustes=bal_ajustes, conceptos_manual=bv.CONCEPTOS_MANUAL,
         tipos_cac=bv.TIPOS_CAC, tipo_label=bv.TIPO_LABEL, art_manual=bv.ART_MANUAL,
         anios_base=pa["anios_base"],
-        energia=energia, quimicos=quimicos, eq_tot=eq_tot, meses_hdr=eq.MES_HDR,
+        energia=energia, quimicos=quimicos, eq_tot=eq_tot, eq_series=eq_series, meses_hdr=eq.MES_HDR,
         cmict_anio=cmict_anio, cmict_icta=cmict_icta, cmict_icto=cmict_icto, cmict_tua=cmict_tua,
         cmict_retrib=cmict_retrib, cmict_soportes=cmict_soportes, cmict_excl=cmict_excl,
         cmict_tot=cmict_tot, cmict_excl_tot=cmict_excl_tot,
