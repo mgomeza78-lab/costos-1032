@@ -26,6 +26,7 @@ from sqlalchemy import text
 import periodos as per
 import ref688_service as ref688
 import ccp_view as cv
+import costo_referencia_view as crv
 
 SERV_NOMBRE = {"acueducto": "Acueducto", "alcantarillado": "Alcantarillado"}
 VISTAS = [("conjunta", "Factura conjunta"), ("acueducto", "Acueducto"), ("alcantarillado", "Alcantarillado")]
@@ -91,15 +92,28 @@ def _mes_lbl(m):
     return f"{MESES.get(m[1], m[1])}-{m[0]}" if m else "—"
 
 
-def _componentes_1032(conn, eid):
-    """{servicio: {CMA, CMO, CMI, CMICT}} del resultado del sistema (resultado_componente)."""
-    out = {}
+def _componentes_1032(conn, eid, emp, servicios):
+    """{servicio: {CMA, CMO, CMI, CMICT}} del resultado del sistema. Prefiere el valor ALMACENADO
+    (resultado_componente); si no está, lo RECALCULA en vivo igual que la página «Costo de referencia»
+    (crv.variables + crv._calc), para no exigir que el recálculo esté persistido."""
+    stored = {}
     for r in conn.execute(text(
             "SELECT servicio, componente, valor FROM resultado_componente "
             "WHERE empresa_id=:e AND componente IN ('CMA','CMO','CMI','CMICT')"),
             {"e": eid}).mappings().all():
-        out.setdefault(r["servicio"], {})[r["componente"]] = (
+        stored.setdefault(r["servicio"], {})[r["componente"]] = (
             float(r["valor"]) if r["valor"] is not None else None)
+    try:
+        varset = crv.variables(conn, eid, servicios, emp=emp, pclave="inicio")
+    except Exception:
+        varset = {}
+    out = {}
+    for s in servicios:
+        v = varset.get(s, {})
+        out[s] = {}
+        for k in ("CMA", "CMO", "CMI", "CMICT"):
+            sv = stored.get(s, {}).get(k)
+            out[s][k] = sv if sv is not None else crv._calc(k, v)
     return out
 
 
@@ -284,20 +298,21 @@ def _mil(v):
 
 
 # ───────────────────────── paquete para la vista ─────────────────────────
-def resumen(conn, eid, modo="proximo", vista="conjunta", mes_param=None, base="neta"):
-    """Arma toda la comparación. `modo`: 'ultima' | 'proximo'. `vista`: 'conjunta'|'acueducto'|
-    'alcantarillado'. `mes_param`: 'YYYY-MM' que fuerza el mes de referencia (gana sobre el modo).
-    `base`: 'neta' (aplica subsidios/contribuciones) | 'plena' (tarifa sin factores)."""
+def resumen(conn, eid, emp, modo="proximo", vista="conjunta", mes_param=None, base="neta"):
+    """Arma toda la comparación. `emp`: fila de la empresa. `modo`: 'ultima' | 'proximo'. `vista`:
+    'conjunta'|'acueducto'|'alcantarillado'. `mes_param`: 'YYYY-MM' que fuerza el mes de referencia
+    (gana sobre el modo). `base`: 'neta' (subsidios/contribuciones) | 'plena'."""
     base = base if base in ("plena", "neta") else "neta"
     sel = per.POR_CLAVE["inicio"]
     dic_ref = sel["anio"] - 1                 # 2025 (i-1)
     base_1032 = (dic_ref, 12)                 # dic-2025 — base de los costos 1032
     anio_icuf = sel["anios_base"][-1]         # 2025 — consumo representativo (i-1)
 
+    servicios = [s for s, on in (("acueducto", emp["presta_ac"]),
+                                 ("alcantarillado", emp["presta_al"])) if on] or ["acueducto"]
     idx = _idx(conn)
-    comp = _componentes_1032(conn, eid)
+    comp = _componentes_1032(conn, eid, emp, servicios)
     ref = ref688.por_servicio(conn, eid)
-    servicios = [s for s in ("acueducto", "alcantarillado") if s in comp or s in ref]
 
     # Mes de referencia M.
     meses_688 = [m for m in (_mes_de((ref.get(s) or {}).get("fecha_indexacion")) for s in servicios) if m]
@@ -455,6 +470,6 @@ def resumen(conn, eid, modo="proximo", vista="conjunta", mes_param=None, base="n
         "base": base, "usar_neta": usar_neta, "hay_factores": hay_factores, "vig_fac": vig_fac,
         "tabla": tabla, "chart": chart, "qmax": QMAX, "basico": BASICO_DEFECTO,
         "hay_688": any(ref.get(s) for s in servicios),
-        "hay_1032": any(comp.get(s) for s in servicios),
+        "hay_1032": any(any(v is not None for v in comp.get(s, {}).values()) for s in servicios),
         "falta": sorted(set(falta_global)),
     }

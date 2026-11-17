@@ -487,7 +487,7 @@ def empresa_comparacion(request: Request, eid: int):
         emp = conn.execute(text("SELECT * FROM empresa WHERE id=:e"), {"e": eid}).mappings().first()
         if not emp:
             return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
-        datos = cmpv.resumen(conn, eid, modo=modo, vista=vista, mes_param=mes, base=base)
+        datos = cmpv.resumen(conn, eid, emp, modo=modo, vista=vista, mes_param=mes, base=base)
     return tpl.TemplateResponse(request, "comparacion.html", _ctx(request, emp=emp, c=datos))
 
 
