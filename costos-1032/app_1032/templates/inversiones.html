@@ -15,22 +15,14 @@
 
 {% set s688 = es_inicio or sec in ('agua','bcr','poir','poir_ejec') %}
 {% set s1032 = (not es_inicio) or sec in ('poir1032','poir1032_ejec') %}
-<div class="paso-nav">
-  {% if s688 %}
-  <a class="paso {{ 'on' if sec=='agua' }}" href="/empresa/{{ emp.id }}/inversiones?sec=agua">Agua facturada</a>
-  <a class="paso {{ 'on' if sec=='bcr' }}" href="/empresa/{{ emp.id }}/inversiones?sec=bcr">BCR de inicio</a>
-  <a class="paso {{ 'on' if sec=='poir' }}" href="/empresa/{{ emp.id }}/inversiones?sec=poir">POIR 688 planeado</a>
-  <a class="paso {{ 'on' if sec=='poir_ejec' }}" href="/empresa/{{ emp.id }}/inversiones?sec=poir_ejec">POIR 688 ejecutado</a>
-  <a class="paso {{ 'on' if sec=='compensacion' }}" href="/empresa/{{ emp.id }}/inversiones?sec=compensacion">Compensación de la base</a>
-  <a class="paso {{ 'on' if sec=='base' }}" href="/empresa/{{ emp.id }}/inversiones?sec=base">Base de capital y CMI</a>
-  <a class="paso {{ 'on' if sec=='proyeccion' }}" href="/empresa/{{ emp.id }}/inversiones?sec=proyeccion">Proyección del CMI</a>
-  {% endif %}
-  {% if s1032 %}
-  <a class="paso {{ 'on' if sec=='poir1032' }}" href="/empresa/{{ emp.id }}/inversiones?sec=poir1032">POIR 1032 · plan</a>
-  <a class="paso {{ 'on' if sec=='poir1032_ejec' }}" href="/empresa/{{ emp.id }}/inversiones?sec=poir1032_ejec">Ejecución de obras del año</a>
-  {% endif %}
-  <a class="paso {{ 'on' if sec=='activos' }}" href="/empresa/{{ emp.id }}/inversiones?sec=activos">Activos admin. y operativos</a>
-  <a class="paso {{ 'on' if sec=='provision' }}" href="/empresa/{{ emp.id }}/inversiones?sec=provision">Provisión POIR</a>
+{% set ns = namespace(pasos=[]) %}
+{% if s688 %}{% set ns.pasos = ns.pasos + [('agua','Agua facturada'),('bcr','BCR de inicio'),('poir','POIR 688 planeado'),('poir_ejec','POIR 688 ejecutado'),('compensacion','Compensación de la base'),('base','Base de capital y CMI'),('proyeccion','Proyección del CMI')] %}{% endif %}
+{% if s1032 %}{% set ns.pasos = ns.pasos + [('poir1032','POIR 1032 · plan'),('poir1032_ejec','Ejecución de obras del año')] %}{% endif %}
+{% set ns.pasos = ns.pasos + [('activos','Activos admin. y operativos'),('provision','Provisión POIR')] %}
+<div class="tabs">
+  {% for ps in ns.pasos %}
+  <a class="tab {{ 'active' if sec==ps[0] }}" href="/empresa/{{ emp.id }}/inversiones?sec={{ ps[0] }}"><span class="num">{{ '%02d'|format(loop.index) }}</span>{{ ps[1] }}</a>
+  {% endfor %}
 </div>
 
 {# ============================ PASO 1 · AGUA FACTURADA 688 (por APS) ============================ #}
@@ -120,7 +112,7 @@ año i se obtiene el <b>VP(CMI×Q)</b>, que se resta al VIA688 para el VPR₀ (a
     <form method="post" action="/empresa/{{ emp.id }}/bcr-serie-csv" enctype="multipart/form-data" class="up-form">
       <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
       <label>Serie 688 — CSV (columnas: <code>servicio, cod_dane, anio, mes, agua_facturada_m3, cmi_poir, cmi_bcr, proyectado</code>). Una fila por mes, año, servicio y APS.
-        <input type="file" name="archivos" accept=".csv" multiple required></label>
+        <input type="file" name="archivos" accept=".csv,.xlsx,.xlsm" multiple required></label>
       <button class="btn primary" type="submit">Cargar archivo(s)</button>
     </form>
     <p class="muted2" style="margin:4px 0 0"><a href="/empresa/{{ emp.id }}/plantilla/bcr_serie">Descargar plantilla</a>
@@ -230,7 +222,7 @@ El detalle del <b>CMI_POIR</b> va en el <a href="/empresa/{{ emp.id }}/inversion
   <form method="post" action="/empresa/{{ emp.id }}/cmi-proyecto-csv" enctype="multipart/form-data" class="up-form" style="margin-top:6px">
     <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
     <input type="hidden" name="tipo" value="bcr"><input type="hidden" name="tramo" value="{{ tr.idx }}">
-    <input type="file" name="archivos" accept=".csv" required>
+    <input type="file" name="archivos" accept=".csv,.xlsx,.xlsm" required>
     <button class="btn" type="submit">Cargar tramo {{ tr.idx }}</button>
   </form>
   {% endif %}
@@ -307,7 +299,7 @@ planeado</b> se muestra en el <a href="/empresa/{{ emp.id }}/inversiones?sec=poi
   <form method="post" action="/empresa/{{ emp.id }}/poir-plan-csv" enctype="multipart/form-data" class="up-form" style="margin-top:6px">
     <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
     <input type="hidden" name="tramo" value="{{ tr.idx }}">
-    <input type="file" name="archivos" accept=".csv" required>
+    <input type="file" name="archivos" accept=".csv,.xlsx,.xlsm" required>
     <button class="btn" type="submit">Cargar tramo {{ tr.idx }}</button>
     <a href="/empresa/{{ emp.id }}/plantilla/{{ 'poir_planeado' if tr.idx==1 else 'poir_planeado_act' }}" class="muted2" style="margin-left:8px">Plantilla</a>
   </form>
@@ -467,7 +459,7 @@ Columnas: <code>id_activo, servicio, anio_tarifario, valor_ejecutado</code> (sop
   {% if puede_cargar %}
   <form method="post" action="/empresa/{{ emp.id }}/poir-registro-csv" enctype="multipart/form-data" class="up-form" style="margin-top:6px">
     <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
-    <input type="file" name="archivos" accept=".csv" required>
+    <input type="file" name="archivos" accept=".csv,.xlsx,.xlsm" required>
     <button class="btn" type="submit">Cargar POIR ejecutado</button>
   </form>
   {% endif %}

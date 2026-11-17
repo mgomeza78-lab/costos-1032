@@ -47,14 +47,10 @@
 <p class="muted2" style="margin:-4px 0 8px">Años cargados:
   {% for a in b.anios %}<b>{{ a }}</b>{{ ", " if not loop.last }}{% endfor %}.</p>
 
-<form method="get" action="/empresa/{{ emp.id }}/balance" class="graf-ctrl">
-  <label>Componente
-    <select name="comp" onchange="this.form.submit()">
-      {% for c in b.componentes %}<option value="{{ c }}" {{ 'selected' if c==b.componente }}>{{ c }} · {{ b.comp_nombre[c] }}</option>{% endfor %}
-    </select>
-  </label>
-  <span class="hint" style="align-self:center">Art. {{ b.art }} · Res. CRA 1032</span>
-</form>
+<div class="tabs">
+  {% for c in b.componentes %}<a class="tab {{ 'active' if c==b.componente }}" href="/empresa/{{ emp.id }}/balance?comp={{ c }}">{{ c }} · {{ b.comp_nombre[c] }}</a>{% endfor %}
+</div>
+<p class="hint" style="margin:-6px 0 14px">Art. {{ b.art }} · Res. CRA 1032</p>
 
 {% if b.usa_pct %}
 <form method="post" action="/empresa/{{ emp.id }}/balance-reparto" class="rep-form">

@@ -65,13 +65,12 @@ a pesos de diciembre de i‑1. El <b>resultado</b> se recalcula con esas variabl
       {% for p in cref.periodos %}<option value="{{ p.clave }}" {{ 'selected' if p.clave==cref.pclave }}>{{ p.etiqueta }} · a dic‑{{ p.dic_ref }}</option>{% endfor %}
     </select>
   </label>
-  <label>Componente
-    <select name="comp" onchange="this.form.submit()">
-      {% for c in cref.componentes %}<option value="{{ c }}" {{ 'selected' if c==cref.componente }}>{{ c }} · {{ cref.comp_nombre[c] }}</option>{% endfor %}
-    </select>
-  </label>
+  <input type="hidden" name="comp" value="{{ cref.componente }}">
   <span class="hint">Art. {{ cref.art }} · Res. CRA 1032 · año base {{ cref.anio_base }} · pesos de dic‑{{ cref.dic_ref }}</span>
 </form>
+<div class="tabs">
+  {% for c in cref.componentes %}<a class="tab {{ 'active' if c==cref.componente }}" href="/empresa/{{ emp.id }}?at={{ cref.pclave }}&amp;comp={{ c }}">{{ c }} · {{ cref.comp_nombre[c] }}</a>{% endfor %}
+</div>
 
 <div class="idx-dane">
   <span class="idx-lab">Último índice DANE cargado</span>
