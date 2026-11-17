@@ -30,6 +30,7 @@ import suscriptores_view as sv
 import balance_view as bv
 import energia_quimicos_service as eq
 import costo_referencia_view as crv
+import comparacion_service as cmpv
 import recalculo_service as rc
 import inversiones_service as inv
 import subsidios_service as subs
@@ -471,6 +472,23 @@ def empresa_ccp(request: Request, eid: int):
             return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
         datos = cv.resumen(conn, eid, per_clave, serv)
     return tpl.TemplateResponse(request, "ccp.html", _ctx(request, emp=emp, ccp=datos, meses=ops.MESES))
+
+
+@app.get("/empresa/{eid}/comparacion", response_class=HTMLResponse)
+def empresa_comparacion(request: Request, eid: int):
+    if (r := _need_login(request)):
+        return r
+    user = session_user(request)
+    modo = request.query_params.get("modo") or "proximo"
+    vista = request.query_params.get("vista") or "conjunta"
+    mes = request.query_params.get("mes") or None
+    base = request.query_params.get("base") or "neta"
+    with db.scope_conn(scope_of(user)) as conn:
+        emp = conn.execute(text("SELECT * FROM empresa WHERE id=:e"), {"e": eid}).mappings().first()
+        if not emp:
+            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        datos = cmpv.resumen(conn, eid, modo=modo, vista=vista, mes_param=mes, base=base)
+    return tpl.TemplateResponse(request, "comparacion.html", _ctx(request, emp=emp, c=datos))
 
 
 @app.post("/empresa/{eid}/recalcular")

@@ -1,0 +1,275 @@
+{% extends "base.html" %}
+{% block title %}Comparación tarifaria · {{ emp.nombre }}{% endblock %}
+{% block body %}
+{% set mesv = (c.M[0]|string ~ '-' ~ '%02d'|format(c.M[1])) if c.M else '' %}
+{% macro pe(x) %}{% if x is none %}<span class="mut">—</span>{% else %}{{ x|valor }}{% endif %}{% endmacro %}
+{% macro pc(x) %}{% if x is none %}<span class="mut">—</span>{% else %}<span class="{{ 'up' if x>0 else ('dn' if x<0 else '') }}">{{ '%+.1f'|format(x)|replace('.',',') }} %</span>{% endif %}{% endmacro %}
+{% macro de(x) %}{% if x is none %}—{% else %}{{ '%.1f'|format(x)|replace('.',',') }}{% endif %}{% endmacro %}
+{% macro fpct(x) %}{% if x is none or x == 0 %}<span class="mut">0</span>{% else %}<span class="{{ 'dn' if x<0 else 'up' }}">{{ '%+.0f'|format(x*100)|replace('.',',') }} %</span>{% endif %}{% endmacro %}
+
+<div class="page-head">
+  <a class="back" href="/empresa/{{ emp.id }}">← Costo de referencia</a>
+  <h1>Comparación tarifaria · 1032 vs. tarifa vigente (688)</h1>
+  <p class="sub">Compara los costos unitarios que arroja el sistema bajo la <b>Res. CRA 1032</b>
+  (CF = CMA; CC = CMO + CMI + CMICT, art. 2.1.2.1.3) contra la <b>última tarifa vigente</b> que la
+  empresa aplicaba bajo el marco anterior (Res. CRA 688/2014, art. 2.1.2.1.1.8). Como en el período de
+  inicio <b>no hay aprobaciones bajo la 1032</b>, la referencia es la tarifa vigente del marco anterior.
+  Ambas series se expresan <b>a precios del mismo mes</b> para aislar el efecto de la metodología del de
+  la indexación.</p>
+</div>
+
+{% if not c.hay_1032 or not c.hay_688 %}
+  <p class="empty">
+  {% if not c.hay_1032 %}Aún no hay <b>resultado 1032</b> (CMA/CMO/CMI/CMICT) calculado para esta empresa.
+  Procesa el recálculo del período de inicio.{% endif %}
+  {% if not c.hay_688 %} Falta la <b>tarifa 688 vigente</b>: cárgala en «Gestión de información →
+  Punto de partida 688» (por servicio: cargo fijo, cargo por consumo y fecha de indexación).{% endif %}
+  </p>
+{% else %}
+
+{# ───────── Controles: mes de referencia (modo), vista por servicio, mes exacto ───────── #}
+<div class="ctrl-row">
+  <div class="ctrl">
+    <span class="ctrl-lab">Precios a:</span>
+    <span class="tabs seg">
+      <a class="tab {{ 'active' if c.modo=='ultima' }}" href="?modo=ultima&amp;vista={{ c.vista }}&amp;base={{ c.base }}">Última actualización <span class="muted2">({{ c.m_ultima_lbl }})</span></a>
+      <a class="tab {{ 'active' if c.modo=='proximo' }}" href="?modo=proximo&amp;vista={{ c.vista }}&amp;base={{ c.base }}">Próximo recálculo <span class="muted2">({{ c.m_proximo_lbl }})</span></a>
+    </span>
+  </div>
+  <div class="ctrl">
+    <span class="ctrl-lab">Factura:</span>
+    <span class="tabs seg">
+      <a class="tab {{ 'active' if c.base=='neta' }}" href="?modo={{ c.modo }}&amp;vista={{ c.vista }}&amp;mes={{ mesv }}&amp;base=neta">Con subsidios/contrib.</a>
+      <a class="tab {{ 'active' if c.base=='plena' }}" href="?modo={{ c.modo }}&amp;vista={{ c.vista }}&amp;mes={{ mesv }}&amp;base=plena">Plena</a>
+    </span>
+  </div>
+  <form method="get" class="ctrl" style="gap:6px">
+    <input type="hidden" name="modo" value="{{ c.modo }}">
+    <input type="hidden" name="vista" value="{{ c.vista }}">
+    <input type="hidden" name="base" value="{{ c.base }}">
+    <label class="ctrl-lab" for="mes">Mes exacto</label>
+    <select name="mes" id="mes" onchange="this.form.submit()">
+      {% for m in c.meses_sel %}<option value="{{ m.val }}" {{ 'selected' if m.sel }}>{{ m.lbl }}</option>{% endfor %}
+    </select>
+  </form>
+</div>
+<p class="hint" style="margin:-6px 0 14px">Referencia: <b>{{ c.M_lbl }}</b>. La 1032 se lleva desde su base
+({{ c.base_1032_lbl }}, pesos de dic de i-1) con las dos canastas (IPCs para CMA/CMO/CMICT; IPC para CMI,
+art. 2.1.2.1.5.3.1); la 688 vigente, desde su fecha de indexación con el IPC total. El consumo por clase
+(ICUF) usa la línea base {{ c.anio_icuf }}.</p>
+{% if c.base=='neta' and not c.hay_factores %}
+<p class="hint up" style="margin:-8px 0 14px">No hay factores de subsidio/contribución cargados (Acuerdo
+del concejo). Se muestra la <b>tarifa plena</b>; cárgalos en «Subsidios y contribuciones» para ver la
+factura neta por clase.</p>
+{% elif c.usar_neta %}
+<p class="hint" style="margin:-8px 0 14px">Factura <b>neta</b>: se aplican los factores del Acuerdo del
+concejo (vigencia {{ c.vig_fac }}). El <b>subsidio</b> (−) solo sobre el cargo fijo y el consumo básico
+({{ c.basico|int }} m³); la <b>contribución</b> (+) sobre el cargo fijo y el consumo total.</p>
+{% endif %}
+
+{# ───────── Titular: variación al ICUF global ───────── #}
+<div class="titular">
+  <div class="t-main">
+    <div class="t-lbl">{% if c.titular.neta %}Variación de la <b>factura media por suscriptor</b> (con subsidios/contribuciones), ponderada por la mezcla de clientes{% else %}Variación de la factura conjunta al <b>ICUF de la empresa</b> ({{ de(c.titular.icuf) }} m³/susc·mes){% endif %}</div>
+    <div class="t-pct {{ 'up' if (c.titular.dpct or 0)>0 else ('dn' if (c.titular.dpct or 0)<0 else '') }}">
+      {% if c.titular.dpct is none %}—{% else %}{{ '%+.1f'|format(c.titular.dpct)|replace('.',',') }} %{% endif %}</div>
+    <div class="t-abs">{{ pe(c.titular.dabs) }} / factura · mes</div>
+  </div>
+  <div class="t-side">
+    <div><span class="k">Factura 688 vigente</span><span class="v">{{ pe(c.titular.f688) }}</span></div>
+    <div><span class="k">Factura 1032</span><span class="v">{{ pe(c.titular.f1032) }}</span></div>
+  </div>
+</div>
+<p class="hint" style="margin:6px 0 16px">El ICUF global es un promedio de todo el mercado; los grandes
+consumidores lo distorsionan. La variación por <b>clase de uso</b> (más abajo) desagrega el impacto real
+por estrato y por los no residenciales.</p>
+
+{# ───────── Vista por servicio / conjunta ───────── #}
+<div class="tabs">
+  {% for k, n in c.vistas %}<a class="tab {{ 'active' if k==c.vista }}" href="?modo={{ c.modo }}&amp;vista={{ k }}&amp;mes={{ mesv }}&amp;base={{ c.base }}">{{ n }}</a>{% endfor %}
+</div>
+
+{# ───────── Cargos CF / CC ───────── #}
+<h2 class="serv-h">Cargos unitarios · {{ dict(c.vistas).get(c.vista, c.vista) }}</h2>
+<div class="tbl-wrap">
+<table class="tabla compact">
+  <thead><tr><th class="l">Cargo</th><th class="r">688 vigente</th><th class="r">1032</th>
+    <th class="r">Δ absoluta</th><th class="r">Δ %</th></tr></thead>
+  <tbody>
+    {% set d = (c.cf1032 - c.cf688) if (c.cf1032 is not none and c.cf688 is not none) else none %}
+    <tr><td class="l"><b>Cargo fijo</b> <span class="muted2">$/susc·mes · CMA</span></td>
+      <td class="num">{{ pe(c.cf688) }}</td><td class="num"><b>{{ pe(c.cf1032) }}</b></td>
+      <td class="num">{{ pe(d) }}</td>
+      <td class="num">{{ pc((d / c.cf688 * 100) if (d is not none and c.cf688) else none) }}</td></tr>
+    <tr><td class="l"><b>Cargo por consumo</b> <span class="muted2">$/m³ · CMO+CMI+CMICT</span></td>
+      <td class="num">{{ pe(c.cc688) }}</td><td class="num"><b>{{ pe(c.cc1032) }}</b></td>
+      <td class="num">{% set dc = (c.cc1032 - c.cc688) if (c.cc1032 is not none and c.cc688 is not none) else none %}{{ pe(dc) }}</td>
+      <td class="num">{{ pc((dc / c.cc688 * 100) if (dc is not none and c.cc688) else none) }}</td></tr>
+  </tbody>
+</table>
+</div>
+
+{# ───────── Variación por componente (CMA/CMO/CMI/CMICT≡CMT) ───────── #}
+<h2 class="serv-h">Variación por componente</h2>
+<p class="muted2" style="margin:-4px 0 6px">Componentes semejantes entre marcos. El <b>CMICT</b> de la 1032
+(impuestos, contribuciones y tasas) es el equivalente del <b>CMT</b> (Costo Medio de Tasas) de la 688. El
+CMA es cargo fijo ($/susc·mes); CMO, CMI y CMICT son cargo por consumo ($/m³).</p>
+<div class="tbl-wrap">
+<table class="tabla compact">
+  <thead><tr><th class="l">Componente</th><th>Unidad</th><th class="r">688 vigente</th><th class="r">1032</th>
+    <th class="r">Δ absoluta</th><th class="r">Δ %</th></tr></thead>
+  <tbody>
+    {% for r in c.componentes %}
+    <tr>
+      <td class="l"><b>{{ r.clave }}</b>{% if r.clave != r.equiv %} <span class="muted2">≡ {{ r.equiv }} (688)</span>{% endif %}
+        <span class="muted2"> · {{ r.desc }}</span></td>
+      <td class="muted2">{{ r.unidad }}</td>
+      <td class="num">{{ pe(r.v688) }}</td><td class="num"><b>{{ pe(r.v1032) }}</b></td>
+      <td class="num">{{ pe(r.dabs) }}</td><td class="num">{{ pc(r.dpct) }}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% if not c.hay_688_comp %}
+<p class="hint" style="margin:-2px 0 10px">Para ver la columna 688 por componente, carga el <b>desglose
+CMA/CMO/CMI/CMT</b> de la tarifa 688 en «Punto de partida 688» (hoy solo está el cargo fijo y el cargo por
+consumo agregados).</p>
+{% endif %}
+
+{# ───────── Gráfica factura vs consumo ───────── #}
+{% if c.chart %}
+<h2 class="serv-h">Factura vs. consumo</h2>
+{% if c.usar_neta %}<p class="muted2" style="margin:-4px 0 6px">Curva y tabla a <b>tarifa plena</b> (los
+cargos unitarios no llevan factor); el efecto de subsidios/contribuciones por clase está en la tabla por
+clase de uso.</p>{% endif %}
+<div class="chart-wrap">
+<svg viewBox="0 0 {{ c.chart.W }} {{ c.chart.H }}" class="cmp-chart" role="img">
+  {% for t in c.chart.yticks %}
+  <line x1="{{ c.chart.x0 }}" y1="{{ t.y }}" x2="{{ c.chart.x1 }}" y2="{{ t.y }}" class="grid"/>
+  <text x="{{ c.chart.x0 - 6 }}" y="{{ t.y + 3 }}" class="ytx">{{ t.lbl }}</text>
+  {% endfor %}
+  <line x1="{{ c.chart.x0 }}" y1="{{ c.chart.y1 }}" x2="{{ c.chart.x1 }}" y2="{{ c.chart.y1 }}" class="axis"/>
+  {% for t in c.chart.xticks %}
+  <text x="{{ t.x }}" y="{{ c.chart.y1 + 16 }}" class="xtx">{{ t.lbl }}</text>
+  {% endfor %}
+  <text x="{{ c.chart.x1 }}" y="{{ c.chart.y1 + 30 }}" class="xtx" text-anchor="end">consumo (m³/mes)</text>
+  {% for m in c.chart.marcas %}
+  <line x1="{{ m.x }}" y1="{{ c.chart.y0 }}" x2="{{ m.x }}" y2="{{ c.chart.y1 }}" class="mark {{ m.cls }}"/>
+  <text x="{{ m.x + 4 }}" y="{{ c.chart.y0 + 10 + loop.index0 * 13 }}" class="mtx {{ m.cls }}" text-anchor="start">{{ m.lbl }}</text>
+  {% endfor %}
+  <line x1="{{ c.chart.l688.x1 }}" y1="{{ c.chart.l688.y1 }}" x2="{{ c.chart.l688.x2 }}" y2="{{ c.chart.l688.y2 }}" class="l688"/>
+  <line x1="{{ c.chart.l1032.x1 }}" y1="{{ c.chart.l1032.y1 }}" x2="{{ c.chart.l1032.x2 }}" y2="{{ c.chart.l1032.y2 }}" class="l1032"/>
+  {% for m in c.chart.marcas %}
+  <circle cx="{{ m.x }}" cy="{{ m.y688 }}" r="3.4" class="d688"/>
+  <circle cx="{{ m.x }}" cy="{{ m.y1032 }}" r="3.4" class="d1032"/>
+  {% endfor %}
+</svg>
+<div class="leyenda">
+  <span><i class="sw sw688"></i> 688 vigente</span>
+  <span><i class="sw sw1032"></i> 1032</span>
+  <span class="muted2">líneas verticales: consumo básico ({{ c.basico|int }} m³) e ICUF de la empresa</span>
+</div>
+</div>
+
+<div class="tbl-wrap">
+<table class="tabla compact">
+  <thead><tr><th class="l">Consumo (m³/mes)</th><th class="r">Factura 688</th><th class="r">Factura 1032</th>
+    <th class="r">Δ absoluta</th><th class="r">Δ %</th></tr></thead>
+  <tbody>
+    {% for row in c.tabla %}
+    <tr class="{{ 'hi-icuf' if row.es_icuf }}">
+      <td class="l">{{ de(row.q) }}{% if row.es_icuf %} <span class="tag-icuf">ICUF empresa</span>{% elif row.es_basico %} <span class="muted2">básico</span>{% endif %}</td>
+      <td class="num">{{ pe(row.f688) }}</td><td class="num">{{ pe(row.f1032) }}</td>
+      <td class="num">{{ pe(row.dabs) }}</td><td class="num">{{ pc(row.dpct) }}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+
+{# ───────── Impacto por clase de uso ───────── #}
+<h2 class="serv-h">Impacto por clase de uso · {{ dict(c.vistas).get(c.vista, c.vista) }}</h2>
+{% if c.hay_clases %}
+{% if c.usar_neta %}
+<p class="muted2" style="margin:-4px 0 8px">Cada clase en <b>su propio consumo medio</b> (ICUF = m³ ÷
+suscriptores, línea base {{ c.anio_icuf }}) y con <b>su factor</b> de subsidio (−)/contribución (+) del
+Acuerdo del concejo (vigencia {{ c.vig_fac }}). Es la <b>factura neta</b> que efectivamente paga cada clase.</p>
+{% else %}
+<p class="muted2" style="margin:-4px 0 8px">Cada clase en <b>su propio consumo medio</b> (ICUF = m³ ÷
+suscriptores, línea base {{ c.anio_icuf }}), a <b>tarifa plena</b> (sin subsidios ni contribuciones).</p>
+{% endif %}
+<div class="tbl-wrap">
+<table class="tabla compact">
+  <thead><tr><th class="l">Clase de uso</th><th class="r">ICUF (m³)</th><th class="r">Suscriptores·mes</th>
+    {% if c.usar_neta %}<th class="r">Factor consumo</th>{% endif %}
+    <th class="r">Factura {{ 'neta ' if c.usar_neta }}688</th><th class="r">Factura {{ 'neta ' if c.usar_neta }}1032</th>
+    <th class="r">Δ absoluta</th><th class="r">Δ %</th></tr></thead>
+  <tbody>
+    {% set grp = {'res':'Residencial', 'nor':'No residencial'} %}
+    {% set ncols = 8 if c.usar_neta else 7 %}
+    {% set ns = namespace(g='') %}
+    {% for row in c.por_clase %}
+      {% if row.grupo != ns.g %}{% set ns.g = row.grupo %}
+      <tr class="grp-row"><td class="l" colspan="{{ ncols }}">{{ grp[row.grupo] }}</td></tr>
+      {% endif %}
+    <tr class="{{ 'mut-row' if row.icuf is none }}">
+      <td class="l">{{ row.nombre }}</td>
+      <td class="num">{{ de(row.icuf) }}</td>
+      <td class="num">{{ pe(row.n) }}</td>
+      {% if c.usar_neta %}<td class="num">{{ fpct(row.fcc) }}</td>{% endif %}
+      <td class="num">{{ pe(row.f688) }}</td><td class="num">{{ pe(row.f1032) }}</td>
+      <td class="num">{{ pe(row.dabs) }}</td><td class="num">{{ pc(row.dpct) }}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p class="muted2">No hay comercial por clase de uso cargado (tabla <code>carga_mensual_detalle</code>) para
+la línea base {{ c.anio_icuf }}. Carga el reporte comercial del SUI por clase para ver el impacto
+desagregado por estrato y no residenciales. El titular usa el ICUF global.</p>
+{% endif %}
+
+{% if c.falta %}
+<p class="hint" style="margin:14px 0 0"><b>Para completar la comparación falta:</b> {{ c.falta|join('; ') }}.</p>
+{% endif %}
+
+{% endif %}
+
+<style>
+.ctrl-row{display:flex;flex-wrap:wrap;gap:18px 26px;align-items:center;margin:6px 0 2px}
+.ctrl{display:flex;align-items:center;gap:10px}
+.ctrl-lab{font-size:13px;color:var(--muted);font-weight:600}
+.titular{display:flex;flex-wrap:wrap;gap:18px 30px;align-items:center;justify-content:space-between;
+  background:var(--mist,#eef4f2);border:1px solid var(--line);border-radius:14px;padding:16px 20px;margin:4px 0 2px}
+.t-lbl{font-size:13px;color:var(--teal-deep)}
+.t-pct{font-size:34px;font-weight:800;line-height:1.05;letter-spacing:-.02em}
+.t-abs{font-size:13px;color:var(--muted)}
+.t-side{display:flex;gap:26px}
+.t-side .k{display:block;font-size:11.5px;color:var(--muted)}
+.t-side .v{display:block;font-size:17px;font-weight:700;font-variant-numeric:tabular-nums}
+.up{color:#b23b3b}.dn{color:#1f7a6b}
+.tbl-wrap{overflow-x:auto;margin:6px 0 10px}
+.tabla td.num{white-space:nowrap;font-variant-numeric:tabular-nums}
+.hi-icuf td{background:var(--aqua,#deeae7);font-weight:600}
+.tag-icuf{font-size:10.5px;background:var(--teal-deep);color:#fff;border-radius:999px;padding:1px 7px;margin-left:4px;font-weight:700}
+.grp-row td{background:var(--paper,#f7faf9);font-size:11.5px;font-weight:700;color:var(--muted);
+  text-transform:uppercase;letter-spacing:.04em}
+.mut-row td{color:var(--muted)}
+.mut{color:var(--muted)}
+.chart-wrap{background:var(--paper,#fff);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin:4px 0 10px}
+.cmp-chart{width:100%;height:auto;display:block}
+.cmp-chart .grid{stroke:var(--line);stroke-width:1;opacity:.5}
+.cmp-chart .axis{stroke:var(--muted);stroke-width:1}
+.cmp-chart .ytx{fill:var(--muted);font-size:10px;text-anchor:end}
+.cmp-chart .xtx{fill:var(--muted);font-size:10px;text-anchor:middle}
+.cmp-chart .l688{stroke:#b5651d;stroke-width:2.4;fill:none}
+.cmp-chart .l1032{stroke:#1f7a6b;stroke-width:2.4;fill:none}
+.cmp-chart .d688{fill:#b5651d}.cmp-chart .d1032{fill:#1f7a6b}
+.cmp-chart .mark{stroke-dasharray:3 3;stroke-width:1}
+.cmp-chart .mark.basico{stroke:#8a8578}.cmp-chart .mark.icuf{stroke:var(--teal-deep)}
+.cmp-chart .mtx{font-size:9.5px}.cmp-chart .mtx.basico{fill:#8a8578}.cmp-chart .mtx.icuf{fill:var(--teal-deep)}
+.leyenda{display:flex;flex-wrap:wrap;gap:16px;font-size:12px;color:var(--fg);margin-top:8px}
+.leyenda .sw{display:inline-block;width:14px;height:3px;border-radius:2px;vertical-align:middle;margin-right:5px}
+.leyenda .sw688{background:#b5651d}.leyenda .sw1032{background:#1f7a6b}
+</style>
+{% endblock %}
