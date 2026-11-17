@@ -168,9 +168,52 @@ def _destino_inicio(user):
     return f"/empresa/{eid}" if eid else "/panel"
 
 
+def _es_xlsx(raw, nombre=""):
+    """¿El archivo subido es un Excel? Por extensión o por los bytes mágicos ZIP (PK…)."""
+    if (nombre or "").lower().endswith((".xlsx", ".xlsm")):
+        return True
+    return isinstance(raw, (bytes, bytearray)) and raw[:4] == b"PK\x03\x04"
+
+
+def _xlsx_a_csv(raw):
+    """Convierte bytes .xlsx/.xlsm a texto CSV. Usa la hoja activa (p. ej. «Datos»),
+    descarta el banner 'SICTAAA…' de la fila 1 si está, y normaliza los enteros para
+    que no salgan como '1.0'. Así cualquier parser que espere CSV acepta también Excel."""
+    import openpyxl, io as _io, csv as _csv
+    wb = openpyxl.load_workbook(_io.BytesIO(raw), data_only=True, read_only=True)
+    ws = wb.active
+    buf = _io.StringIO()
+    w = _csv.writer(buf)
+    primera = True
+    for row in ws.iter_rows(values_only=True):
+        if primera:
+            primera = False
+            if row and str(row[0] or "").strip().upper().startswith("SICTAAA"):
+                continue  # el encabezado real va en la fila 2
+        elif row is None or all(c is None or str(c).strip() == "" for c in row):
+            continue  # descarta las filas vacías de relleno de la plantilla
+        celdas = []
+        for c in row:
+            if c is None:
+                celdas.append("")
+            elif isinstance(c, float) and c.is_integer():
+                celdas.append(str(int(c)))
+            else:
+                celdas.append(c)
+        w.writerow(celdas)
+    wb.close()
+    return buf.getvalue()
+
+
 def _leer_csv(archivo):
-    """Lee el CSV subido con detección de codificación (los reportes del SUI son Latin-1)."""
+    """Lee el archivo subido (CSV o Excel) y devuelve texto CSV. Detecta xlsx por el
+    nombre o por los bytes mágicos; los reportes del SUI vienen en Latin-1."""
     raw = archivo.file.read()
+    if _es_xlsx(raw, getattr(archivo, "filename", "") or ""):
+        try:
+            return _xlsx_a_csv(raw)
+        except Exception:
+            pass  # si falla la conversión, se intenta como texto
     for enc in ("utf-8-sig", "cp1252", "latin-1"):
         try:
             return raw.decode(enc)
@@ -3274,6 +3317,11 @@ def eliminar_subsidio_acuerdo(request: Request, eid: int, vigencia: int,
 
 # ---------------------------------------------------------- energía (CE) y químicos (CIQ)
 def _decodificar(raw):
+    if _es_xlsx(raw):
+        try:
+            return _xlsx_a_csv(raw)
+        except Exception:
+            pass
     for enc in ("utf-8-sig", "cp1252", "latin-1"):
         try:
             return raw.decode(enc)
