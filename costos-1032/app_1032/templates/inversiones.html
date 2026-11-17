@@ -146,17 +146,24 @@ año i se obtiene el <b>VP(CMI×Q)</b>, que se resta al VIA688 para el VPR₀ (a
 <h2 class="serv-h">Paso 2 · BCR₀ de inicio (marco 688)</h2>
 <p class="muted2">En el <b>período de inicio</b> (jul–dic 2026) el CMI_BCR es el que se venía cobrando al cierre
 de la 688: por eso se toma = <b>Σ CMI individual del último tramo = CMI_BCR total del último tramo</b> (Paso 1).
+El detalle se carga en <b>pesos de dic-2014</b> (base 688); el costo del <b>período de inicio</b> es ese valor
+<b>actualizado a dic-2025</b> (× fa0 = IPC dic-2025 / IPC dic-2014), que es el que muestran las tarjetas.
 Aquí se <b>carga y valida</b> ese detalle por proyecto; el soporte incluye el <b>VPR₀</b> de cada activo
 (VIA688 − VP(CMI·Q)), que se muestra separado entre positivos y negativos. La <b>compensación</b> de los VPR₀
 negativos y el cálculo de la BCR₀, el CCP y el CMI de referencia se hacen en el paso
 <a href="/empresa/{{ emp.id }}/inversiones?sec=base">Base de capital y CMI</a>.</p>
 
-{# Resumen: CMI_BCR del período de inicio por servicio (lo que importa) #}
+{# Resumen: CMI_BCR del período de inicio por servicio. El valor cargado (Σ CMI) está en pesos de
+   dic-2014 (base 688); el valor del período de inicio es ese CMI actualizado a dic-2025 (×fa0). #}
 <div class="cards">
   {% for s in servicios %}{% set b = bcr_ini.get(s) %}
-  <div class="card"><div class="k">CMI_BCR · {{ bcr_serv[s] }} <span class="muted2">· período de inicio</span></div>
-    <div class="v">{{ b.cmi_bcr|valor('$') ~ ' /m³' if b.cmi_bcr is not none else '—' }}</div>
-    <div class="muted2">{% if b.n and b.sin_serie %}{{ b.n }} proy · Σ {{ b.suma_cmi|valor('$') }}
+  {% set act = (b.cmi_bcr * b.fa0) if (b.cmi_bcr is not none and b.fa0) else none %}
+  <div class="card"><div class="k">CMI_BCR · {{ bcr_serv[s] }} <span class="muted2">· período de inicio (dic-2025)</span></div>
+    <div class="v">{{ act|valor('$') ~ ' /m³' if act is not none else (b.cmi_bcr|valor('$') ~ ' /m³' if b.cmi_bcr is not none else '—') }}</div>
+    <div class="muted2">
+      {% if b.cmi_bcr is not none %}cierre 688 (dic-2014): <b>{{ b.cmi_bcr|valor('$') }}/m³</b>{% if b.fa0 %} · × fa0 {{ b.fa0|round(4) }}{% else %} · <span style="color:#b5342b">falta fa0 (IPC dic-2014/2025)</span>{% endif %} ·
+      {% endif %}
+      {% if b.n and b.sin_serie %}{{ b.n }} proy · Σ {{ b.suma_cmi|valor('$') }}
       <b style="color:#8a6d1f">· sin total Paso 1 para validar</b>
       {% elif b.n %}{{ b.n }} proy · Σ {{ b.suma_cmi|valor('$') }} / total {{ b.total01|valor('$') if b.total01 is not none else '—' }}
       <b style="color:{{ '#1f8a70' if b.ok else '#b5342b' }}">{{ '✓ cuadra' if b.ok else '✗ difiere' }}</b>

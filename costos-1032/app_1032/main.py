@@ -479,7 +479,7 @@ def empresa_comparacion(request: Request, eid: int):
     if (r := _need_login(request)):
         return r
     user = session_user(request)
-    modo = request.query_params.get("modo") or "proximo"
+    modo = request.query_params.get("modo") or "ultima"
     vista = request.query_params.get("vista") or "conjunta"
     mes = request.query_params.get("mes") or None
     base = request.query_params.get("base") or "neta"

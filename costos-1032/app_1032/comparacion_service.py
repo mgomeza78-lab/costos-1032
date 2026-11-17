@@ -27,6 +27,7 @@ import periodos as per
 import ref688_service as ref688
 import ccp_view as cv
 import costo_referencia_view as crv
+import bcr_service as bcr
 
 SERV_NOMBRE = {"acueducto": "Acueducto", "alcantarillado": "Alcantarillado"}
 VISTAS = [("conjunta", "Factura conjunta"), ("acueducto", "Acueducto"), ("alcantarillado", "Alcantarillado")]
@@ -107,13 +108,31 @@ def _componentes_1032(conn, eid, emp, servicios):
         varset = crv.variables(conn, eid, servicios, emp=emp, pclave="inicio")
     except Exception:
         varset = {}
+    # CMI del período de inicio: no sale de base_calculo (crv._calc lo deja en None si no está
+    # poblada); es el CMI_BCR heredado del cierre de la 688 (art. 2.1.2.1.3.5 par. 1). Se toma de la
+    # BCR₀ ya cargada: cmi_bcr está en pesos de dic-2014, se lleva a dic-2025 con fa0 (IPC25/IPC14)
+    # para quedar en la MISMA base que CMA/CMO/CMICT. El CMI_POIR es 0 en el período de inicio.
+    cmi_bcr0 = {}
+    try:
+        b0 = bcr.bcr0_inicio(conn, eid)
+        for s in servicios:
+            bs = b0.get(s) or {}
+            cb, fa0 = bs.get("cmi_bcr"), bs.get("fa0")
+            cmi_bcr0[s] = (float(cb) * float(fa0)) if (cb is not None and fa0) else None
+    except Exception:
+        cmi_bcr0 = {}
     out = {}
     for s in servicios:
         v = varset.get(s, {})
         out[s] = {}
         for k in ("CMA", "CMO", "CMI", "CMICT"):
             sv = stored.get(s, {}).get(k)
-            out[s][k] = sv if sv is not None else crv._calc(k, v)
+            if sv is not None:
+                out[s][k] = sv
+            elif k == "CMI":
+                out[s][k] = cmi_bcr0.get(s) if cmi_bcr0.get(s) is not None else crv._calc(k, v)
+            else:
+                out[s][k] = crv._calc(k, v)
     return out
 
 
@@ -298,7 +317,7 @@ def _mil(v):
 
 
 # ───────────────────────── paquete para la vista ─────────────────────────
-def resumen(conn, eid, emp, modo="proximo", vista="conjunta", mes_param=None, base="neta"):
+def resumen(conn, eid, emp, modo="ultima", vista="conjunta", mes_param=None, base="neta"):
     """Arma toda la comparación. `emp`: fila de la empresa. `modo`: 'ultima' | 'proximo'. `vista`:
     'conjunta'|'acueducto'|'alcantarillado'. `mes_param`: 'YYYY-MM' que fuerza el mes de referencia
     (gana sobre el modo). `base`: 'neta' (subsidios/contribuciones) | 'plena'."""
@@ -325,9 +344,9 @@ def resumen(conn, eid, emp, modo="proximo", vista="conjunta", mes_param=None, ba
             M = (int(a), int(mm))
         except (ValueError, IndexError):
             M = None
+    modo = modo if modo in ("ultima", "proximo") else "ultima"
     if M is None:
-        M = m_ultima if modo == "ultima" else m_proximo
-        modo = "ultima" if modo == "ultima" else "proximo"
+        M = (m_ultima or m_proximo) if modo == "ultima" else (m_proximo or m_ultima)
 
     # Cargos por servicio (CF/CC) 688 y 1032 a precios de M, con sus variaciones.
     serv = {}
