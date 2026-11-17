@@ -877,6 +877,39 @@ def via_de_ejecucion(a, r688):
     return None
 
 
+def _activos_desde_cmi_proyecto(conn, empresa_id, fa0_auto, ps):
+    """Activos-puente para la compensación cuando NO hay inventario en `bcr_activo`: derivan del
+    detalle por proyecto cargado en `cmi_proyecto` (Paso 2 BCR / Paso 3 POIR, último tramo), que es
+    el flujo real de cargue en la UI. El VA₀ se PRECALCULA = VPR₀(ya capitalizado, hoja 06_5)·fa0,
+    para que compensacion_detalle lo use directo y no lo vuelva a capitalizar. Componente 1 = BCR,
+    2 = POIR. Devuelve dicts con las mismas claves que `lista()` (bcr_activo)."""
+    out = []
+    for tipo, comp_k in (("bcr", 1), ("poir", 2)):
+        mx = conn.execute(text("SELECT max(tramo) FROM cmi_proyecto WHERE empresa_id=:e AND tipo=:t"),
+                          {"e": empresa_id, "t": tipo}).scalar()
+        if mx is None:
+            continue
+        for r in conn.execute(text(
+                "SELECT servicio, id_activo, nombre, vpr0, valor_via688, vp_cmi_q, prr, vida_util "
+                "FROM cmi_proyecto WHERE empresa_id=:e AND tipo=:t AND tramo=:tr"),
+                {"e": empresa_id, "t": tipo, "tr": mx}).mappings().all():
+            s = r["servicio"]
+            p = ps.get(s)
+            fa0 = _fa0(p) if (p and p["ipc_dic_2014"] and p["ipc_dic_2025"]) else fa0_auto
+            vpr0 = float(r["vpr0"]) if r["vpr0"] is not None else None
+            va0 = (vpr0 * fa0) if (vpr0 is not None and fa0 is not None) else None
+            out.append({
+                "id": None, "servicio": s, "componente": comp_k, "nombre": r["nombre"],
+                "codigo": r["id_activo"], "cod_dane": "", "valor_bruto": None,
+                "plazo_remanente": r["prr"], "cuota_anual": None, "valor_pendiente": None,
+                "origen": "cmi_proyecto", "observacion": None, "tipo_activo": None,
+                "vida_util": r["vida_util"], "via688": r["valor_via688"], "vp_cmi_q": r["vp_cmi_q"],
+                "vpr0": vpr0, "va0": va0, "anio_poir": None, "ejecucion_real": None,
+                "fecha_operacion": None,
+            })
+    return out
+
+
 def compensacion_detalle(conn, empresa_id, r_emp=None):
     """Detalle POR ACTIVO de la compensación de la base de capital (art. 2.1.2.1.5.2.1.1).
 
@@ -903,6 +936,8 @@ def compensacion_detalle(conn, empresa_id, r_emp=None):
     fecha_1032 = emp_row["fecha_inicio_1032"] if emp_row else None   # fin de la 688 = mes anterior
     ps = params(conn, empresa_id)
     activos = lista(conn, empresa_id)
+    if not activos:   # sin inventario en bcr_activo → derivar del detalle cargado en cmi_proyecto
+        activos = _activos_desde_cmi_proyecto(conn, empresa_id, fa0_auto, ps)
     out = {}
     for s in ("acueducto", "alcantarillado"):
         p = ps.get(s)
