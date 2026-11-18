@@ -1289,6 +1289,22 @@ def bcr0_calculo(conn, empresa_id, r_emp=None):
     return out
 
 
+def _vp_q(conn, empresa_id, servicio, r688):
+    """VP del agua facturada real: Σ q_m3/(1+r688)^año (solo real, no proyectado). Base para que el
+    SISTEMA calcule el ingreso por activo —no se carga—: VP(CMI×Q)ⱼ = cmiⱼ · VP(Q)."""
+    if not r688:
+        return 0.0
+    por_anio = {}
+    for s in serie_list(conn, empresa_id, servicio):
+        if int(s["proyectado"] or 0):
+            continue
+        q = s["q_m3"]
+        if q is None:
+            continue
+        i = int(s["anio_tarifario"]); por_anio[i] = por_anio.get(i, 0.0) + float(q)
+    return sum(q / ((1 + r688) ** i) for i, q in por_anio.items())
+
+
 def cmi_inicio(conn, empresa_id, tipo="bcr", r_emp=None):
     """Costos de un componente del CMI688 (tipo='bcr' | 'poir') para el PERÍODO DE INICIO, a partir
     del detalle de CMI por proyecto cargado en el Paso 02 y de la validación del Paso 01.
@@ -1327,7 +1343,7 @@ def cmi_inicio(conn, empresa_id, tipo="bcr", r_emp=None):
             {"e": empresa_id, "t": tipo}).scalar()
         ult_idx = int(mx) if mx is not None else None
     rows = conn.execute(text(
-        "SELECT servicio, cmi, vpr0, valor_via688, vp_cmi_q, prr, vida_util "
+        "SELECT servicio, nombre, cmi, vpr0, valor_via688, vp_cmi_q, prr, vida_util "
         "FROM cmi_proyecto WHERE empresa_id=:e AND tipo=:t AND tramo=:tr"),
         {"e": empresa_id, "t": tipo, "tr": ult_idx}).mappings().all() if ult_idx else []
     by_serv = {}
@@ -1363,13 +1379,15 @@ def cmi_inicio(conn, empresa_id, tipo="bcr", r_emp=None):
                "neg": {"n": 0, "via": 0.0, "vp": 0.0, "dif": 0.0, "vpr0": 0.0, "va0": 0.0}}
         okva0 = fa0 is not None                                   # VA₀ = VPR₀·fa0 requiere fa0
         pos, neg, con_soporte = [], 0.0, False
+        vpq = _vp_q(conn, empresa_id, s, r688)   # VP(Q): el sistema calcula el ingreso (no se carga)
         for r in rs:
             via = float(r["valor_via688"]) if r["valor_via688"] is not None else None
-            vp = float(r["vp_cmi_q"]) if r["vp_cmi_q"] is not None else None
+            cmi_a = float(r["cmi"]) if r["cmi"] is not None else None
+            es_terr = "TERRENO" in (str(r["nombre"]) if r["nombre"] else "").upper()
+            # Ingreso recuperado vía CMI = cmi × VP(Q); terrenos no se descuentan (solo se remuneraban).
+            vp = 0.0 if es_terr else ((cmi_a * vpq) if cmi_a is not None else None)
             dif = (via - vp) if (via is not None and vp is not None) else None
-            vpr0 = float(r["vpr0"]) if r["vpr0"] is not None else None   # ya capitalizado (06_5)
-            if vpr0 is None and dif is not None and r688 is not None and t is not None:
-                vpr0 = dif * ((1 + r688) ** t)                            # respaldo: capitaliza
+            vpr0 = dif   # VPR₀ = VIA − VP(CMI×Q) en dic-2014 (sin capitalizar)
             if vpr0 is None:
                 continue
             g = cad["pos"] if vpr0 >= 0 else cad["neg"]
@@ -1487,23 +1505,25 @@ def cmi_bcr0_pool(conn, empresa_id, r_emp=None):
         ccp = float(p["ccp_2025"]) if (p and p["ccp_2025"] is not None) else ccp_desde_consumos(conn, empresa_id, s)
         pos, neg, cobrado = [], 0.0, 0.0      # pos: {va0, prr, tipo, id}; neg: Σ|VA₀<0|
         n_pos = n_neg = 0
+        vpq = _vp_q(conn, empresa_id, s, r688)   # VP(Q): el ingreso lo calcula el sistema (cmi × VP(Q))
         por_tipo = {"bcr": {"n": 0, "va0": 0.0, "neg": 0.0}, "poir": {"n": 0, "va0": 0.0, "neg": 0.0}}
         for tipo in ("bcr", "poir"):
             tr = tr_by_tipo.get(tipo)
             if tr is None:
                 continue
             rows = conn.execute(text(
-                "SELECT id_activo, cmi, vpr0, valor_via688, vp_cmi_q, prr, vida_util FROM cmi_proyecto "
+                "SELECT id_activo, nombre, cmi, vpr0, valor_via688, vp_cmi_q, prr, vida_util FROM cmi_proyecto "
                 "WHERE empresa_id=:e AND tipo=:t AND tramo=:tr AND servicio=:s"),
                 {"e": empresa_id, "t": tipo, "tr": tr, "s": s}).mappings().all()
             for rr in rows:
                 if rr["cmi"] is not None:
                     cobrado += float(rr["cmi"])
                 via = float(rr["valor_via688"]) if rr["valor_via688"] is not None else None
-                vp = float(rr["vp_cmi_q"]) if rr["vp_cmi_q"] is not None else None
-                vpr0 = float(rr["vpr0"]) if rr["vpr0"] is not None else None
-                if vpr0 is None and via is not None and vp is not None and r688 is not None and t is not None:
-                    vpr0 = (via - vp) * ((1 + r688) ** t)           # respaldo: capitaliza la diferencia
+                cmi_a = float(rr["cmi"]) if rr["cmi"] is not None else None
+                es_terr = "TERRENO" in (str(rr["nombre"]) if rr["nombre"] else "").upper()
+                # Ingreso recuperado vía CMI = cmi × VP(Q) (lo calcula el sistema); terrenos no se descuentan.
+                vp = 0.0 if es_terr else ((cmi_a * vpq) if cmi_a is not None else 0.0)
+                vpr0 = (via - vp) if via is not None else None   # VPR₀ = VIA − VP(CMI×Q), sin capitalizar
                 if vpr0 is None or fa0 is None:
                     continue
                 va0 = vpr0 * fa0
