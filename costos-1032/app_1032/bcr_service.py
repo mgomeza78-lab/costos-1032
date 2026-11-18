@@ -55,7 +55,7 @@ def guardar(conn, empresa_id, d, usuario_id):
     if va0 is None and vpr0 is not None:
         p = param_get(conn, empresa_id, serv)
         if p and p["r688"] is not None and p["fecha_inicio_688"] and _fa0(p) is not None:
-            va0 = float(vpr0) * ((1 + float(p["r688"])) ** _t_anios(p["fecha_inicio_688"])) * _fa0(p)
+            va0 = float(vpr0) * _fa0(p)
     vp = d.get("valor_pendiente")
     if vp is None and va0 is not None:
         vp = va0                       # el valor pendiente que integra la BCR (antes de compensar)
@@ -311,7 +311,7 @@ def plantilla_activos_bytes():
         "componente: 1 infraestructura · 2 ambiental/riesgo (OBLIGATORIO). Los activos administrativos y operativos NO van aquí: use plantilla_activos_admin_operativos.",
         "origen: VI287 · VIdif287 · POIR688 · VIDIF_688 · VI_IAR · TERRENO.",
         "via688: valor de inversión del activo en pesos de diciembre de 2014.",
-        "vpr0: valor pendiente por recuperar ($2014). Si lo cargas, el VA₀ se calcula solo (VPR₀·(1+r688)^t·fa0).",
+        "vpr0: valor pendiente por recuperar ($2014). Si lo cargas, el VA₀ se calcula solo (VPR₀·fa0).",
         "va0: valor actualizado ($dic-2025). Opcional; si no, se deriva del VPR₀.",
         "prr: plazo de recuperación remanente (años).  cak: cuota anual de capital ($).",
         "anio_poir / ejecucion_real / fecha_operacion: solo para activos del POIR (VIA=ejecucion/(1+r688)^anio).",
@@ -1138,7 +1138,7 @@ def compensacion_detalle(conn, empresa_id, r_emp=None):
     compensado = 0). Expone por activo: VIA688, VPR₀, VA₀ bruto, PRR, orden de prelación,
     descuento asignado y VA₀ compensado; y por servicio/componente los totales, la BCR₀
     compensada y cuántos desaparecen. Misma derivación del VA₀ que la base (VA₀ⱼ =
-    VPR₀ⱼ·(1+r688)^t·fa0; VPR₀ = VIA − VP(CMI×Q) si no viene explícito). Fuente única de verdad:
+    VPR₀ⱼ·fa0; VPR₀ = VIA − VP(CMI×Q) si no viene explícito). Fuente única de verdad:
     de aquí deriva bcr0_calculo sus agregados."""
     emp_row = conn.execute(text(
         "SELECT r, suscriptores_seg, fecha_inicio_688, fecha_inicio_1032 FROM empresa WHERE id=:e"),
@@ -1182,21 +1182,21 @@ def compensacion_detalle(conn, empresa_id, r_emp=None):
             vpr0 = float(a["vpr0"]) if a["vpr0"] is not None else None
             va0 = a["va0"]
             if va0 is None and a["vpr0"] is not None and r688 is not None and t is not None and fa0 is not None:
-                va0 = float(a["vpr0"]) * ((1 + r688) ** t) * fa0
+                va0 = float(a["vpr0"]) * fa0
             # Ingresos por proyecto: VP(CMI×Q) por activo con la modificación vigente año a año
             if (va0 is None and a["vpr0"] is None and a["codigo"] and r688 is not None
                     and t is not None and fa0 is not None):
                 vpq = vp_cmi_q_activo(a["codigo"], mods, cmi_cod, serie_q, r688, fecha_inicio)
                 via = via688
                 if vpq is not None and via is not None:
-                    va0 = (via - vpq) * ((1 + r688) ** t) * fa0
+                    va0 = (via - vpq) * fa0
                     if vpr0 is None:
                         vpr0 = via - vpq
             # Fallback: VIA688 sin VPR₀, repartiendo el VP de ingresos agregado por VIA
             if (va0 is None and a["vpr0"] is None and a["via688"] is not None and vping is not None
                     and suma_via and r688 is not None and t is not None and fa0 is not None):
                 vp_j = vping * (float(a["via688"]) / suma_via)
-                va0 = (float(a["via688"]) - vp_j) * ((1 + r688) ** t) * fa0
+                va0 = (float(a["via688"]) - vp_j) * fa0
                 if vpr0 is None:
                     vpr0 = float(a["via688"]) - vp_j
             if va0 is None:
@@ -1312,7 +1312,7 @@ def cmi_inicio(conn, empresa_id, tipo="bcr", r_emp=None):
     El CMI del período de inicio es el que se venía cobrando al cierre de la 688: por eso se toma
     = Σ CMI individual del ÚLTIMO tramo = CMI total del último tramo del componente (Paso 01). La
     base de capital (BCR₀ para 'bcr'; VI_POIR₀ para 'poir'), insumo del primer recálculo, se deriva
-    del soporte de esos activos: VA₀ⱼ = VPR₀ⱼ·(1+r688)^t·fa0 (VPR₀ = VIA − VP(CMI×Q) si no viene
+    del soporte de esos activos: VA₀ⱼ = VPR₀ⱼ·fa0 (VPR₀ = VIA − VP(CMI×Q) si no viene
     explícito), compensando los VA₀ negativos contra los positivos (art. 2.1.2.1.5.2.1.1);
     cak = Σ VA₀d/PRR; CI = Σcak + base·r. Para 'bcr', si no hay soporte cargado la base cae a la de
     activos (bcr0_calculo). Una sola fuente de verdad para los cuadros de los Pasos 2 y 3 y para la
@@ -1370,11 +1370,9 @@ def cmi_inicio(conn, empresa_id, tipo="bcr", r_emp=None):
         # Cadena de valores del soporte, tal como la calcula el modelo (hojas 06_5 / 06_BCR0),
         # separada por el signo del VPR₀. Es el resumen que se muestra en los Pasos 2/3 (antes de
         # compensar):
-        #   VIA688 (activo, dic-2014) − VP(CMI·Q) (ingresos, dic-2014) = diferencia [dic-2014];
-        #   VPR₀ = diferencia × (1+r688)^t  [dic-2014, capitalizado — hoja 06_5 'VPR_DIF0'];
+        #   VPR₀ = VIA688 (dic-2014) − VP(CMI·Q) (ingresos, dic-2014)  [dic-2014, SIN capitalizar];
         #   VA₀ = VPR₀ × fa0  [dic-2025].
-        # El VPR₀ cargado ya viene capitalizado (06_5, col VPR_DIF0 = (VIA−VP)×(1+r)^10), así que se
-        # usa directamente; solo se recalcula desde la diferencia como respaldo si faltara.
+        # El VP(CMI·Q) lo deriva el sistema (cmi × VP(Q)); no se capitaliza por (1+r688)^t.
         cad = {"pos": {"n": 0, "via": 0.0, "vp": 0.0, "dif": 0.0, "vpr0": 0.0, "va0": 0.0},
                "neg": {"n": 0, "via": 0.0, "vp": 0.0, "dif": 0.0, "vpr0": 0.0, "va0": 0.0}}
         okva0 = fa0 is not None                                   # VA₀ = VPR₀·fa0 requiere fa0
