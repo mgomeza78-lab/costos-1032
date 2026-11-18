@@ -54,9 +54,50 @@ año i se obtiene el <b>VP(CMI×Q)</b>, que se resta al VIA688 para el VPR₀ (a
     <tr><td><b>VP del año — VP(CMI×Q)</b> <span class="muted2">(millones $)</span></td>
       {% for x in ing.filas %}<td class="num">{{ x.vp|millones(2) if x.vp is not none else '—' }}</td>{% endfor %}
       <td class="num"><b>{{ ing.total|millones(2) if ing.total is not none else 'falta r688' }}</b></td></tr>
+    <tr><td class="muted2">└ VP BCR₀ <span class="muted2">(millones $)</span></td>
+      {% for x in ing.filas %}<td class="num muted2">{{ x.vp_bcr|millones(2) if x.vp_bcr is not none else '—' }}</td>{% endfor %}
+      <td class="num muted2">{{ ing.total_vp_bcr|millones(2) if ing.total_vp_bcr is not none else '—' }}</td></tr>
+    <tr><td class="muted2">└ VP POIR <span class="muted2">(millones $)</span></td>
+      {% for x in ing.filas %}<td class="num muted2">{{ x.vp_poir|millones(2) if x.vp_poir is not none else '—' }}</td>{% endfor %}
+      <td class="num muted2">{{ ing.total_vp_poir|millones(2) if ing.total_vp_poir is not none else '—' }}</td></tr>
+    <tr><td class="muted2">└ VP terrenos <span class="muted2">(solo remuneración)</span></td>
+      {% for x in ing.filas %}<td class="num muted2">{{ x.vp_terrenos|millones(2) if x.vp_terrenos is not none else '—' }}</td>{% endfor %}
+      <td class="num muted2">{{ ing.total_vp_terrenos|millones(2) if ing.total_vp_terrenos is not none else '—' }}</td></tr>
   </tbody>
 </table>
 </div>
+<p class="muted2" style="margin:2px 0 0">El VP(CMI×Q) se desagrega por componente (BCR₀ / POIR / terrenos). Para el VPR₀ el ingreso de <b>terrenos</b> no se descuenta (en la 688 solo se remuneraban, no se recuperaban; en la 1032 empiezan a depreciar con PR=23).</p>
+
+{# ---- Comparación CCP proyectado (base tarifas 688) vs. agua facturada real ---- #}
+{% set cmp = bcr_comp688.get(s) if bcr_comp688 else none %}
+{% if cmp and cmp.tiene_proy %}
+<h4 style="font-family:var(--head);font-size:13px;color:var(--teal-deep);margin:12px 0 4px">CCP proyectado (base de las tarifas 688) vs. agua facturada real</h4>
+<table class="tabla" style="max-width:640px">
+  <thead><tr><th></th><th class="r">Total vigencia 688 (millones m³)</th><th class="r">Valor presente (millones m³)</th></tr></thead>
+  <tbody>
+    <tr><td>CCP proyectado <span class="muted2">(con el que se fijó el CMI)</span></td>
+      <td class="num">{{ cmp.total_proy|millones(2) }}</td><td class="num">{{ cmp.vp_proy|millones(2) }}</td></tr>
+    <tr><td>Agua facturada real</td>
+      <td class="num">{{ cmp.total_real|millones(2) }}</td><td class="num">{{ cmp.vp_real|millones(2) }}</td></tr>
+    <tr style="background:var(--teal-bg,#f0f6f6)"><td><b>Diferencia (real − proyectado)</b></td>
+      <td class="num"><b>{{ cmp.dif_total|millones(2) }}{% if cmp.dif_total_pct is not none %} ({{ cmp.dif_total_pct|round(1) }}%){% endif %}</b></td>
+      <td class="num"><b>{{ cmp.dif_vp|millones(2) }}{% if cmp.dif_vp_pct is not none %} ({{ cmp.dif_vp_pct|round(1) }}%){% endif %}</b></td></tr>
+  </tbody>
+</table>
+<svg viewBox="0 0 {{ (cmp.filas|length)*54 + 30 }} 150" style="max-width:100%;height:160px;margin-top:6px" font-family="var(--head)">
+  {% for x in cmp.filas %}
+  {% set bx = loop.index0*54 + 30 %}
+  {% set hp = ((x.proy or 0)/cmp.maxq*110)|round(1) %}
+  {% set hr = ((x.real or 0)/cmp.maxq*110)|round(1) %}
+  <rect x="{{ bx }}" y="{{ 120-hp }}" width="18" height="{{ hp }}" fill="#9bb7c4"><title>Proyectado año {{ x.anio }}: {{ x.proy|millones(2) if x.proy else '—' }}</title></rect>
+  <rect x="{{ bx+20 }}" y="{{ 120-hr }}" width="18" height="{{ hr }}" fill="#1f6f78"><title>Real año {{ x.anio }}: {{ x.real|millones(2) if x.real else '—' }}</title></rect>
+  <text x="{{ bx+19 }}" y="134" font-size="9" text-anchor="middle" fill="#666">{{ x.anio }}</text>
+  {% endfor %}
+  <text x="30" y="12" font-size="10" fill="#9bb7c4">■ proyectado</text>
+  <text x="120" y="12" font-size="10" fill="#1f6f78">■ real</text>
+</svg>
+<p class="muted2" style="margin:2px 0 0">El CMI 688 se fijó dividiendo el costo de inversión entre el <b>CCP proyectado</b>, pero se cobró sobre el <b>agua facturada real</b>. Si lo real quedó por debajo de lo proyectado, la empresa <b>sub-recuperó</b> → VPR₀ alto → <b>BCR₀ alta</b> de entrada a la 1032. (El CCP incluye pérdidas reconocidas; el AF es facturación pura.)</p>
+{% endif %}
 {% if ing.filas|selectattr('proy')|list %}<p class="muted2" style="margin:2px 0 0">* el año incluye meses con m³ proyectados.</p>{% endif %}
 {% set tr = bcr_tramos.get(s) if bcr_tramos else none %}
 {% if tr and (tr.poir or tr.bcr or tr.total) %}
@@ -81,7 +122,7 @@ año i se obtiene el <b>VP(CMI×Q)</b>, que se resta al VIA688 para el VPR₀ (a
   <summary class="muted2" style="cursor:pointer">Ver detalle mensual ({{ ing.meses|length }} registro(s))</summary>
   <table class="tabla" style="margin-top:6px">
     <thead><tr><th>Año</th><th class="c">Mes</th><th>APS</th><th class="c">Origen</th><th class="r">Agua facturada (m³)</th>
-      <th class="r">CMI_POIR dic-2014</th><th class="r">CMI_BCR dic-2014</th>
+      <th class="r">CMI_POIR dic-2014</th><th class="r">CMI_BCR dic-2014</th><th class="r">CMI_terrenos</th>
       <th class="r">CMI total</th><th class="r">Ingreso (CMI·Q)</th></tr></thead>
     <tbody>
       {% for m in ing.meses %}
@@ -91,6 +132,7 @@ año i se obtiene el <b>VP(CMI×Q)</b>, que se resta al VIA688 para el VPR₀ (a
         <td class="num">{{ m.q|valor if m.q is not none else '—' }}</td>
         <td class="num">{{ m.cmi_poir|valor('$') if m.cmi_poir is not none else '—' }}</td>
         <td class="num">{{ m.cmi_bcr|valor('$') if m.cmi_bcr is not none else '—' }}</td>
+        <td class="num">{{ m.cmi_terrenos|valor('$') if m.cmi_terrenos is not none else '—' }}</td>
         <td class="num">{{ m.cmi|valor('$') if m.cmi is not none else '—' }}</td>
         <td class="num">{{ m.ingreso|valor('$') if m.ingreso is not none else '—' }}</td></tr>
       {% endfor %}
@@ -111,12 +153,18 @@ año i se obtiene el <b>VP(CMI×Q)</b>, que se resta al VIA688 para el VPR₀ (a
   <div class="metodo-panel" data-m="masivo">
     <form method="post" action="/empresa/{{ emp.id }}/bcr-serie-csv" enctype="multipart/form-data" class="up-form">
       <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
-      <label>Serie 688 — CSV (columnas: <code>servicio, cod_dane, anio, mes, agua_facturada_m3, cmi_poir, cmi_bcr, proyectado</code>). Una fila por mes, año, servicio y APS.
+      <label>Serie 688 — CSV (columnas: <code>servicio, cod_dane, anio, mes, agua_facturada_m3, cmi_poir, cmi_bcr, cmi_terrenos, proyectado</code>). Una fila por mes, año, servicio y APS.
         <input type="file" name="archivos" accept=".csv,.xlsx,.xlsm" multiple required></label>
       <button class="btn primary" type="submit">Cargar archivo(s)</button>
     </form>
     <p class="muted2" style="margin:4px 0 0"><a href="/empresa/{{ emp.id }}/plantilla/bcr_serie">Descargar plantilla</a>
-     · <code>cod_dane</code> = APS (p. ej. {% for a in aps_list %}{{ a.cod_dane }} {{ a.municipio }}{% if not loop.last %} · {% endif %}{% endfor %}). El CMI688 va <b>por componente</b> en <b>precios dic-2014</b>: <code>cmi_poir</code> (POIR, hoja 06_3 Σactivos) y <code>cmi_bcr</code> (BCR₀, hoja 06_5); el VP usa la suma. <code>proyectado</code> = 0 real · 1 proyectado (para cerrar la serie). También se admite <code>cmi_cobrado</code> (total) y <code>cmi_corriente</code> (opcional).</p>
+     · <code>cod_dane</code> = APS (p. ej. {% for a in aps_list %}{{ a.cod_dane }} {{ a.municipio }}{% if not loop.last %} · {% endif %}{% endfor %}). El CMI688 va <b>por componente</b> en <b>precios dic-2014</b>: <code>cmi_poir</code> (POIR), <code>cmi_bcr</code> (BCR₀) y <code>cmi_terrenos</code> (terrenos, solo remuneración); el VP usa la suma. <code>proyectado</code> = 0 real · 1 proyectado (para cerrar la serie). También se admite <code>cmi_cobrado</code> (total) y <code>cmi_corriente</code> (opcional).</p>
+    <form method="post" action="/empresa/{{ emp.id }}/bcr-proyeccion-csv" enctype="multipart/form-data" class="up-form" style="margin-top:10px">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ NEXT }}">
+      <label><b>CCP proyectado 688</b> — CSV (columnas: <code>servicio, anio, ccp_proyectado</code>, opcional <code>cmi688_proyectado</code>). Una fila por servicio y año-688 (1–10): el CCP con el que se fijaron las tarifas, para compararlo con el agua facturada real.
+        <input type="file" name="archivos" accept=".csv,.xlsx,.xlsm" multiple required></label>
+      <button class="btn" type="submit">Cargar CCP proyectado</button>
+    </form>
   </div>
 
   <div class="metodo-panel" data-m="manual">
@@ -244,24 +292,32 @@ El detalle del <b>CMI_POIR</b> va en el <a href="/empresa/{{ emp.id }}/inversion
   <div style="overflow-x:auto">
   <table class="tabla" style="margin-top:6px">
     <thead><tr><th class="c">Tramo</th><th>Servicio</th><th>ID</th><th>Activo</th>
-      <th class="r">CMI ($/m³)</th><th class="r">VU</th><th class="r">PRR</th><th class="c">Año op.</th>
-      <th class="r">VIA688 (M$)</th><th class="r">VP(CMI·Q) (M$)</th><th class="r">VPR₀ (M$)</th></tr></thead>
+      <th>Origen</th><th>Subsistema</th><th>Tipo</th>
+      <th class="r">CMI ($/m³)</th><th class="r">VU</th><th class="r">TO</th><th class="r">VUR</th><th class="r">PRR</th><th class="c">Fecha op.</th>
+      <th class="r">V.total (M$)</th><th class="r">VIA688 (M$)</th><th class="r">VP(CMI·Q) (M$)</th><th class="r">VPR₀ (M$)</th><th>Obs.</th></tr></thead>
     <tbody>
       {% for d in det %}
       <tr><td class="c">{{ d.tramo }}</td><td>{{ d.servicio }}</td><td class="comp">{{ d.id_activo }}</td>
         <td>{{ d.nombre or '—' }}</td>
+        <td class="muted2">{{ d.origen or '—' }}</td>
+        <td class="muted2">{{ d.subsistema or '—' }}</td>
+        <td class="muted2">{{ d.tipo_activo or '—' }}</td>
         <td class="num">{{ d.cmi|valor('$') if d.cmi is not none else '—' }}</td>
         <td class="num">{{ d.vida_util|round(2) if d.vida_util is not none else '—' }}</td>
+        <td class="num">{{ d.to_anios|round(2) if d.to_anios else '—' }}</td>
+        <td class="num">{{ d.vur_anios|round(2) if d.vur_anios else '—' }}</td>
         <td class="num">{{ d.prr|round(2) if d.prr is not none else '—' }}</td>
-        <td class="c">{{ d.anio_operacion or '—' }}</td>
+        <td class="c">{{ d.fecha_operacion or d.anio_operacion or '—' }}</td>
+        <td class="num">{{ d.valor_total|millones(2) if d.valor_total else '—' }}</td>
         <td class="num">{{ d.valor_via688|millones(2) if d.valor_via688 is not none else '—' }}</td>
         <td class="num">{{ d.vp_cmi_q|millones(2) if d.vp_cmi_q is not none else '—' }}</td>
-        <td class="num">{{ d.vpr0|millones(2) if d.vpr0 is not none else '—' }}</td></tr>
+        <td class="num">{{ d.vpr0|millones(2) if d.vpr0 is not none else '—' }}</td>
+        <td class="muted2" style="max-width:220px">{{ d.observacion or '' }}</td></tr>
       {% endfor %}
     </tbody>
   </table>
   </div>
-  <p class="muted2" style="margin:4px 0 0">Valores monetarios en <b>millones</b> de pesos dic-2014 (M$); el CMI es $/m³ dic-2014. El VPR₀ se deriva de VIA688 − VP(CMI·Q) cuando no viene explícito.</p>
+  <p class="muted2" style="margin:4px 0 0">Valores monetarios en <b>millones</b> de pesos dic-2014 (M$); el CMI es $/m³ dic-2014. Origen (VI287 / VIdif287), subsistema, tipo y fechas provienen de la valoración técnica (Anexos 3/4/5). El VPR₀ se deriva de VIA688 − VP(CMI·Q) cuando no viene explícito.</p>
 </details>
 {% endif %}
 {% endif %}

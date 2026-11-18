@@ -1750,6 +1750,7 @@ def inversiones(request: Request, eid: int):
             "WHERE a.empresa_id=:e ORDER BY m.nombre"), {"e": eid}).mappings().all()
         bcr_series = bcr.serie_list(conn, eid)
         bcr_ingresos = {s: bcr.ingresos_vp(conn, eid, s) for s in servicios}
+        bcr_comp688 = bcr.comparacion_688(conn, eid)   # CCP proyectado vs AF real (explica la BCR₀)
         bcr_tramos = {s: bcr.cmi_tramos(conn, eid, s) for s in servicios}
         bcr_mods = {s: poir.mods_list(conn, eid, s) for s in servicios}
         bcr_cmi = {s: poir.resumen_cmi(conn, eid, s) for s in servicios}
@@ -1766,7 +1767,7 @@ def inversiones(request: Request, eid: int):
         servicios=servicios, bcr_activos=bcr_activos, bcr0=bcr0, bcr_ini=bcr_ini,
         poir_ini=poir_ini, cmi_det=cmi_det, bcr_comp=bcr.COMPONENTES,
         bcr_serv=bcr.SERVICIOS, bcr_params=bcr_params, bcr_series=bcr_series, bcr_ingresos=bcr_ingresos,
-        bcr_tramos=bcr_tramos,
+        bcr_tramos=bcr_tramos, bcr_comp688=bcr_comp688,
         aps_list=aps_list, aps_nom={a["cod_dane"]: a["municipio"] for a in aps_list},
         bcr_mods=bcr_mods, bcr_cmi=bcr_cmi, cmi_proy=cmi_proy, poir_plan=poir_plan,
         poir_desv=poir_desv, cumpl=cumpl, proy=proy, r_emp=r_emp,
@@ -3935,6 +3936,35 @@ def bcr_serie_csv(request: Request, eid: int,
             tot_ok += ok; errs += (err or []); n_arch += 1
     db.audit(scope_of(user), "bcr_serie_csv", "empresa", eid, f"{n_arch} archivos, {tot_ok} filas, {len(errs)} errores")
     aviso = f"msg=Serie+688:+{n_arch}+archivo(s),+{tot_ok}+filas+cargadas"
+    if errs:
+        aviso += ";+" + ",+".join(errs[:3]).replace(" ", "+") + ("+…" if len(errs) > 3 else "")
+    return RedirectResponse(_dest(next, dflt, aviso), status_code=303)
+
+
+@app.post("/empresa/{eid}/bcr-proyeccion-csv")
+def bcr_proyeccion_csv(request: Request, eid: int,
+                       archivos: list[UploadFile] = File(..., alias="archivos"),
+                       next: str = Form(""), csrf: str = Form("")):
+    """Cargue de la serie CCP proyectada del 688 (base de las tarifas) para comparar vs AF real."""
+    if (r := _need_login(request)):
+        return r
+    if (bad := _bad_csrf(request, csrf)):
+        return bad
+    user = session_user(request)
+    dflt = f"/empresa/{eid}/inversiones?sec=agua"
+    if not rbac.can(user, "cargar_mensual"):
+        return RedirectResponse(_dest(next, dflt, "err=No+autorizado"), status_code=303)
+    tot_ok, errs, n_arch = 0, [], 0
+    with db.scope_conn(scope_of(user)) as conn:
+        if not _emp_or_redirect(conn, eid):
+            return RedirectResponse("/panel?err=Empresa+no+disponible", status_code=303)
+        for arch in archivos:
+            if not getattr(arch, "filename", ""):
+                continue
+            ok, err = bcr.proyeccion_cargar(conn, eid, _leer_csv(arch))
+            tot_ok += ok; errs += (err or []); n_arch += 1
+    db.audit(scope_of(user), "bcr_proyeccion_csv", "empresa", eid, f"{n_arch} archivos, {tot_ok} filas")
+    aviso = f"msg=CCP+proyectado:+{tot_ok}+filas+cargadas"
     if errs:
         aviso += ";+" + ",+".join(errs[:3]).replace(" ", "+") + ("+…" if len(errs) > 3 else "")
     return RedirectResponse(_dest(next, dflt, aviso), status_code=303)
