@@ -105,7 +105,7 @@ año i se obtiene el <b>VP(CMI×Q)</b>, que se resta al VIA688 para el VPR₀ (a
 <table class="tabla">
   <thead><tr><th>Componente</th><th class="r">CMI ($/m³)</th><th>Desde</th><th>Hasta</th><th class="c">Meses</th></tr></thead>
   <tbody>
-    {% for camp, lbl in [('poir','CMI_POIR'), ('bcr','CMI_BCR'), ('total','CMI total')] %}
+    {% for camp, lbl in [('poir','CMI_POIR'), ('bcr_neto','CMI_BCR'), ('terrenos','CMI terrenos'), ('total','CMI total')] %}
       {% for x in tr[camp] %}
       <tr{% if camp=='total' %} style="background:var(--teal-bg,#f0f6f6)"{% endif %}>
         <td>{% if loop.first %}<b>{{ lbl }}</b>{% endif %}</td>

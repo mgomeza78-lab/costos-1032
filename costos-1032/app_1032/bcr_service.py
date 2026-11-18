@@ -606,6 +606,22 @@ def cargar_serie_csv(conn, empresa_id, contenido):
     return ok, err
 
 
+def _tasa_terrenos(conn, empresa_id, servicio):
+    """CMI de terrenos ($/m³, dic-2014) = Σ cmi de los activos-terreno del último tramo BCR del
+    servicio (se identifican por el nombre, que inicia en 'TERRENO'). Transversal: en la 688 los
+    terrenos solo se remuneraban, así que su ingreso se SEPARA para mostrarlo, pero NO reduce el
+    VPR₀ (que queda en valor pleno, activo por activo). Si no hay terrenos, devuelve 0."""
+    tr = conn.execute(text("SELECT max(tramo) FROM cmi_proyecto WHERE empresa_id=:e AND tipo='bcr'"),
+                      {"e": empresa_id}).scalar()
+    if tr is None:
+        return 0.0
+    v = conn.execute(text(
+        "SELECT COALESCE(SUM(cmi),0) FROM cmi_proyecto WHERE empresa_id=:e AND servicio=:s "
+        "AND tipo='bcr' AND tramo=:tr AND strpos(upper(COALESCE(nombre,'')),'TERRENO')>0"),
+        {"e": empresa_id, "s": servicio, "tr": tr}).scalar()
+    return float(v or 0.0)
+
+
 def ingresos_vp(conn, empresa_id, servicio):
     """VP de los ingresos recuperados vía CMI = Σ CMI688ᵢ·Qᵢ/(1+r688)^i.
 
@@ -619,6 +635,7 @@ def ingresos_vp(conn, empresa_id, servicio):
         susc = conn.execute(text("SELECT suscriptores_seg FROM empresa WHERE id=:e"),
                             {"e": empresa_id}).scalar()
         r = r688_de_segmento(segmento_688(susc))
+    ter_rate = _tasa_terrenos(conn, empresa_id, servicio)   # $/m³ dic-2014 de terrenos (transversal)
     # Serie mensual: por cada año i el ingreso = Σ_mes (CMI688×Q); VP_i = ingreso_i/(1+r)^i.
     por_anio, meses = {}, []
     for s in serie_list(conn, empresa_id, servicio):
@@ -626,16 +643,17 @@ def ingresos_vp(conn, empresa_id, servicio):
         q = float(s["q_m3"]) if s["q_m3"] is not None else None
         cpoir = float(s["cmi_poir"]) if s["cmi_poir"] is not None else None
         cbcr = float(s["cmi_bcr"]) if s["cmi_bcr"] is not None else None
-        cter = float(s["cmi_terrenos"]) if s.get("cmi_terrenos") is not None else None
-        # CMI688 total dic-2014 = POIR + BCR₀ + terrenos cuando hay componentes; si no, el cmi_cobrado.
-        if cpoir is not None or cbcr is not None or cter is not None:
-            cmi = (cpoir or 0.0) + (cbcr or 0.0) + (cter or 0.0)
+        # El cmi_bcr de la serie INCLUYE los terrenos; se separan para la desagregación (el total no cambia).
+        if cpoir is not None or cbcr is not None:
+            cmi = (cpoir or 0.0) + (cbcr or 0.0)
         else:
             cmi = float(s["cmi_cobrado"]) if s["cmi_cobrado"] is not None else None
+        cbcr_neto = (cbcr - ter_rate) if cbcr is not None else None        # BCR₀ sin terrenos
+        cter = ter_rate if (cbcr is not None and ter_rate) else None        # terrenos (solo remuneración)
         ingreso = (cmi * q) if (q is not None and cmi is not None) else None
-        i_bcr = ((cbcr or 0.0) * q) if (q is not None and cbcr is not None) else None
+        i_bcr = (cbcr_neto * q) if (q is not None and cbcr_neto is not None) else None
         i_poir = ((cpoir or 0.0) * q) if (q is not None and cpoir is not None) else None
-        i_ter = ((cter or 0.0) * q) if (q is not None and cter is not None) else None
+        i_ter = (cter * q) if (q is not None and cter is not None) else None
         proy = int(s["proyectado"] or 0)
         d = por_anio.setdefault(i, {"ingreso": 0.0, "n": 0, "proy": 0, "q": 0.0, "nq": 0,
                                     "bcr": 0.0, "poir": 0.0, "ter": 0.0})
@@ -647,7 +665,7 @@ def ingresos_vp(conn, empresa_id, servicio):
                 d["proy"] += 1
         d["bcr"] += (i_bcr or 0.0); d["poir"] += (i_poir or 0.0); d["ter"] += (i_ter or 0.0)
         meses.append({"anio": i, "mes": mes, "cod_dane": s["cod_dane"], "q": q, "cmi": cmi,
-                      "cmi_poir": cpoir, "cmi_bcr": cbcr, "cmi_terrenos": cter, "proyectado": proy,
+                      "cmi_poir": cpoir, "cmi_bcr": cbcr_neto, "cmi_terrenos": cter, "proyectado": proy,
                       "cmi_corriente": (float(s["cmi_corriente"]) if s["cmi_corriente"] is not None else None),
                       "ingreso": ingreso})
     filas, total = [], 0.0
@@ -684,25 +702,36 @@ def vp_cmi_q_serie(conn, empresa_id, servicio):
 
 
 # ============== Serie proyectada del 688 (CCP con el que se fijaron las tarifas) ==============
+def _tabla_existe(conn, nombre):
+    """¿Existe la tabla en el esquema public? Se consulta information_schema (nunca falla),
+    para NO ejecutar un SELECT contra una tabla inexistente: ese SELECT aborta la transacción
+    de toda la petición y, aunque se capture la excepción en Python, PostgreSQL deja la
+    transacción en estado fallido y la siguiente consulta revienta (InFailedSqlTransaction)."""
+    return conn.execute(text(
+        "SELECT 1 FROM information_schema.tables "
+        "WHERE table_schema='public' AND table_name=:t"), {"t": nombre}).first() is not None
+
+
 def proyeccion_list(conn, empresa_id, servicio=None):
     """Serie CCP proyectada del 688 (base de las tarifas) por servicio y año-688.
     Tolera que la tabla bcr_proyeccion_688 no exista aún (devuelve [])."""
-    try:
-        sql = ("SELECT servicio, anio_tarifario, ccp_proyectado, cmi688_proyectado "
-               "FROM bcr_proyeccion_688 WHERE empresa_id=:e")
-        p = {"e": empresa_id}
-        if servicio:
-            sql += " AND servicio=:s"; p["s"] = servicio
-        sql += " ORDER BY servicio, anio_tarifario"
-        return [dict(r) for r in conn.execute(text(sql), p).mappings().all()]
-    except Exception:
+    if not _tabla_existe(conn, "bcr_proyeccion_688"):
         return []
+    sql = ("SELECT servicio, anio_tarifario, ccp_proyectado, cmi688_proyectado "
+           "FROM bcr_proyeccion_688 WHERE empresa_id=:e")
+    p = {"e": empresa_id}
+    if servicio:
+        sql += " AND servicio=:s"; p["s"] = servicio
+    sql += " ORDER BY servicio, anio_tarifario"
+    return [dict(r) for r in conn.execute(text(sql), p).mappings().all()]
 
 
 def proyeccion_cargar(conn, empresa_id, contenido):
     """Carga la serie CCP proyectada del 688: columnas servicio, anio (1-10), ccp_proyectado
     (m³/año) y, opcional, cmi688_proyectado ($/m³). Reemplaza lo cargado de la empresa."""
     import ingesta as _ing
+    if not _tabla_existe(conn, "bcr_proyeccion_688"):
+        return 0, ["la tabla bcr_proyeccion_688 no existe aún; corre la migración de CCP proyectado"]
     rows = _ing._rows(contenido)
     if not rows:
         return 0, ["el archivo está vacío o sin encabezado"]
@@ -816,6 +845,7 @@ def cmi_tramos(conn, empresa_id, servicio):
     el mismo en todas las APS de un mes, así que se consolida por (año‑688, mes)."""
     fecha = conn.execute(text("SELECT fecha_inicio_688 FROM empresa WHERE id=:e"),
                          {"e": empresa_id}).scalar()
+    ter_rate = _tasa_terrenos(conn, empresa_id, servicio)
     mm = {}
     for s in serie_list(conn, empresa_id, servicio):
         key = (int(s["anio_tarifario"]), int(s["mes"] or 0))
@@ -825,7 +855,9 @@ def cmi_tramos(conn, empresa_id, servicio):
             tot = (cp or 0.0) + (cb or 0.0)
         else:
             tot = float(s["cmi_cobrado"]) if s["cmi_cobrado"] is not None else None
-        mm.setdefault(key, {"poir": cp, "bcr": cb, "total": tot})
+        cb_neto = (cb - ter_rate) if cb is not None else None          # BCR₀ sin terrenos (display)
+        ct = ter_rate if (cb is not None and ter_rate) else None        # terrenos (display)
+        mm.setdefault(key, {"poir": cp, "bcr": cb, "bcr_neto": cb_neto, "terrenos": ct, "total": tot})
     orden = sorted(mm)
 
     def tramos(campo):
@@ -849,7 +881,8 @@ def cmi_tramos(conn, empresa_id, servicio):
             prev_idx = idx
         return out
 
-    return {"poir": tramos("poir"), "bcr": tramos("bcr"), "total": tramos("total")}
+    return {"poir": tramos("poir"), "bcr": tramos("bcr"), "bcr_neto": tramos("bcr_neto"),
+            "terrenos": tramos("terrenos"), "total": tramos("total")}
 
 
 # ============== Detalle de proyectos del CMI (Paso 02): cargue por tramo y validación ==============
