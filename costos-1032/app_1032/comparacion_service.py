@@ -109,16 +109,16 @@ def _componentes_1032(conn, eid, emp, servicios):
     except Exception:
         varset = {}
     # CMI del período de inicio: no sale de base_calculo (crv._calc lo deja en None si no está
-    # poblada); es el CMI_BCR heredado del cierre de la 688 (art. 2.1.2.1.3.5 par. 1). Se toma de la
-    # BCR₀ ya cargada: cmi_bcr está en pesos de dic-2014, se lleva a dic-2025 con fa0 (IPC25/IPC14)
-    # para quedar en la MISMA base que CMA/CMO/CMICT. El CMI_POIR es 0 en el período de inicio.
+    # poblada). Se RECALCULA sobre la BCR₀ ya compensada —pool único por servicio (BCR₀ heredada +
+    # POIR 688; la sobre-recuperación del POIR no ejecutado entra como VA₀<0 y se descuenta por
+    # prelación de menor PRR)— conforme al art. 2.1.2.1.3.5.3 par. 1, 2.1.2.1.3.5.4 y 2.1.2.1.5.2.1.1.
+    # `cmi_bcr0_pool` ya devuelve el CMI en pesos de dic-2025 ($/m³), en la misma base que
+    # CMA/CMO/CMICT, así que se usa directo. El CMI_POIR de la 1032 es 0 en el período de inicio.
     cmi_bcr0 = {}
     try:
-        b0 = bcr.bcr0_inicio(conn, eid)
+        pool = bcr.cmi_bcr0_pool(conn, eid)
         for s in servicios:
-            bs = b0.get(s) or {}
-            cb, fa0 = bs.get("cmi_bcr"), bs.get("fa0")
-            cmi_bcr0[s] = (float(cb) * float(fa0)) if (cb is not None and fa0) else None
+            cmi_bcr0[s] = (pool.get(s) or {}).get("cmi")
     except Exception:
         cmi_bcr0 = {}
     out = {}

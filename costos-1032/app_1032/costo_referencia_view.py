@@ -202,6 +202,14 @@ def variables(conn, empresa_id, servicios, emp=None, pclave="inicio"):
     ipuf_e = ccp_view._ipuf_de_periodo(conn, empresa_id, sel)
     ccp_cmo = ccp_view.indicadores(conn, empresa_id, [ab["CMO"]], ipuf_e) if ipuf_e is not None else {}
     ccp_ict = ccp_view.indicadores(conn, empresa_id, [ab["CMICT"]], ipuf_e) if ipuf_e is not None else {}
+    # CMI del período de inicio: recalculado sobre la BCR₀ pool compensada (art. 2.1.2.1.3.5.3 par. 1,
+    # 2.1.2.1.3.5.4 y 2.1.2.1.5.2.1.1). Import diferido para evitar cualquier ciclo de importación.
+    try:
+        import bcr_service as _bcr
+        _pool = _bcr.cmi_bcr0_pool(conn, empresa_id)
+        cmi_pool = {s: (_pool.get(s) or {}).get("cmi") for s in servicios}
+    except Exception:
+        cmi_pool = {}
     out = {}
     for s in servicios:
         b = base.get(s, {})
@@ -263,7 +271,13 @@ def variables(conn, empresa_id, servicios, emp=None, pclave="inicio"):
         put("N", susc.get(s), "comercial")
         # Parámetros de la base del estudio: kct (con respaldo de la empresa) y CMI (del BCR/POIR).
         put("kct", None, None)
-        put("CMI_base", None, None)
+        # CMI del período de inicio: de la BCR₀ pool compensada; respaldo = base del estudio.
+        cmi_ps = cmi_pool.get(s)
+        if cmi_ps is not None:
+            v["CMI_base"] = {"valor": cmi_ps,
+                             "fuente": "BCR₀ pool compensada (art. 2.1.2.1.3.5.3 par. 1)"}
+        else:
+            put("CMI_base", None, None)
         # CCP y denominador del CMICT: del cálculo de "CCP y pérdidas". Si usa macromedición
         # (o se estima para alcantarillado) es el CCP pleno; si solo hay AF se muestra marcado;
         # si no hay ni AF, cae a la base del estudio ("por cargar").

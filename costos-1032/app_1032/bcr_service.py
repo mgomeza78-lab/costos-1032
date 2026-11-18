@@ -1216,6 +1216,115 @@ def bcr0_inicio(conn, empresa_id, r_emp=None):
     return cmi_inicio(conn, empresa_id, "bcr", r_emp)
 
 
+def cmi_bcr0_pool(conn, empresa_id, r_emp=None):
+    """CMI del período de inicio sobre la BCR₀ POOL ÚNICA por servicio (interpretación amplia del
+    art. 2.1.2.1.5.2.1.1, como en Las Ceibas), recalculado sobre la base ya compensada
+    (art. 2.1.2.1.3.5.3 par. 1 → la BCR del año i-1 es la BCR₀; art. 2.1.2.1.3.5.4 → BCR₀ = Σ VA₀
+    compensado).
+
+    A diferencia de `cmi_inicio` (que compensa SOLO dentro de cada componente y reporta el CMI
+    cobrado fijo), aquí se reúnen en una sola base por servicio los activos heredados
+    (cmi_proyecto tipo='bcr', último tramo) y el POIR 688 (tipo='poir', último tramo). Los proyectos
+    del POIR 688 planeados pero NO ejecutados entran con VA₀<0 (sobre-recuperación: VIA688=0 → VPR₀<0).
+    Los VA₀ negativos se descuentan contra TODOS los activos positivos del servicio por orden de menor
+    PRR primero y, a igual PRR, mayor VPR pendiente; el remanente no absorbido no se incluye en el CMI
+    (último inciso del art., se compensa con nuevos activos). El CMI que se cobra en el período de
+    inicio es solo el CMI_BCR así recalculado (el CMI_POIR de la 1032 arranca en 2027):
+
+        CMI = ( r·BCR₀ + Σ VA₀d/PRR ) / CCP        [$/m³, pesos de dic. del año i-1]
+
+    Devuelve, por servicio, el CMI recalculado y la traza de la compensación (base, CAK, descuento,
+    remanente sin absorber, nº de positivos/negativos y el CMI cobrado pool = Σ CMI·fa0 de referencia).
+    Una sola fuente de verdad para la comparación y para la página «Costo de referencia»."""
+    emp_row = conn.execute(text(
+        "SELECT r, suscriptores_seg, fecha_inicio_688, fecha_inicio_1032 FROM empresa WHERE id=:e"),
+        {"e": empresa_id}).mappings().first()
+    if r_emp is None:
+        r_emp = float(emp_row["r"]) if (emp_row and emp_row["r"] is not None) else 0.0
+    seg688 = segmento_688(emp_row["suscriptores_seg"]) if emp_row else None
+    r688_auto = r688_de_segmento(seg688)
+    i14, i25 = ipc_dic(conn, 2014), ipc_dic(conn, 2025)
+    fa0_auto = (float(i25) / float(i14)) if (i14 and i25) else None
+    fecha_auto = emp_row["fecha_inicio_688"] if emp_row else None
+    fecha_1032 = emp_row["fecha_inicio_1032"] if emp_row else None
+    ps = params(conn, empresa_id)
+    servs = _servicios_empresa(conn, empresa_id)
+    # Último tramo cargado de cada componente (bcr/poir); robustez: máx(tramo) en cmi_proyecto.
+    tramos_all = cmi_tramos_componente(conn, empresa_id)
+    tr_by_tipo = {}
+    for tipo in ("bcr", "poir"):
+        tc = tramos_all.get(tipo, [])
+        if tc:
+            tr_by_tipo[tipo] = tc[-1]["idx"]
+        else:
+            mx = conn.execute(text("SELECT max(tramo) FROM cmi_proyecto WHERE empresa_id=:e AND tipo=:t"),
+                              {"e": empresa_id, "t": tipo}).scalar()
+            tr_by_tipo[tipo] = int(mx) if mx is not None else None
+    out = {}
+    for s in servs:
+        p = ps.get(s)
+        r688 = float(p["r688"]) if (p and p["r688"] is not None) else r688_auto
+        fecha_inicio = (p["fecha_inicio_688"] if (p and p["fecha_inicio_688"]) else fecha_auto)
+        t = _t_anios(fecha_inicio, fecha_1032) if fecha_inicio else None
+        fa0 = _fa0(p) if (p and p["ipc_dic_2014"] and p["ipc_dic_2025"]) else fa0_auto
+        ccp = float(p["ccp_2025"]) if (p and p["ccp_2025"] is not None) else ccp_desde_consumos(conn, empresa_id, s)
+        pos, neg, cobrado = [], 0.0, 0.0      # pos: {va0, prr, tipo, id}; neg: Σ|VA₀<0|
+        n_pos = n_neg = 0
+        por_tipo = {"bcr": {"n": 0, "va0": 0.0, "neg": 0.0}, "poir": {"n": 0, "va0": 0.0, "neg": 0.0}}
+        for tipo in ("bcr", "poir"):
+            tr = tr_by_tipo.get(tipo)
+            if tr is None:
+                continue
+            rows = conn.execute(text(
+                "SELECT id_activo, cmi, vpr0, valor_via688, vp_cmi_q, prr, vida_util FROM cmi_proyecto "
+                "WHERE empresa_id=:e AND tipo=:t AND tramo=:tr AND servicio=:s"),
+                {"e": empresa_id, "t": tipo, "tr": tr, "s": s}).mappings().all()
+            for rr in rows:
+                if rr["cmi"] is not None:
+                    cobrado += float(rr["cmi"])
+                via = float(rr["valor_via688"]) if rr["valor_via688"] is not None else None
+                vp = float(rr["vp_cmi_q"]) if rr["vp_cmi_q"] is not None else None
+                vpr0 = float(rr["vpr0"]) if rr["vpr0"] is not None else None
+                if vpr0 is None and via is not None and vp is not None and r688 is not None and t is not None:
+                    vpr0 = (via - vp) * ((1 + r688) ** t)           # respaldo: capitaliza la diferencia
+                if vpr0 is None or fa0 is None:
+                    continue
+                va0 = vpr0 * fa0
+                # PRR del POIR no se persiste en cmi_proyecto → respaldo con la vida útil.
+                prr = float(rr["prr"]) if rr["prr"] is not None else (
+                    float(rr["vida_util"]) if rr["vida_util"] is not None else None)
+                por_tipo[tipo]["n"] += 1
+                por_tipo[tipo]["va0"] += va0
+                if va0 >= 0:
+                    pos.append({"va0": va0, "prr": prr, "tipo": tipo, "id": rr["id_activo"]})
+                    n_pos += 1
+                else:
+                    neg += -va0
+                    n_neg += 1
+                    por_tipo[tipo]["neg"] += -va0
+        # Compensación (art. 2.1.2.1.5.2.1.1): menor PRR primero; a igual PRR, mayor VPR pendiente.
+        negtot = neg
+        for a in sorted(pos, key=lambda x: ((x["prr"] if x["prr"] is not None else 1e9), -x["va0"])):
+            if negtot <= 0:
+                a["va0d"] = a["va0"]
+                continue
+            take = min(a["va0"], negtot)
+            a["va0d"] = a["va0"] - take
+            negtot -= take
+        bcr0 = sum(a["va0d"] for a in pos)
+        cak = sum((a["va0d"] / a["prr"]) for a in pos if a["prr"] and a["prr"] > 0)
+        ci = cak + bcr0 * r_emp
+        cmi = (ci / ccp) if (ccp and ci is not None) else None
+        out[s] = {"cmi": cmi, "bcr0": bcr0, "cak": cak, "ci": ci, "ccp": ccp,
+                  "descuento": neg, "sin_absorber": max(0.0, negtot),
+                  "n_pos": n_pos, "n_neg": n_neg, "por_tipo": por_tipo,
+                  "cmi_cobrado_pool": (cobrado * fa0) if fa0 else None, "cobrado_dic2014": cobrado,
+                  "r": r_emp, "fa0": fa0, "t": t, "r688": r688, "seg688": seg688}
+    out["_r"] = r_emp
+    out["_seg688"] = seg688
+    return out
+
+
 def cmi_proyecto_detalle(conn, empresa_id, tipo):
     """Detalle por activo de lo cargado en el Paso 02 para un componente (para la tabla desplegable):
     filas {tramo, servicio, id_activo, nombre, cmi, vida_util, prr, anio_operacion, valor_via688,
