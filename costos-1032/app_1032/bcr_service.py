@@ -881,10 +881,15 @@ def _activos_desde_cmi_proyecto(conn, empresa_id, fa0_auto, ps):
     """Activos-puente para la compensación cuando NO hay inventario en `bcr_activo`: derivan del
     detalle por proyecto cargado en `cmi_proyecto` (Paso 2 BCR / Paso 3 POIR, último tramo), que es
     el flujo real de cargue en la UI. El VA₀ se PRECALCULA = VPR₀(ya capitalizado, hoja 06_5)·fa0,
-    para que compensacion_detalle lo use directo y no lo vuelva a capitalizar. Componente 1 = BCR,
-    2 = POIR. Devuelve dicts con las mismas claves que `lista()` (bcr_activo)."""
+    para que compensacion_detalle lo use directo y no lo vuelva a capitalizar. El COMPONENTE es por la
+    naturaleza del activo (art. 2.1.2.1.3.5.18): tanto el BCR heredado como las obras del POIR de
+    EMDUPAR son infraestructura → componente 1 (igual que ESSMAR), de modo que la sobre-recuperación
+    del POIR no ejecutado (VA₀<0) se descuenta contra los positivos del BCR dentro del MISMO componente
+    (art. 2.1.2.1.5.2.1.1, lectura estricta). Devuelve dicts con las mismas claves que `lista()`."""
     out = []
-    for tipo, comp_k in (("bcr", 1), ("poir", 2)):
+    # (tipo de origen, componente real). El POIR de EMDUPAR es infraestructura → 1. Si una APS tuviera
+    # obras ambientales/gestión del riesgo en el POIR, esas irían a componente 2 (requiere marcarlas).
+    for tipo, comp_k in (("bcr", 1), ("poir", 1)):
         mx = conn.execute(text("SELECT max(tramo) FROM cmi_proyecto WHERE empresa_id=:e AND tipo=:t"),
                           {"e": empresa_id, "t": tipo}).scalar()
         if mx is None:
