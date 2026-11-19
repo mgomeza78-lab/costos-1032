@@ -1378,6 +1378,7 @@ def cmi_inicio(conn, empresa_id, tipo="bcr", r_emp=None):
                "neg": {"n": 0, "via": 0.0, "vp": 0.0, "dif": 0.0, "vpr0": 0.0, "va0": 0.0}}
         okva0 = fa0 is not None                                   # VA₀ = VPR₀·fa0 requiere fa0
         pos, neg, con_soporte, todos = [], 0.0, False, []
+        terr = {"va0": 0.0, "cak": 0.0, "cmi": 0.0, "n": 0}   # subtotal de TERRENOS, para separar el BCR neto
         vpq = _vp_q(conn, empresa_id, s, r688)   # VP(Q): el sistema calcula el ingreso (no se carga)
         for r in rs:
             via = float(r["valor_via688"]) if r["valor_via688"] is not None else None
@@ -1410,6 +1411,12 @@ def cmi_inicio(conn, empresa_id, tipo="bcr", r_emp=None):
                 con_soporte = True
                 prr = float(r["prr"]) if r["prr"] is not None else None
                 todos.append({"va0": va0, "prr": prr})
+                if es_terr:
+                    terr["va0"] += va0; terr["n"] += 1
+                    if cmi_a is not None:
+                        terr["cmi"] += cmi_a
+                    if prr and prr > 0:
+                        terr["cak"] += va0 / prr
                 if va0 >= 0:
                     pos.append({"va0": va0, "prr": prr})
                 else:
@@ -1437,11 +1444,12 @@ def cmi_inicio(conn, empresa_id, tipo="bcr", r_emp=None):
         # CMI "firmado": incluye los VA₀ negativos (sobre-recuperación) sin compensar ni piso en 0.
         # Es el que muestra el Paso 3·BCR_POIR: negativo si la ejecución < lo planeado, positivo con
         # ejecución real. (El cmi_bcr_ci compensado — solo positivos — se usa en la base y la proyección.)
-        cmi_ci_signed = None
+        cmi_ci_signed = base_sg = cak_sg = ci_sg = None
         if con_soporte and ccp:
             base_sg = sum(a["va0"] for a in todos)
             cak_sg = sum((a["va0"] / a["prr"]) for a in todos if a["prr"] and a["prr"] > 0)
-            cmi_ci_signed = (cak_sg + base_sg * r_emp) / ccp
+            ci_sg = cak_sg + base_sg * r_emp
+            cmi_ci_signed = ci_sg / ccp
         out[s] = {"cmi_bcr": cmi_c, "total01": total01, "suma_cmi": suma_cmi, "n": n, "ok": ok,
                   "sin_serie": sin_serie,
                   "vpr0_pos": vpr0_pos, "vpr0_neg": vpr0_neg, "n_pos": n_pos, "n_neg": n_neg,
@@ -1450,6 +1458,8 @@ def cmi_inicio(conn, empresa_id, tipo="bcr", r_emp=None):
                   "con_soporte": con_soporte, "descuento": descuento, "seg688": seg688,
                   "cmi_bcr_ci": (ci / ccp if (ci is not None and ccp) else None),
                   "cmi_ci_signed": cmi_ci_signed,
+                  "base_sg": base_sg, "cak_sg": cak_sg, "ci_sg": ci_sg,
+                  "terr": terr,
                   "sin_param": r688 is None}
     out["_tipo"] = tipo
     out["_r"] = r_emp
@@ -1458,6 +1468,69 @@ def cmi_inicio(conn, empresa_id, tipo="bcr", r_emp=None):
     out["_ipc_25"] = float(i25) if i25 else None
     out["_fecha_688"] = str(fecha_auto) if fecha_auto else None
     out["_ultimo"] = (ultimo["desde"] + " → " + ultimo["hasta"]) if ultimo else None
+    return out
+
+
+def cmi_base_componentes(bcr_ini, poir_ini, comp_det, r_emp):
+    """Desglose del CMI de referencia del período de inicio por COMPONENTE TARIFARIO (Paso 6), a
+    partir de los dicts ya calculados (cmi_inicio 'bcr'/'poir' y compensacion_detalle). Devuelve, por
+    servicio, los componentes CMI_BCR (neto, sin terrenos), CMI_POIR (compensado), CMI terrenos y CMI
+    administrativos —cada uno con cobrado (dic-2025), base compensada (Σ VA₀), CAK, CI y CMI=CI/CCP— y
+    el total (suma de componentes). El CMI_POIR del período de inicio se toma COMPENSADO (solo activos
+    positivos; con ejecución 0 queda en 0 y la sobre-recuperación se arrastra, art. 2.1.2.1.5.2.1.1);
+    el VA₀ firmado (negativo) se guarda en 'raw' para la nota. El CCP es común a los componentes."""
+    out = {}
+    servs = [k for k in bcr_ini.keys() if not str(k).startswith("_")]
+    for s in servs:
+        b = bcr_ini.get(s) or {}
+        p = poir_ini.get(s) or {}
+        ccp = b.get("ccp"); fa0 = b.get("fa0")
+        terr = b.get("terr") or {"va0": 0.0, "cak": 0.0, "cmi": 0.0, "n": 0}
+
+        def _ref(base, cak, ccp=ccp):
+            return ((cak + base * r_emp) / ccp) if (base is not None and cak is not None and ccp) else None
+
+        comps = []
+        # 1) CMI_BCR neto (BCR total − terrenos)
+        if b.get("bcr") is not None and b.get("cak") is not None:
+            nbase = b["bcr"] - terr["va0"]; ncak = b["cak"] - terr["cak"]
+            ntot = b.get("suma_cmi") if b.get("suma_cmi") is not None else (b.get("total01") or 0.0)
+            ncob = ((ntot - terr["cmi"]) * fa0) if (fa0 is not None) else None
+            comps.append({"key": "bcr", "label": "CMI_BCR", "sub": "infraestructura y gestión ambiental",
+                          "base_lab": "BCR₀", "kind": "bcr", "n": b.get("n_pos"),
+                          "cobrado": ncob, "base": nbase, "cak": ncak,
+                          "ci": (ncak + nbase * r_emp), "ref": _ref(nbase, ncak)})
+        # 2) CMI_POIR (compensado → 0 con ejecución 0)
+        pcob = ((p.get("total01") or 0.0) * fa0) if (fa0 is not None) else None
+        comps.append({"key": "poir", "label": "CMI_POIR", "sub": "plan de obras 688",
+                      "base_lab": "VI_POIR₀", "kind": "poir", "n": p.get("n"),
+                      "cobrado": pcob, "base": p.get("bcr"), "cak": p.get("cak"), "ci": p.get("ci"),
+                      "ref": p.get("cmi_bcr_ci"), "raw": p.get("base_sg")})
+        # 3) CMI terrenos
+        if terr["n"]:
+            comps.append({"key": "terr", "label": "CMI terrenos", "sub": "remuneración del suelo (no se deprecia)",
+                          "base_lab": "VA₀ terrenos", "kind": "bcr", "n": terr["n"],
+                          "cobrado": ((terr["cmi"] * fa0) if (fa0 is not None) else None),
+                          "base": terr["va0"], "cak": terr["cak"],
+                          "ci": (terr["cak"] + terr["va0"] * r_emp), "ref": _ref(terr["va0"], terr["cak"])})
+        # 4) CMI administrativos (componente 3 de la compensación)
+        c3 = ((comp_det.get(s, {}) or {}).get("componentes", {}) or {}).get(3)
+        if c3 and c3.get("n_pos"):
+            abase = c3.get("bcr") or 0.0; acak = c3.get("cak") or 0.0
+            comps.append({"key": "admin", "label": "CMI administrativos", "sub": "activos administrativos y operativos",
+                          "base_lab": "VA₀ admin.", "kind": "bcr", "n": c3.get("n_pos"),
+                          "cobrado": None, "base": abase, "cak": acak,
+                          "ci": (acak + abase * r_emp), "ref": _ref(abase, acak)})
+        else:
+            comps.append({"key": "admin", "label": "CMI administrativos", "sub": "activos administrativos y operativos",
+                          "base_lab": "VA₀ admin.", "kind": "admin", "n": 0,
+                          "cobrado": None, "base": None, "cak": None, "ci": None, "ref": None})
+        tcob = sum(c["cobrado"] for c in comps if c.get("cobrado") is not None)
+        tref = sum(c["ref"] for c in comps if c.get("ref") is not None)
+        out[s] = {"ccp": ccp, "fa0": fa0, "r": r_emp, "comps": comps,
+                  "total_cob": tcob, "total_ref": tref,
+                  "total_var": (((tref - tcob) / tcob * 100) if tcob else None),
+                  "r688": b.get("r688"), "t": b.get("t"), "seg688": b.get("seg688")}
     return out
 
 

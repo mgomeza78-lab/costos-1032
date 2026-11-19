@@ -16,9 +16,9 @@
 {% set s688 = es_inicio or sec in ('agua','bcr','poir','poir_ejec','bcr_poir') %}
 {% set s1032 = (not es_inicio) or sec in ('poir1032','poir1032_ejec') %}
 {% set ns = namespace(pasos=[]) %}
-{% if s688 %}{% set ns.pasos = ns.pasos + [('agua','Agua facturada'),('bcr','BCR de inicio'),('poir','POIR 688 planeado'),('poir_ejec','POIR 688 ejecutado'),('bcr_poir','POIR 688 · BCR_POIR'),('compensacion','Compensación de la base'),('base','Base de capital y CMI'),('proyeccion','Proyección del CMI')] %}{% endif %}
+{% if s688 %}{% set ns.pasos = ns.pasos + [('agua','Agua facturada'),('bcr','BCR de inicio'),('poir','POIR 688 planeado'),('poir_ejec','POIR 688 ejecutado'),('bcr_poir','POIR 688 · BCR_POIR'),('provision','Provisión POIR (Res. 950)'),('activos','Activos admin. y operativos'),('compensacion','Compensación de la base'),('base','Base de capital y CMI'),('proyeccion','Proyección del CMI')] %}{% endif %}
 {% if s1032 %}{% set ns.pasos = ns.pasos + [('poir1032','POIR 1032 · plan'),('poir1032_ejec','Ejecución de obras del año')] %}{% endif %}
-{% set ns.pasos = ns.pasos + [('activos','Activos admin. y operativos'),('provision','Provisión POIR')] %}
+{% if not s688 %}{% set ns.pasos = ns.pasos + [('activos','Activos admin. y operativos'),('provision','Provisión POIR (Res. 950)')] %}{% endif %}
 <div class="tabs">
   {% for ps in ns.pasos %}
   <a class="tab {{ 'active' if sec==ps[0] }}" href="/empresa/{{ emp.id }}/inversiones?sec={{ ps[0] }}"><span class="num">{{ '%02d'|format(loop.index) }}</span>{{ ps[1] }}</a>
@@ -340,7 +340,7 @@ el <b>tramo 1</b> es el POIR <b>inicial</b> y cada tramo siguiente es una <b>act
 El sistema <b>valida</b>, por servicio, que <b>Σ CMI de los proyectos = CMI_POIR total del tramo</b> (Paso 1) — el
 número de archivos a cargar es el <b>número de tramos</b> del Paso 1. Es <b>informativo</b>: los resultados (VPR₀,
 VA₀, CMI de referencia) se calculan sobre lo <b>ejecutado</b>, y la <b>desviación del ejecutado frente a lo
-planeado</b> se muestra en el <a href="/empresa/{{ emp.id }}/inversiones?sec=poir_ejec">Paso 4</a>.</p>
+planeado</b> se muestra en <a href="/empresa/{{ emp.id }}/inversiones?sec=poir_ejec">POIR 688 · Ejecutado</a>.</p>
 
 {% if not poir_plan %}<p class="hint">Carga la serie del Paso 1 para que aparezcan los tramos del POIR planeado.</p>{% endif %}
 {% for tr in poir_plan %}
@@ -807,36 +807,70 @@ redondeado al entero mayor (art. 2.1.2.1.3.5.11). Montos en <b>millones</b> de p
 {# ===================== PASO 6 · BASE DE CAPITAL Y CMI DE REFERENCIA ===================== #}
 {% if sec=='base' %}
 <h2 class="serv-h">Paso 6 · Base de capital regulada y CMI de referencia</h2>
-<p class="muted2">Este paso toma el <b>VA₀</b> de cada activo (VPR₀ × fa0 —solo actualización por IPC, sin capitalizar, Pasos 2 y 3), <b>compensa</b> los
-VA₀ negativos contra los positivos (prioridad al menor PRR; art. 2.1.2.1.5.2.1.1) y obtiene
-la <b>base de capital</b> de cada componente (BCR₀ y VI_POIR₀), su <b>cak</b> y el <b>CI = Σcak + base·r</b>. Dividido
-por el <b>CCP</b> del año base resulta el <b>CMI de referencia</b> (CI/CCP). <b>Nota:</b> en el período de inicio
-(jul–dic 2026) el CMI que se cobra es el del último tramo (Pasos 2 y 3); este cálculo es el <b>insumo del primer
-recálculo</b> con la línea base al cierre de 2026.</p>
+<p class="muted2">Consolida, <b>por componente tarifario</b>, el CMI que se venía cobrando frente al <b>CMI de referencia</b> de la 1032 sobre la <b>base compensada</b> (VA₀ = VPR₀ × fa0, sin capitalizar; compensados los VA₀ negativos, art. 2.1.2.1.5.2.1.1) y su <b>variación</b> —igual que el Paso 2—. Para cada componente: la base de capital (Σ VA₀), la <b>Σ cak</b>, el <b>CI = Σcak + base·r</b> y el <b>CMI = CI/CCP</b>. El <b>CMI_POIR</b>, con ejecución 0, compensa a <b>0</b> (su sobre-recuperación se arrastra para compensar POIR futuro). Al final, la <b>suma de los componentes</b> = CMI total de referencia, insumo del primer recálculo con la línea base al cierre de 2026. El detalle firmado del POIR está en el <a href="/empresa/{{ emp.id }}/inversiones?sec=bcr_poir">POIR 688 · BCR_POIR</a>.</p>
 
-{# Parámetros 688 — iguales para ambos servicios #}
 {% set bA = bcr_ini.get(servicios[0]) %}
 <p class="hint"><b>Parámetros 688</b> (iguales para ambos servicios): r (remuneración) <b>{{ (r_emp*100)|round(2) }} %</b> (art. 2.1.2.1.3.1.7) ·
-WACC r688 <b>{{ (bA.r688*100)|round(2) ~ ' %' if bA.r688 is not none else '—' }}</b>{% if bA.seg688 %} (segmento {{ bA.seg688 }}, {{ 'grandes >100.000' if bA.seg688==1 else '5.001–100.000' }}){% endif %} ·
-fa0 = IPC dic-25 / dic-14 <b>{{ bA.fa0|round(4) if bA.fa0 is not none else '—' }}</b> ({{ bcr_ini['_ipc_25']|valor if bcr_ini['_ipc_25'] else '—' }} / {{ bcr_ini['_ipc_14']|valor if bcr_ini['_ipc_14'] else '—' }}) ·
-t = <b>{{ bA.t|round(2) if bA.t is not none else '—' }}</b> años (inicio 688 → jun-2026).</p>
+WACC r688 <b>{{ (bA.r688*100)|round(2) ~ ' %' if bA.r688 is not none else '—' }}</b>{% if bA.seg688 %} (segmento {{ bA.seg688 }}){% endif %} ·
+fa0 <b>{{ bA.fa0|round(4) if bA.fa0 is not none else '—' }}</b> · t = <b>{{ bA.t|round(2) if bA.t is not none else '—' }}</b> años (inicio 688 → jun-2026).</p>
 
-{% for s in servicios %}{% set bb = bcr_ini.get(s) %}
-<h3 style="font-family:var(--head);font-size:15px;color:var(--teal-deep);margin:18px 0 6px">{{ bcr_serv[s] }}</h3>
-<div class="card" style="margin-bottom:6px"><div class="k">CCP año base 2025</div><div class="v" style="font-size:20px">{{ bb.ccp|valor('m³') if bb.ccp is not none else '—' }}</div>
-  <div class="muted2">consumo corregido por pérdidas = AP − 6·Σsusc·mes (art. 2.1.2.1.3.3.1){% if bb.ccp is none %} · carga consumos/macromedición 2025{% endif %}</div></div>
-{% for comp, ini, lbl, basen in [('bcr', bcr_ini, 'CMI_BCR', 'BCR₀'), ('poir', poir_ini, 'CMI_POIR', 'VI_POIR₀')] %}
-{% set b = ini.get(s) %}
-<div style="font-family:var(--head);font-size:13px;color:var(--teal-deep);margin:10px 0 2px">{{ lbl }}</div>
-<div class="cards">
-  <div class="card"><div class="k">{{ basen }} (Σ VA₀ compensado)</div><div class="v" style="font-size:20px">{{ b.bcr|valor('$') if b.bcr is not none else '—' }}</div>
-    <div class="muted2">{% if b.con_soporte %}Σ VA₀ (VPR₀×fa0) tras compensar{% if b.descuento %} · compensado {{ b.descuento|valor('$') }}{% endif %}{% else %}soporte opcional{% endif %}</div></div>
-  <div class="card"><div class="k">Σ cak</div><div class="v" style="font-size:20px">{{ b.cak|valor('$') if b.cak is not none else '—' }}</div></div>
-  <div class="card"><div class="k">CI = Σcak + {{ basen }}·r</div><div class="v" style="font-size:20px">{{ b.ci|valor('$') if b.ci is not none else '—' }}</div></div>
-  <div class="card"><div class="k">{{ lbl }} resultante = CI/CCP</div><div class="v" style="font-size:20px">{{ b.cmi_bcr_ci|valor('$') ~ ' /m³' if b.cmi_bcr_ci is not none else '—' }}</div>
-    <div class="muted2">cobrado (último tramo) {{ b.cmi_bcr|valor('$') ~ ' /m³' if b.cmi_bcr is not none else '—' }}</div></div>
+{% for s in servicios %}{% set bc = base_comp.get(s) %}
+<h3 style="font-family:var(--head);font-size:15px;color:var(--teal-deep);margin:22px 0 4px;padding-bottom:6px;border-bottom:1px solid #e7e2d4">{{ bcr_serv[s] }} <span class="muted2" style="font-weight:400;font-size:12.5px">&middot; CCP año base 2025: {{ bc.ccp|valor('m³') if (bc and bc.ccp is not none) else '—' }} m³</span></h3>
+{% if bc %}
+{% for c in bc.comps %}
+{% set cobd = c.cobrado %}{% set refd = c.ref %}
+{% set varp = ((refd - cobd) / cobd * 100) if (refd is not none and cobd) else none %}
+<div class="k" style="font-size:13px;color:var(--teal-deep);margin:14px 0 6px;text-transform:none;letter-spacing:0">{{ c.label }} <span class="muted2">&middot; {{ c.sub }}</span></div>
+{% if c.kind == 'admin' and not c.n %}
+<p class="empty">Sin activos administrativos y operativos cargados para {{ bcr_serv[s] }}. El componente queda en 0; se poblará al cargar la <a href="/empresa/{{ emp.id }}/inversiones?sec=activos">plantilla de activos administrativos</a> (Paso 4).</p>
+{% else %}
+<div class="cards" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+  <div class="card">
+    <div class="k">Cobrado 688 <span class="muted2" style="text-transform:none;letter-spacing:0">&middot; dic-2025</span></div>
+    <div class="v">{{ cobd|valor('$') ~ ' /m³' if cobd is not none else '—' }}</div>
+    <div class="muted2" style="margin-top:4px">CMI del último tramo (688){% if c.key == 'poir' %} &middot; <b>planeado</b>{% endif %}.</div>
+  </div>
+  <div class="card" style="border-color:var(--teal);box-shadow:0 0 0 1px var(--teal) inset">
+    <div class="k">Referencia 1032 <span class="muted2" style="text-transform:none;letter-spacing:0">&middot; dic-2025</span></div>
+    <div class="v" style="{% if refd is not none and refd < 0 %}color:#b5342b{% endif %}">{{ refd|valor('$') ~ ' /m³' if refd is not none else '—' }}</div>
+    <div class="muted2" style="margin-top:4px">CI / CCP sobre la base compensada.{% if c.key == 'poir' %} Con ejecución 0 queda en 0.{% endif %}</div>
+  </div>
+  <div class="card">
+    <div class="k">Variación real</div>
+    <div class="v" style="color:{% if varp is none %}var(--muted){% elif varp <= 0 %}#1f8a70{% else %}#b5342b{% endif %}">{% if varp is not none %}{{ '+' if varp > 0 else '' }}{{ varp|round(1) }}%{% else %}—{% endif %}</div>
+    <div class="muted2" style="margin-top:4px">Referencia (1032) frente al cobrado (688).</div>
+  </div>
 </div>
+<div style="overflow-x:auto"><table class="tabla" style="margin:6px 0 2px;max-width:620px">
+  <tbody>
+    <tr><td>{{ c.base_lab }} <span class="muted2">&middot; Σ VA₀ compensado (dic-2025)</span></td><td class="num">{{ c.base|valor('$') if c.base is not none else '—' }}</td></tr>
+    <tr><td>Σ cak <span class="muted2">&middot; cuota anual de capital</span></td><td class="num">{{ c.cak|valor('$') if c.cak is not none else '—' }}</td></tr>
+    <tr><td>CI = Σcak + {{ c.base_lab }}·r</td><td class="num">{{ c.ci|valor('$') if c.ci is not none else '—' }}</td></tr>
+    <tr style="font-weight:600;background:#f3f8f6"><td>{{ c.label }} de referencia = CI / CCP</td><td class="num">{{ refd|valor('$') ~ ' /m³' if refd is not none else '—' }}</td></tr>
+    {% if c.key == 'poir' and c.raw is not none and c.raw < 0 %}<tr><td colspan="2" class="muted2" style="font-size:11.5px">Sobre-recuperación bruta <b>{{ c.raw|valor('$') }}</b> (ver <a href="/empresa/{{ emp.id }}/inversiones?sec=bcr_poir">BCR_POIR</a>): no se absorbe por falta de activo POIR positivo → se arrastra para compensar POIR futuro.</td></tr>{% endif %}
+  </tbody>
+</table></div>
+{% endif %}
 {% endfor %}
+<div class="k" style="font-size:13.5px;color:var(--teal-deep);margin:18px 0 6px;text-transform:none;letter-spacing:0">CMI total de referencia <span class="muted2">&middot; {{ bcr_serv[s] }} &middot; suma de componentes</span></div>
+<div class="cards" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+  <div class="card">
+    <div class="k">Cobrado 688 <span class="muted2" style="text-transform:none;letter-spacing:0">&middot; total</span></div>
+    <div class="v">{{ bc.total_cob|valor('$') ~ ' /m³' if bc.total_cob is not none else '—' }}</div>
+    <div class="muted2" style="margin-top:4px">Suma de los componentes cobrados.</div>
+  </div>
+  <div class="card" style="border-color:var(--teal-deep);box-shadow:0 0 0 1px var(--teal-deep) inset">
+    <div class="k">Referencia 1032 <span class="muted2" style="text-transform:none;letter-spacing:0">&middot; total</span></div>
+    <div class="v">{{ bc.total_ref|valor('$') ~ ' /m³' if bc.total_ref is not none else '—' }}</div>
+    <div class="muted2" style="margin-top:4px">Σ de los componentes (POIR compensado = 0 con ejecución 0).</div>
+  </div>
+  <div class="card">
+    <div class="k">Variación real</div>
+    <div class="v" style="color:{% if bc.total_var is none %}var(--muted){% elif bc.total_var <= 0 %}#1f8a70{% else %}#b5342b{% endif %}">{% if bc.total_var is not none %}{{ '+' if bc.total_var > 0 else '' }}{{ bc.total_var|round(1) }}%{% else %}—{% endif %}</div>
+    <div class="muted2" style="margin-top:4px">CMI total de referencia frente al cobrado.</div>
+  </div>
+</div>
+{% endif %}
 {% endfor %}
 {% endif %}
 
@@ -1037,9 +1071,9 @@ automáticamente; el <b>valor pendiente</b> que integra la BCR es el VA₀ despu
 {% endif %}
 {% endif %}
 
-{# ============================ PASO 5 · PROVISIÓN POIR (Res. 950) ============================ #}
+{# ============================ POIR 688 · PROVISIÓN POIR (Res. 950) ============================ #}
 {% if sec=='provision' %}
-<h2 class="serv-h">Paso 5 · Provisión POIR (Res. CRA 950 de 2021)</h2>
+<h2 class="serv-h">POIR 688 · Provisión POIR <span class="muted2">· Res. CRA 950 de 2021</span></h2>
 <p class="muted2">Los recursos provisionados por diferencias entre las inversiones planeadas y ejecutadas del POIR
 (Res. CRA 950 de 2021) deberán destinarse a proyectos de inversión para el cumplimiento de los estándares,
 una vez calculada la BCR₀. La persona prestadora reporta a la SSPD el detalle del cálculo de la provisión, el
