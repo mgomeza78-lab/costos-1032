@@ -1534,6 +1534,115 @@ def cmi_base_componentes(bcr_ini, poir_ini, comp_det, r_emp):
     return out
 
 
+def poir_provision(conn, empresa_id, r_emp=None, anio_eval=None):
+    """Provisión POIR (Res. CRA 950 de 2021, art. 2.1.2.1.10.1) ACTIVO POR ACTIVO, contra el ÚLTIMO
+    POIR (último tramo de poir_plan). Para cada activo j y un año de evaluación p:
+        DIFⱼ = CMI_planeadoⱼ − CMI_ejecutadoⱼ   (en $/m³)
+        Provisiónⱼ = MÁX( DIFⱼ · VP(Q)ₚ · (1+r)^p · (IPC_p / IPC_dic_2014) , 0 )
+    VP(Q)ₚ = Σ_{i=1..p} AF_realᵢ/(1+r)^i  (m³ facturados descontados al WACC de la 688 hasta el año p). El
+    MÁX evita que la sobre-ejecución de un activo compense la sub-ejecución de otro. CMI_ejecutadoⱼ se
+    escala del plan por el valor que ENTRÓ EN OPERACIÓN (con fecha de operación); las OBRAS EN CURSO (valor
+    sin fecha) reducen el Saldo pero no el CMI. Saldoⱼ = valor_planeadoⱼ − (valor en operación + en curso).
+    Devuelve, por servicio, los totales Provisión/Saldo, el detalle por activo y los componentes del
+    cálculo; y a nivel raíz el año evaluado y los años disponibles (≥5) para el selector. r_emp se recibe
+    por consistencia de firma; el descuento usa el WACC de la 688 (no el r de la 1032)."""
+    emp_row = conn.execute(text(
+        "SELECT suscriptores_seg, fecha_inicio_1032 FROM empresa WHERE id=:e"),
+        {"e": empresa_id}).mappings().first()
+    seg688 = segmento_688(emp_row["suscriptores_seg"]) if emp_row else None
+    r688_auto = r688_de_segmento(seg688)
+    i14 = ipc_dic(conn, 2014)
+    if not i14:
+        i14 = conn.execute(text(
+            "SELECT ipc_dic_2014 FROM bcr_param WHERE empresa_id=:e AND ipc_dic_2014 IS NOT NULL LIMIT 1"),
+            {"e": empresa_id}).scalar()
+    i14 = float(i14) if i14 else None
+    fecha_1032 = emp_row["fecha_inicio_1032"] if emp_row else None
+    anio_corte = fecha_1032.year if fecha_1032 else 2026
+    ps = params(conn, empresa_id)
+    servs = _servicios_empresa(conn, empresa_id)
+    # Planeado = último tramo del POIR (el POIR actualizado vigente).
+    tr = conn.execute(text("SELECT max(tramo) FROM poir_plan WHERE empresa_id=:e"), {"e": empresa_id}).scalar()
+    plan = {}
+    if tr is not None:
+        for row in conn.execute(text(
+                "SELECT servicio, id_activo, valor_poir, cmi FROM poir_plan WHERE empresa_id=:e AND tramo=:tr"),
+                {"e": empresa_id, "tr": tr}).mappings().all():
+            s = (row["servicio"] or "").strip().lower()
+            plan[(s, str(row["id_activo"]).strip())] = {
+                "valor": float(row["valor_poir"]) if row["valor_poir"] is not None else 0.0,
+                "cmi": float(row["cmi"]) if row["cmi"] is not None else 0.0}
+    # Ejecutado: en operación (con fecha) vs obra en curso (sin fecha de operación).
+    oper, curso = {}, {}
+    for row in conn.execute(text(
+            "SELECT id_activo, servicio, valor_ejecutado, fecha_operacion FROM poir_ejec_registro WHERE empresa_id=:e"),
+            {"e": empresa_id}).mappings().all():
+        s = (row["servicio"] or "").strip().lower()
+        k = (s, str(row["id_activo"]).strip())
+        v = float(row["valor_ejecutado"]) if row["valor_ejecutado"] is not None else 0.0
+        if row["fecha_operacion"]:
+            oper[k] = oper.get(k, 0.0) + v
+        else:
+            curso[k] = curso.get(k, 0.0) + v
+    # AF real (m³ facturados) por año tarifario (índice 688) por servicio.
+    af = {}
+    for x in serie_list(conn, empresa_id):
+        if x["q_m3"] is None:
+            continue
+        s = (x["servicio"] or "").strip().lower()
+        a = int(x["anio_tarifario"])
+        af.setdefault(s, {})
+        af[s][a] = af[s].get(a, 0.0) + float(x["q_m3"])
+    max_anio = max((max(d.keys()) for d in af.values() if d), default=10)
+    if anio_eval is None:
+        anio_eval = max_anio
+    anio_eval = max(1, min(int(anio_eval), max_anio))
+    out = {}
+    for s in servs:
+        p = ps.get(s)
+        r688 = float(p["r688"]) if (p and p["r688"] is not None) else r688_auto
+        afs = af.get(s, {})
+        vpq = (sum(afs.get(i, 0.0) / ((1 + r688) ** i) for i in range(1, anio_eval + 1)) if r688 else 0.0)
+        fdd = ((1 + r688) ** anio_eval) if r688 else 1.0
+        # El último año tarifario del POIR ancla al corte de la 1032 (año de inicio 1032); se cuenta hacia atrás.
+        cal_year = anio_corte - (max_anio - anio_eval)
+        # IPC de junio del año calendario (como en el modelo); si no hay junio, cae a diciembre y luego al más cercano.
+        rip = conn.execute(text(
+            "SELECT mes, indice FROM indice_ipc WHERE anio=:a AND indice IS NOT NULL "
+            "ORDER BY CASE WHEN mes=6 THEN 0 WHEN mes=12 THEN 1 ELSE 2 END, abs(mes-6) LIMIT 1"),
+            {"a": cal_year}).mappings().first()
+        ipc_val = float(rip["indice"]) if rip else None
+        ipc_mes = int(rip["mes"]) if rip else None
+        ipc = (ipc_val / i14) if (ipc_val and i14) else None
+        activos, prov_tot, saldo_tot = [], 0.0, 0.0
+        for (serv, idv), pl in plan.items():
+            if serv != s:
+                continue
+            cmi_plan, valor_plan = pl["cmi"], pl["valor"]
+            v_oper = oper.get((s, idv), 0.0)
+            v_curso = curso.get((s, idv), 0.0)
+            cmi_ejec = (cmi_plan * (v_oper / valor_plan)) if valor_plan else 0.0
+            dif = cmi_plan - cmi_ejec
+            prov = (max(dif * vpq * fdd * ipc, 0.0) if ipc is not None else None)
+            saldo = valor_plan - (v_oper + v_curso)
+            activos.append({"id": idv, "cmi_plan": cmi_plan, "cmi_ejec": cmi_ejec, "dif": dif,
+                            "prov": prov, "valor_plan": valor_plan, "valor_oper": v_oper,
+                            "valor_curso": v_curso, "saldo": saldo})
+            prov_tot += prov or 0.0
+            if saldo > 0:
+                saldo_tot += saldo
+        activos.sort(key=lambda a: str(a["id"]))
+        out[s] = {"anio_eval": anio_eval, "vpq": vpq, "fdd": fdd, "ipc": ipc, "ipc_val": ipc_val,
+                  "ipc_mes": ipc_mes, "cal_year": cal_year,
+                  "provision": (prov_tot if ipc is not None else None), "saldo": saldo_tot,
+                  "activos": activos, "r688": r688, "n": len(activos)}
+    out["_anio_eval"] = anio_eval
+    out["_max_anio"] = max_anio
+    out["_anios"] = list(range(5, max_anio + 1)) if max_anio >= 5 else list(range(1, max_anio + 1))
+    out["_i14"] = i14
+    return out
+
+
 def bcr0_inicio(conn, empresa_id, r_emp=None):
     """Compat: componente BCR del período de inicio (= cmi_inicio con tipo='bcr')."""
     return cmi_inicio(conn, empresa_id, "bcr", r_emp)

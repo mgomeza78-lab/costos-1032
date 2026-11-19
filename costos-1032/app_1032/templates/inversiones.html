@@ -1073,13 +1073,59 @@ automáticamente; el <b>valor pendiente</b> que integra la BCR es el VA₀ despu
 
 {# ============================ POIR 688 · PROVISIÓN POIR (Res. 950) ============================ #}
 {% if sec=='provision' %}
-<h2 class="serv-h">POIR 688 · Provisión POIR <span class="muted2">· Res. CRA 950 de 2021</span></h2>
-<p class="muted2">Los recursos provisionados por diferencias entre las inversiones planeadas y ejecutadas del POIR
-(Res. CRA 950 de 2021) deberán destinarse a proyectos de inversión para el cumplimiento de los estándares,
-una vez calculada la BCR₀. La persona prestadora reporta a la SSPD el detalle del cálculo de la provisión, el
-<b>saldo con corte a 30-jun-2026</b> y los soportes de su destinación (parágrafo del art. 2.1.2.1.3.5.5).</p>
-<p class="hint">Por ahora este paso solo registra el <b>saldo de la provisión</b> por servicio. El desarrollo
-detallado (cálculo de la provisión por no ejecución y seguimiento de su destinación) se abordará más adelante.</p>
+<h2 class="serv-h">POIR 688 · Provisión POIR <span class="muted2">· Res. CRA 950 de 2021 · art. 2.1.2.1.10.1</span></h2>
+<p class="muted2">Se calcula <b>activo por activo</b> contra el <b>último POIR</b>. Por proyecto, la diferencia
+<b>DIF = CMI planeado − CMI ejecutado</b> (en $/m³) se lleva a pesos del corte con
+<b>Provisión = MÁX(DIF · VP(Q) · (1+r)^p · IPC, 0)</b>: VP(Q) son los m³ facturados descontados al WACC de la
+688 hasta el año de evaluación p, (1+r)^p traslada el valor al final del año p e IPC lo indexa de dic-2014 a
+junio del año p. Solo suman los proyectos sub-ejecutados. El <b>Saldo = valor planeado − valor ejecutado</b>
+no depende del año de evaluación; las <b>obras en curso</b> (valor sin fecha de operación) reducen el Saldo
+pero aún no el CMI ejecutado. Destinación: inversiones del POIR para el cumplimiento de estándares; saldo con
+corte a <b>30-jun-2026</b> (parágrafo del art. 2.1.2.1.3.5.5).</p>
+{% set pv = prov_data %}
+{% set _mes = {1:'ene',2:'feb',3:'mar',4:'abr',5:'may',6:'jun',7:'jul',8:'ago',9:'sep',10:'oct',11:'nov',12:'dic'} %}
+{% if pv and pv._anios %}
+<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:#DEEAE7;border:1px solid #c0d4cf;border-radius:10px;padding:10px 12px;margin:2px 0 14px">
+  <span style="font-weight:600;color:var(--teal-deep);font-size:13px">Año tarifario de evaluación:</span>
+  {% for a in pv._anios %}<a href="/empresa/{{ emp.id }}/inversiones?sec=provision&amp;anio_prov={{ a }}" style="text-decoration:none;border:1px solid #c0d4cf;border-radius:8px;padding:4px 12px;font-size:13.5px;{{ 'background:#105060;color:#fff;border-color:#105060' if a==pv._anio_eval else 'background:#fff;color:#0f2e35' }}">Año {{ a }}</a>{% endfor %}
+  <span class="muted2">la provisión aplica desde el año 5 de la 688</span>
+</div>
+{% for s in servicios %}{% set d = pv.get(s) %}
+<h3 style="font-family:var(--head);font-size:15px;color:var(--teal-deep);margin:18px 0 8px;padding-bottom:6px;border-bottom:1px solid #e7e2d4">{{ bcr_serv[s] }} <span class="muted2" style="font-weight:400">· evaluación año {{ pv._anio_eval }}</span></h3>
+{% if d and d.activos %}
+<div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(240px,1fr))">
+  <div class="card" style="border-color:var(--teal);box-shadow:0 0 0 1px var(--teal) inset"><div class="k">Provisión POIR <span class="muted2">(millones $)</span></div><div class="v" style="font-size:22px">{{ d.provision|millones(2) if d.provision is not none else '—' }}</div><div class="muted2" style="margin-top:4px">Σ MÁX(DIF · VP(Q) · (1+r)^p · IPC, 0) por activo.</div></div>
+  <div class="card" style="border-color:var(--teal-deep);box-shadow:0 0 0 1px var(--teal-deep) inset"><div class="k">Saldo de la provisión <span class="muted2">(millones $)</span></div><div class="v" style="font-size:22px">{{ d.saldo|millones(2) }}</div><div class="muted2" style="margin-top:4px">Σ (valor planeado − ejecutado). No cambia con el año.</div></div>
+</div>
+<div style="background:#DEEAE7;border:1px solid #c0d4cf;border-radius:10px;padding:10px 13px;margin:8px 0;font-size:12.5px">
+  <b style="color:var(--teal-deep)">Detalle del cálculo · año {{ pv._anio_eval }}:</b>
+  VP(Q) hasta el año {{ pv._anio_eval }} = <b>{{ d.vpq|millones(2) if d.vpq is not none else '—' }}</b> millones m³ · (1+r)^{{ pv._anio_eval }} = <b>{{ d.fdd|round(3) }}</b> (r {{ (d.r688*100)|round(2) if d.r688 else '—' }} %) · IPC {{ _mes.get(d.ipc_mes,'—') }}-{{ d.cal_year }} / dic-2014 = <b>{{ d.ipc|round(3) if d.ipc is not none else '—' }}</b>{% if d.ipc_mes and d.ipc_mes!=6 %} <span class="muted2">(se usó {{ _mes.get(d.ipc_mes,'') }}; falta el IPC de junio {{ d.cal_year }})</span>{% endif %}.
+  <div style="font-family:ui-monospace,monospace;font-size:12px;color:var(--teal-deep);background:#fff;border-radius:7px;padding:6px 9px;margin-top:7px">Provisiónⱼ = MÁX( (CMI_planⱼ − CMI_ejecⱼ) × VP(Q) × (1+r)^p × IPC , 0 )</div>
+</div>
+<div style="overflow-x:auto"><table class="tabla" style="font-size:12.5px;margin-top:4px">
+  <thead><tr><th>Activo</th><th class="r">CMI plan<br><span class="muted2">$/m³</span></th><th class="r">CMI ejec<br><span class="muted2">$/m³</span></th><th class="r">DIF<br><span class="muted2">$/m³</span></th><th class="r">Provisión<br><span class="muted2">mill. $</span></th><th class="r">Valor plan.<br><span class="muted2">mill. $</span></th><th class="r">Ejecutado<br><span class="muted2">mill. $</span></th><th class="r">En curso<br><span class="muted2">mill. $</span></th><th class="r">Saldo<br><span class="muted2">mill. $</span></th></tr></thead>
+  <tbody>
+  {% for a in d.activos %}
+    <tr><td class="comp">{{ a.id }}</td>
+      <td class="num">{{ a.cmi_plan|valor('m³') }}</td>
+      <td class="num">{{ a.cmi_ejec|valor('m³') }}</td>
+      <td class="num">{{ a.dif|valor('m³') }}</td>
+      <td class="num">{{ a.prov|millones(2) if a.prov is not none else '—' }}</td>
+      <td class="num">{{ a.valor_plan|millones(2) }}</td>
+      <td class="num">{{ a.valor_oper|millones(2) if a.valor_oper else '—' }}</td>
+      <td class="num">{{ a.valor_curso|millones(2) if a.valor_curso else '—' }}</td>
+      <td class="num">{{ a.saldo|millones(2) }}</td></tr>
+  {% endfor %}
+    <tr style="font-weight:700;background:#f3f8f6"><td>Total {{ bcr_serv[s] }}</td><td class="num"></td><td class="num"></td><td class="num"></td><td class="num">{{ d.provision|millones(2) if d.provision is not none else '—' }}</td><td class="num"></td><td class="num"></td><td class="num"></td><td class="num">{{ d.saldo|millones(2) }}</td></tr>
+  </tbody>
+</table></div>
+{% elif d %}<p class="hint">Carga el <b>POIR planeado</b> y el <b>registro de ejecución</b> de {{ bcr_serv[s] }} para calcular la provisión por activo.</p>{% endif %}
+{% endfor %}
+{% else %}
+<p class="hint">Carga el <b>POIR planeado</b> (Planeado) y el <b>registro de ejecución</b> (Ejecutado) para calcular la provisión por activo y su saldo.</p>
+{% endif %}
+
+<h3 style="font-family:var(--head);font-size:14px;color:var(--teal-deep);margin:18px 0 6px">Saldo reportado a la SSPD <span class="muted2">· opcional, para registro manual</span></h3>
 {% if puede_cargar %}
 {% for s in servicios %}{% set pa = bcr_params.get(s) %}
 <form method="post" action="/empresa/{{ emp.id }}/bcr-param" class="form-grid" style="margin-top:4px">
@@ -1093,7 +1139,7 @@ detallado (cálculo de la provisión por no ejecución y seguimiento de su desti
 {% else %}
 <div class="cards">
   {% for s in servicios %}{% set pa = bcr_params.get(s) %}
-  <div class="card"><div class="k">Provisión · {{ bcr_serv[s] }}</div>
+  <div class="card"><div class="k">Saldo reportado · {{ bcr_serv[s] }}</div>
     <div class="v" style="font-size:20px">{{ pa.provision_poir|valor('$') if pa and pa.provision_poir is not none else '—' }}</div></div>
   {% endfor %}
 </div>

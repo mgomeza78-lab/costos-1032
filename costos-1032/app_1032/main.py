@@ -1743,6 +1743,8 @@ def inversiones(request: Request, eid: int):
         bcr_ini = bcr.cmi_inicio(conn, eid, "bcr", r_emp)   # BCR₀/CMI_BCR del período de inicio (Paso 2)
         poir_ini = bcr.cmi_inicio(conn, eid, "poir", r_emp)  # VI_POIR₀/CMI_POIR del período de inicio (Paso 3)
         base_comp = bcr.cmi_base_componentes(bcr_ini, poir_ini, comp_det, r_emp)  # desglose por componente (Paso 6)
+        _ap = request.query_params.get("anio_prov")
+        prov_data = bcr.poir_provision(conn, eid, r_emp, int(_ap) if (_ap and _ap.isdigit()) else None)  # Provisión POIR (Paso 3)
         cmi_det = {"bcr": bcr.cmi_proyecto_detalle(conn, eid, "bcr"),
                    "poir": bcr.cmi_proyecto_detalle(conn, eid, "poir")}  # detalle por activo (desplegable)
         bcr_params = bcr.params(conn, eid)
@@ -1766,7 +1768,7 @@ def inversiones(request: Request, eid: int):
         clasificaciones=inv.CLASIFICACIONES, estados=inv.ESTADOS,
         comp_ac=inv.COMPONENTES_AC, comp_al=inv.COMPONENTES_AL,
         servicios=servicios, bcr_activos=bcr_activos, bcr0=bcr0, bcr_ini=bcr_ini,
-        poir_ini=poir_ini, base_comp=base_comp, cmi_det=cmi_det, bcr_comp=bcr.COMPONENTES,
+        poir_ini=poir_ini, base_comp=base_comp, prov_data=prov_data, cmi_det=cmi_det, bcr_comp=bcr.COMPONENTES,
         bcr_serv=bcr.SERVICIOS, bcr_params=bcr_params, bcr_series=bcr_series, bcr_ingresos=bcr_ingresos,
         bcr_tramos=bcr_tramos, bcr_comp688=bcr_comp688,
         aps_list=aps_list, aps_nom={a["cod_dane"]: a["municipio"] for a in aps_list},
