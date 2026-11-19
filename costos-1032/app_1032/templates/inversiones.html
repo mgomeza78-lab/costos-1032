@@ -13,10 +13,10 @@
   cuando los proyectos alcanzan el <b>80 %</b> de ejecución (art. 2.1.2.1.3.5.14). Se desarrolla por pasos.</p>
 </div>
 
-{% set s688 = es_inicio or sec in ('agua','bcr','poir','poir_ejec') %}
+{% set s688 = es_inicio or sec in ('agua','bcr','poir','poir_ejec','bcr_poir') %}
 {% set s1032 = (not es_inicio) or sec in ('poir1032','poir1032_ejec') %}
 {% set ns = namespace(pasos=[]) %}
-{% if s688 %}{% set ns.pasos = ns.pasos + [('agua','Agua facturada'),('bcr','BCR de inicio'),('poir','POIR 688 planeado'),('poir_ejec','POIR 688 ejecutado'),('compensacion','Compensación de la base'),('base','Base de capital y CMI'),('proyeccion','Proyección del CMI')] %}{% endif %}
+{% if s688 %}{% set ns.pasos = ns.pasos + [('agua','Agua facturada'),('bcr','BCR de inicio'),('poir','POIR 688 planeado'),('poir_ejec','POIR 688 ejecutado'),('bcr_poir','POIR 688 · BCR_POIR'),('compensacion','Compensación de la base'),('base','Base de capital y CMI'),('proyeccion','Proyección del CMI')] %}{% endif %}
 {% if s1032 %}{% set ns.pasos = ns.pasos + [('poir1032','POIR 1032 · plan'),('poir1032_ejec','Ejecución de obras del año')] %}{% endif %}
 {% set ns.pasos = ns.pasos + [('activos','Activos admin. y operativos'),('provision','Provisión POIR')] %}
 <div class="tabs">
@@ -452,16 +452,13 @@ planeado</b> se muestra en el <a href="/empresa/{{ emp.id }}/inversiones?sec=poi
 {% endif %}{# fin sec=poir (planeado) #}
 
 {# ============================ PASO 4 · POIR EJECUTADO ============================ #}
-{% if sec=='poir_ejec' %}
-<h2 class="serv-h">Paso 4 · POIR ejecutado (marco 688)</h2>
-<p class="muted2">Aquí se carga, en <b>un solo archivo</b>, el <b>POIR efectivamente ejecutado</b> por <b>activo y año
-tarifario</b> de la 688, con la fecha de entrada en operación. De ese registro el sistema calcula —descontando
-todo al <b>inicio de la 688</b>— el <b>VIA688</b>, el <b>VP(CMI·Q)</b>, el <b>VPR₀</b> y el <b>CMI_POIR de referencia</b>
-que alimentan la BCR₀, y la serie ejecutada por año para el <b>cumplimiento</b>. El CMI_POIR del período de inicio =
-<b>Σ CMI del último tramo</b> (Paso 1); el CMI por activo para el VP viene del <b>POIR planeado</b>
-(<a href="/empresa/{{ emp.id }}/inversiones?sec=poir">Paso 3</a>) y la demanda del
-<a href="/empresa/{{ emp.id }}/inversiones?sec=agua">Paso 1</a>. La compensación y el CMI de referencia se consolidan
-en el <a href="/empresa/{{ emp.id }}/inversiones?sec=base">Paso 6 · Base de capital y CMI</a>.</p>
+{% if sec=='bcr_poir' %}
+<h2 class="serv-h">POIR 688 · BCR_POIR <span class="muted2">· resultado del período de inicio</span></h2>
+<p class="muted2">A partir del <b>POIR ejecutado</b> (cargado en <a href="/empresa/{{ emp.id }}/inversiones?sec=poir_ejec">POIR 688 · ejecutado</a>),
+el sistema descuenta todo al <b>inicio de la 688</b> y calcula por activo el <b>VIA688</b>, el <b>VP(CMI·Q)</b>, el
+<b>VPR₀ = VIA688 − VP(CMI×Q)</b> (sin capitalizar) y el <b>VA₀ = VPR₀ × fa0</b>, que conforman la base del POIR (VI_POIR₀)
+y el <b>CMI_POIR de referencia</b> del período de inicio (= <b>Σ CMI del último tramo</b>, Paso 1). La <b>compensación</b> de los
+VA₀ y el CMI consolidado se hacen en <a href="/empresa/{{ emp.id }}/inversiones?sec=base">Base de capital y CMI</a>.</p>
 
 {# CMI_POIR del período de inicio por servicio #}
 <div class="cards">
@@ -501,6 +498,14 @@ en el <a href="/empresa/{{ emp.id }}/inversiones?sec=base">Paso 6 · Base de cap
 {% endfor %}
 <p class="muted2" style="margin:4px 0 0">La <b>compensación</b> de los VA₀ y el cálculo de VI_POIR₀/CI/CMI de referencia se hacen en el paso
 <a href="/empresa/{{ emp.id }}/inversiones?sec=base">Base de capital y CMI</a>.</p>
+
+{% endif %}{# fin sec=bcr_poir #}
+
+{% if sec=='poir_ejec' %}
+<h2 class="serv-h">POIR 688 · ejecutado <span class="muted2">· carga, desviación y cumplimiento</span></h2>
+<p class="muted2">Carga de la <b>ejecución real</b> del POIR por activo y año tarifario de la 688, la <b>desviación</b> frente al
+planeado y el <b>cumplimiento</b> de la ejecución. El resultado —VIA688, VP(CMI·Q), VPR₀, VA₀ y el CMI_POIR de referencia—
+se muestra en <a href="/empresa/{{ emp.id }}/inversiones?sec=bcr_poir">POIR 688 · BCR_POIR</a>.</p>
 
 {# POIR ejecutado: UN SOLO archivo — la ejecución real por activo y año; el sistema calcula la base y el cumplimiento #}
 <h3 class="serv-h" style="margin-top:14px">Cargar el POIR ejecutado <span class="muted2">· un solo archivo</span></h3>
