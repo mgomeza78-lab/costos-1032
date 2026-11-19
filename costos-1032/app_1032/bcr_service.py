@@ -13,6 +13,7 @@ de los proyectos del POIR que entran en operación (art. 2.1.2.1.3.5.14). Es una
 **proyección indicativa** con supuestos explícitos; la cuantificación normativa
 activo-por-activo corresponde al recálculo anual.
 """
+import math
 from datetime import date, datetime
 from sqlalchemy import text
 import poir_cmi_service as poir
@@ -1376,14 +1377,20 @@ def cmi_inicio(conn, empresa_id, tipo="bcr", r_emp=None):
         cad = {"pos": {"n": 0, "via": 0.0, "vp": 0.0, "dif": 0.0, "vpr0": 0.0, "va0": 0.0},
                "neg": {"n": 0, "via": 0.0, "vp": 0.0, "dif": 0.0, "vpr0": 0.0, "va0": 0.0}}
         okva0 = fa0 is not None                                   # VA₀ = VPR₀·fa0 requiere fa0
-        pos, neg, con_soporte = [], 0.0, False
+        pos, neg, con_soporte, todos = [], 0.0, False, []
         vpq = _vp_q(conn, empresa_id, s, r688)   # VP(Q): el sistema calcula el ingreso (no se carga)
         for r in rs:
             via = float(r["valor_via688"]) if r["valor_via688"] is not None else None
             cmi_a = float(r["cmi"]) if r["cmi"] is not None else None
             es_terr = "TERRENO" in (str(r["nombre"]) if r["nombre"] else "").upper()
             # Ingreso recuperado vía CMI = cmi × VP(Q); terrenos no se descuentan (solo se remuneraban).
-            vp = 0.0 if es_terr else ((cmi_a * vpq) if cmi_a is not None else None)
+            # POIR: el ingreso se recupera con el CMI_POIR PLANEADO (no el ejecutado); se usa el
+            # VP(CMI×Q) persistido (cmi planeado × demanda). El cmi por activo del POIR es proporcional
+            # al VIA ejecutado (0 si no se ejecutó) y no sirve para el VP del ingreso.
+            if tipo == "poir":
+                vp = 0.0 if es_terr else (float(r["vp_cmi_q"]) if r["vp_cmi_q"] is not None else None)
+            else:
+                vp = 0.0 if es_terr else ((cmi_a * vpq) if cmi_a is not None else None)
             dif = (via - vp) if (via is not None and vp is not None) else None
             vpr0 = dif   # VPR₀ = VIA − VP(CMI×Q) en dic-2014 (sin capitalizar)
             if vpr0 is None:
@@ -1402,6 +1409,7 @@ def cmi_inicio(conn, empresa_id, tipo="bcr", r_emp=None):
                 g["va0"] += va0
                 con_soporte = True
                 prr = float(r["prr"]) if r["prr"] is not None else None
+                todos.append({"va0": va0, "prr": prr})
                 if va0 >= 0:
                     pos.append({"va0": va0, "prr": prr})
                 else:
@@ -1426,6 +1434,14 @@ def cmi_inicio(conn, empresa_id, tipo="bcr", r_emp=None):
             cf = calc_fallback.get(s, {})
             base, cak, ci = cf.get("bcr"), cf.get("cak"), cf.get("ci")
             descuento = cf.get("descuento") or 0.0
+        # CMI "firmado": incluye los VA₀ negativos (sobre-recuperación) sin compensar ni piso en 0.
+        # Es el que muestra el Paso 3·BCR_POIR: negativo si la ejecución < lo planeado, positivo con
+        # ejecución real. (El cmi_bcr_ci compensado — solo positivos — se usa en la base y la proyección.)
+        cmi_ci_signed = None
+        if con_soporte and ccp:
+            base_sg = sum(a["va0"] for a in todos)
+            cak_sg = sum((a["va0"] / a["prr"]) for a in todos if a["prr"] and a["prr"] > 0)
+            cmi_ci_signed = (cak_sg + base_sg * r_emp) / ccp
         out[s] = {"cmi_bcr": cmi_c, "total01": total01, "suma_cmi": suma_cmi, "n": n, "ok": ok,
                   "sin_serie": sin_serie,
                   "vpr0_pos": vpr0_pos, "vpr0_neg": vpr0_neg, "n_pos": n_pos, "n_neg": n_neg,
@@ -1433,6 +1449,7 @@ def cmi_inicio(conn, empresa_id, tipo="bcr", r_emp=None):
                   "bcr": base, "cak": cak, "ci": ci, "ccp": ccp, "r688": r688, "t": t, "fa0": fa0,
                   "con_soporte": con_soporte, "descuento": descuento, "seg688": seg688,
                   "cmi_bcr_ci": (ci / ccp if (ci is not None and ccp) else None),
+                  "cmi_ci_signed": cmi_ci_signed,
                   "sin_param": r688 is None}
     out["_tipo"] = tipo
     out["_r"] = r_emp
@@ -1721,9 +1738,9 @@ def poir_registro_computar(conn, empresa_id):
     """Calcula el POIR ejecutado desde el REGISTRO (poir_ejec_registro) y puebla lo que la base y el
     cumplimiento ya consumen: cmi_proyecto (tipo='poir') con VIA688/VP(CMI×Q)/VPR₀/CMI por activo, y
     poir_ejec_anual con la serie ejecutada por año. Reproduce la hoja 06_3 del modelo:
-      · VIA688ⱼ = VPN del ejecutado por año, anclado al año 1 = Σ valorₖ/(1+r688)^(k−1);
+      · VIA688ⱼ = VPN del ejecutado = Σ valorₖ/(1+r688)^k (k = índice tarifario del año);
       · VP(CMI×Q)ⱼ = VP del CMI planeado (Paso 3) × demanda (Paso 1);
-      · VPR₀ⱼ = (VIA688ⱼ − VP)·(1+r688)^10.
+      · VPR₀ⱼ = VIA688ⱼ − VP (dic-2014, SIN capitalizar).
     Si un activo se ejecuta en varios años no hay problema: cada año se descuenta por separado. El CMI
     por activo reparte el CMI_POIR del período de inicio (Paso 1) en proporción al VIA688. Devuelve un
     resumen por servicio."""
@@ -1745,9 +1762,13 @@ def poir_registro_computar(conn, empresa_id):
             "FROM poir_ejec_registro WHERE empresa_id=:e"), {"e": empresa_id}).mappings().all():
         s = (r["servicio"] or "").strip().lower()
         key = (s, str(r["id_activo"]).strip())
-        d = reg.setdefault(key, {"anios": {}, "fecha": None, "vu": None})
+        d = reg.setdefault(key, {"anios": {}, "anios_cal": {}, "fecha": None, "vu": None})
         if r["anio_tarifario"] is not None and r["valor_ejecutado"] is not None:
-            d["anios"][int(r["anio_tarifario"])] = d["anios"].get(int(r["anio_tarifario"]), 0.0) + float(r["valor_ejecutado"])
+            ai = int(r["anio_tarifario"])
+            ix = ai - 2015 if ai >= 2016 else ai   # año calendario → índice tarifario (1 = 2016); un índice ya pequeño se deja igual
+            vv = float(r["valor_ejecutado"])
+            d["anios"][ix] = d["anios"].get(ix, 0.0) + vv
+            d["anios_cal"][ai] = d["anios_cal"].get(ai, 0.0) + vv
         if r["fecha_operacion"] and not d["fecha"]:
             d["fecha"] = r["fecha_operacion"]
         if r["vida_util"] is not None and d["vu"] is None:
@@ -1791,7 +1812,7 @@ def poir_registro_computar(conn, empresa_id):
             seg = (seen.index(cp) + 1) if (cp is not None and cp in seen) else max(1, len(seen))
             tr = tramos_all[min(seg - 1, len(tramos_all) - 1)] if tramos_all else tr_ini
             if r688 is not None:
-                vpd_seg[tr] = vpd_seg.get(tr, 0.0) + meses[km]["q"] / ((1 + r688) ** (anio - 1))
+                vpd_seg[tr] = vpd_seg.get(tr, 0.0) + meses[km]["q"] / ((1 + r688) ** anio)
         total01 = (ult["totales"].get(s) if ult else None)   # CMI_POIR del período de inicio (Paso 1)
         # Universo = activos PLANEADOS tramo inicial (generen o no VIA688) ∪ activos EJECUTADOS (registro).
         # Los planeados no ejecutados tienen VIA688=0 pero VP>0 → VPR₀<0 (sobre-recuperación a compensar).
@@ -1801,17 +1822,23 @@ def poir_registro_computar(conn, empresa_id):
         act = []
         for idv in ids_s:
             d = reg.get((s, idv))
-            via = (sum(d["anios"].get(k, 0.0) / ((1 + r688) ** (k - 1)) for k in range(1, 11))
+            # VIA688ⱼ = Σ valorₖ/(1+r688)^k con k = ÍNDICE tarifario del año de ejecución (ancla dic-2014,
+            # misma convención que el VP del ingreso: el año 1 se descuenta ^1). Igual que la hoja «POIR».
+            via = (sum(d["anios"].get(k, 0.0) / ((1 + r688) ** k) for k in range(1, 16))
                    if (d and r688 is not None) else 0.0)
             # VP(CMI×Q)ⱼ = Σ_tramo CMIⱼ,tramo · VPD_tramo (cada tramo aporta solo sus meses vigentes).
             vp = (sum(cmi_tr.get((s, idv, tr), 0.0) * vp_seg for tr, vp_seg in vpd_seg.items())
                   if r688 is not None else None)
-            vpr0 = ((via - (vp or 0.0)) * ((1 + r688) ** 10)) if r688 is not None else None
-            act.append({"id": idv, "via": via, "vp": vp, "vpr0": vpr0,
+            vpr0 = (via - (vp or 0.0)) if r688 is not None else None   # dic-2014, SIN capitalizar
+            # N = índice tarifario del activo (año de ejecución más temprano) → PRR = MÁX(VU−(11−N), 1).
+            n_idx = (min(d["anios"].keys()) if (d and d["anios"]) else None)
+            vu_j = (d["vu"] if d else None)
+            prr_j = (max(math.ceil(vu_j - (11 - n_idx)), 1) if (vu_j is not None and n_idx is not None) else None)
+            act.append({"id": idv, "via": via, "vp": vp, "vpr0": vpr0, "prr": prr_j,
                         "anio_op": (d["fecha"].year if (d and d["fecha"]) else None),
-                        "vu": (d["vu"] if d else None)})
+                        "vu": vu_j})
             if d:
-                for k, v in d["anios"].items():
+                for k, v in d["anios_cal"].items():
                     anual[(s, k)] = anual.get((s, k), 0.0) + v
         sum_via = sum(a["via"] for a in act if a["via"]) or 0.0
         for a in act:
@@ -1824,14 +1851,14 @@ def poir_registro_computar(conn, empresa_id):
     conn.execute(text("DELETE FROM cmi_proyecto WHERE empresa_id=:e AND tipo='poir'"), {"e": empresa_id})
     for f in filas:
         conn.execute(text(
-            "INSERT INTO cmi_proyecto(empresa_id,tipo,servicio,tramo,id_activo,cmi,vida_util,"
+            "INSERT INTO cmi_proyecto(empresa_id,tipo,servicio,tramo,id_activo,cmi,vida_util,prr,"
             "anio_operacion,valor_via688,vp_cmi_q,vpr0,cargado_por) "
-            "VALUES (:e,'poir',:s,:tr,:id,:cmi,:vu,:op,:via,:vp,:vpr,NULL) "
+            "VALUES (:e,'poir',:s,:tr,:id,:cmi,:vu,:prr,:op,:via,:vp,:vpr,NULL) "
             "ON CONFLICT (empresa_id,tipo,servicio,tramo,id_activo) DO UPDATE SET "
-            " cmi=excluded.cmi, vida_util=excluded.vida_util, anio_operacion=excluded.anio_operacion, "
+            " cmi=excluded.cmi, vida_util=excluded.vida_util, prr=excluded.prr, anio_operacion=excluded.anio_operacion, "
             " valor_via688=excluded.valor_via688, vp_cmi_q=excluded.vp_cmi_q, vpr0=excluded.vpr0"),
             {"e": empresa_id, "s": f["s"], "tr": ult_idx, "id": f["id"], "cmi": f["cmi"], "vu": f["vu"],
-             "op": f["anio_op"], "via": f["via"], "vp": f["vp"], "vpr": f["vpr0"]})
+             "prr": f.get("prr"), "op": f["anio_op"], "via": f["via"], "vp": f["vp"], "vpr": f["vpr0"]})
     # poblar poir_ejec_anual (serie ejecutada por año → cumplimiento)
     conn.execute(text("DELETE FROM poir_ejec_anual WHERE empresa_id=:e"), {"e": empresa_id})
     for (s, k), v in anual.items():

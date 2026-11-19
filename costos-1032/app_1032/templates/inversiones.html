@@ -463,20 +463,20 @@ VA₀ y el CMI consolidado se hacen en <a href="/empresa/{{ emp.id }}/inversione
 {# CMI_POIR del período de inicio por servicio — diseño de 3 fichas (igual que CMI_BCR) #}
 <div style="margin-top:6px">
   {% for s in servicios %}{% set b = poir_ini.get(s) %}
-  {% set act = (b.cmi_bcr * b.fa0) if (b.cmi_bcr is not none and b.fa0) else none %}
-  {% set ini = b.cmi_bcr_ci %}
+  {% set act = (b.total01 * b.fa0) if (b.total01 is not none and b.fa0) else none %}
+  {% set ini = b.cmi_ci_signed %}
   {% set varp = ((ini - act) / act * 100) if (ini is not none and act) else none %}
   <div class="k" style="font-size:13px;color:var(--teal-deep);margin:16px 0 8px;text-transform:none;letter-spacing:0">CMI_POIR &middot; {{ bcr_serv[s] }} <span class="muted2">&middot; per&iacute;odo de inicio (jul&ndash;dic 2026)</span></div>
   <div class="cards" style="grid-template-columns:repeat(3,minmax(0,1fr))">
     <div class="card">
-      <div class="k">688 cobrado <span class="muted2" style="text-transform:none;letter-spacing:0">&middot; dic-2025</span></div>
+      <div class="k">688 cobrado <span class="muted2" style="text-transform:none;letter-spacing:0">&middot; dic-2025 &middot; planeado</span></div>
       <div class="v">{{ act|valor('$') ~ ' /m³' if act is not none else '—' }}</div>
-      <div class="muted2" style="margin-top:4px">Lo que se ven&iacute;a cobrando con la 688{% if b.cmi_bcr is not none %}: {{ b.cmi_bcr|valor('$') }}/m³ (dic-2014) &times; fa0 {{ b.fa0|round(4) }}{% endif %}.{% if b.total01 is not none %} <b style="color:{{ '#1f8a70' if b.ok else '#b5342b' }}">{{ '✓ cuadra' if b.ok else '✗ difiere' }}</b>{% endif %}</div>
+      <div class="muted2" style="margin-top:4px">Lo que se ven&iacute;a cobrando con la 688 = CMI_POIR <b>planeado</b>{% if b.total01 is not none %}: {{ b.total01|valor('$') }}/m³ (dic-2014) &times; fa0 {{ b.fa0|round(4) }}{% endif %}.</div>
     </div>
     <div class="card" style="border-color:var(--teal);box-shadow:0 0 0 1px var(--teal) inset">
       <div class="k">Per&iacute;odo de inicio &middot; 1032 <span class="muted2" style="text-transform:none;letter-spacing:0">&middot; dic-2025</span></div>
       <div class="v">{{ ini|valor('$') ~ ' /m³' if ini is not none else '—' }}</div>
-      <div class="muted2" style="margin-top:4px">Resultado del nuevo c&aacute;lculo sobre el VI_POIR&#8320;: (r&middot;VI_POIR&#8320; + CAK) / CCP.</div>
+      <div class="muted2" style="margin-top:4px">Resultado <b>firmado</b> sobre el saldo del POIR: (r&middot;&Sigma;VA&#8320; + CAK) / CCP. <b>Negativo</b> si la ejecuci&oacute;n &lt; lo planeado (sobre-recuperaci&oacute;n a compensar); sube a positivo con ejecuci&oacute;n real.</div>
     </div>
     <div class="card">
       <div class="k">Variaci&oacute;n real</div>
